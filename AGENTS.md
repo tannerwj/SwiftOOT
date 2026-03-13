@@ -60,3 +60,62 @@ The zeldaret/oot repo lives at `Vendor/oot/`. Key locations:
 - Don't add dependencies without discussing first
 - Don't implement actor behavior by transpiling C — rewrite idiomatically in Swift
 - Don't over-abstract. Three similar lines > premature abstraction.
+
+## Linear Workflow
+
+SwiftOOT is intended to run with mostly serial, short-lived agents. One agent should handle one Linear issue, leave the repo in a verifiable state, then stop.
+
+### Issue Readiness
+
+An issue is agent-ready only when all of the following are true:
+
+- The issue is in `Todo`
+- The issue is labeled `agent-ready`
+- There are no unresolved `blockedBy` issues in Linear
+- Scope is narrow enough to finish in a single branch without pulling in adjacent work
+- Acceptance criteria are observable and specific
+- Verification expectations are stated or can be derived from existing project commands
+
+Do not start issues labeled `blocked` or `needs-human`.
+
+### Agent Loop
+
+1. Read the Linear issue and only the relevant local code/docs.
+2. Create or use the issue branch.
+3. Implement only the scoped change.
+4. Add or update tests for the change.
+5. Run the relevant verification commands.
+6. Update docs when behavior, setup, architecture, or workflow changed.
+7. Leave a concise handoff summary, including what changed and what was verified.
+8. Stop. Do not continue into the next ticket in the same session.
+
+### Definition of Done
+
+Before an issue is considered complete, all of the following must be true:
+
+- The scoped implementation is complete
+- Relevant tests were added or updated, or the issue explicitly documents why tests are not applicable
+- Build/test/lint or equivalent verification commands were run
+- Any changed setup, workflow, architecture, or user-facing behavior is documented
+- Follow-up work is called out as separate Linear issues instead of being folded in silently
+- The issue is ready for review without requiring hidden context from the previous agent
+
+### Handoff Format
+
+Every agent should leave a short summary in the issue, PR, or final report using this structure:
+
+- Changed: the concrete code or files touched
+- Verified: exact commands run and the result
+- Docs: what was updated, or `none`
+- Follow-ups: new issues created or `none`
+- Risks: any known gaps, assumptions, or items requiring human review
+
+### When to Split an Issue
+
+Split the issue before implementation if any of these are true:
+
+- The work spans multiple modules with no clear single acceptance test
+- The issue mixes infrastructure, feature work, and refactors
+- The issue requires multiple architectural decisions that are not already made
+- The issue cannot be verified in one pass by a small set of commands or checks
+- The issue description says "implement X system" but actually describes several independently shippable steps
