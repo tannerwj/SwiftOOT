@@ -13,7 +13,7 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
     func extract(using context: OOTExtractionContext) throws {
         let fileManager = FileManager.default
         let files = try candidateFiles(in: context.source)
-        let outputDirectory = context.output.appending(path: "DisplayLists", directoryHint: .isDirectory)
+        let outputDirectory = context.output.appendingPathComponent("DisplayLists", isDirectory: true)
         var emittedCount = 0
 
         for fileURL in files {
@@ -24,7 +24,7 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
 
             let relativeDirectory = relativeSourceDirectory(for: fileURL, sourceRoot: context.source)
             let destinationDirectory = relativeDirectory.map {
-                outputDirectory.appending(path: $0, directoryHint: .isDirectory)
+                outputDirectory.appendingPathComponent($0, isDirectory: true)
             } ?? outputDirectory
             try fileManager.createDirectory(at: destinationDirectory, withIntermediateDirectories: true)
 
@@ -32,7 +32,7 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
             for displayList in displayLists {
-                let destination = destinationDirectory.appending(path: "\(displayList.name).json")
+                let destination = destinationDirectory.appendingPathComponent("\(displayList.name).json")
                 let data = try encoder.encode(displayList.commands)
                 try data.write(to: destination, options: .atomic)
                 emittedCount += 1
@@ -711,13 +711,13 @@ struct CMacroPreprocessor {
     func preprocess(fileURL: URL, sourceRoot: URL) throws -> String {
         let wrapper = makeWrapper(for: fileURL)
         let temporaryDirectory = FileManager.default.temporaryDirectory
-            .appending(path: "swiftoot-displaylist-\(UUID().uuidString)", directoryHint: .isDirectory)
+            .appendingPathComponent("swiftoot-displaylist-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
         defer {
             try? FileManager.default.removeItem(at: temporaryDirectory)
         }
 
-        let wrapperURL = temporaryDirectory.appending(path: "wrapper.c")
+        let wrapperURL = temporaryDirectory.appendingPathComponent("wrapper.c")
         try wrapper.write(to: wrapperURL, atomically: true, encoding: .utf8)
 
         let process = Process()
@@ -731,7 +731,7 @@ struct CMacroPreprocessor {
             "-I",
             sourceRoot.path,
             "-I",
-            sourceRoot.appending(path: "include").path,
+            sourceRoot.appendingPathComponent("include", isDirectory: true).path,
             "-I",
             fileURL.deletingLastPathComponent().path,
         ]
