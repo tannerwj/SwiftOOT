@@ -347,7 +347,7 @@ public enum AlphaCompareMode: String, Codable, Sendable, CaseIterable {
     case dither
 }
 
-public struct RenderMode: Codable, Sendable, Equatable {
+public struct RenderMode: Codable, Sendable, Equatable, Hashable {
     public var flags: UInt32
 
     public init(flags: UInt32) {
