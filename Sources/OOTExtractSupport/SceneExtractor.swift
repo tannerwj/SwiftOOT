@@ -600,11 +600,18 @@ private extension SceneExtractor {
             throw SceneExtractorError.missingArray(type: "SceneCmd", name: "<first>")
         }
 
+        let selectionPool: [ParsedCommandArray]
         if let preferred = candidates.first(where: { $0.array.name == preferredName }) {
-            return preferred.commands
+            if let best = selectBestSceneCommandArray(from: candidates), sceneCommandScore(for: best) > sceneCommandScore(for: preferred) {
+                selectionPool = candidates
+            } else {
+                return preferred.commands
+            }
+        } else {
+            selectionPool = candidates
         }
 
-        return selectBestSceneCommands(from: candidates)
+        return selectBestSceneCommands(from: selectionPool)
     }
 
     static func roomCommands(roomName: String, in source: String) throws -> [ParsedCommand] {
@@ -628,6 +635,10 @@ private extension SceneExtractor {
     }
 
     static func selectBestSceneCommands(from candidates: [ParsedCommandArray]) -> [ParsedCommand] {
+        selectBestSceneCommandArray(from: candidates)?.commands ?? []
+    }
+
+    static func selectBestSceneCommandArray(from candidates: [ParsedCommandArray]) -> ParsedCommandArray? {
         candidates
             .enumerated()
             .max { lhs, rhs in
@@ -639,7 +650,6 @@ private extension SceneExtractor {
                 return lhsScore < rhsScore
             }?
             .element
-            .commands ?? []
     }
 
     static func sceneCommandScore(for candidate: ParsedCommandArray) -> Int {
@@ -647,25 +657,31 @@ private extension SceneExtractor {
         var score = 0
 
         if candidate.array.name.hasSuffix("_sceneCommands") {
-            score += 1_000
-        }
-        if commandNames.contains("SCENE_CMD_ENV_LIGHT_SETTINGS") {
-            score += 200
-        }
-        if commandNames.contains("SCENE_CMD_ROOM_LIST") {
             score += 100
         }
+        if commandNames.contains("SCENE_CMD_ENV_LIGHT_SETTINGS") {
+            score += 500
+        }
+        if commandNames.contains("SCENE_CMD_ROOM_LIST") {
+            score += 300
+        }
         if commandNames.contains("SCENE_CMD_PATH_LIST") {
-            score += 50
+            score += 150
         }
         if commandNames.contains("SCENE_CMD_EXIT_LIST") {
-            score += 50
+            score += 150
         }
         if commandNames.contains("SCENE_CMD_ENTRANCE_LIST") {
-            score += 30
+            score += 75
         }
         if commandNames.contains("SCENE_CMD_SPAWN_LIST") {
-            score += 20
+            score += 75
+        }
+        if commandNames.contains("SCENE_CMD_COL_HEADER") {
+            score += 150
+        }
+        if commandNames.contains("SCENE_CMD_ALTERNATE_HEADER_LIST") {
+            score -= 50
         }
         if commandNames.contains("SCENE_CMD_ACTOR_LIST") {
             score -= 100

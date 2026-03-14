@@ -225,6 +225,87 @@ final class SceneExtractorTests: XCTestCase {
         XCTAssertEqual(paths.paths.count, 3)
     }
 
+    func testExtractFallsBackWhenCanonicalSceneCommandsOnlyContainsAlternateHeaderShell() throws {
+        let source = try makeFixtureSource(
+            sceneSource: """
+            #include "spot04_scene.h"
+
+            SceneCmd spot04_sceneCommands[] = {
+                SCENE_CMD_ALTERNATE_HEADER_LIST(spot04_sceneAlternateHeaders0x000070),
+                SCENE_CMD_END(),
+            };
+
+            SceneCmd spot04_sceneDayHeaderCommands[] = {
+                SCENE_CMD_SOUND_SETTINGS(1, 4, 60),
+                SCENE_CMD_ROOM_LIST(3, spot04_sceneRoomList0x000184),
+                SCENE_CMD_TRANSITION_ACTOR_LIST(2, spot04_sceneTransitionActorList_000164),
+                SCENE_CMD_MISC_SETTINGS(0x00, 0x00000004),
+                SCENE_CMD_COL_HEADER(&spot04_sceneCollisionHeader_008918),
+                SCENE_CMD_ENTRANCE_LIST(spot04_sceneEntranceList0x00019C),
+                SCENE_CMD_SPECIAL_FILES(NAVI_QUEST_HINTS_OVERWORLD, OBJECT_GAMEPLAY_FIELD_KEEP),
+                SCENE_CMD_PATH_LIST(spot04_scenePathList_00030C),
+                SCENE_CMD_SPAWN_LIST(12, spot04_sceneStartPositionList0x0000A4),
+                SCENE_CMD_SKYBOX_SETTINGS(29, 0, false),
+                SCENE_CMD_EXIT_LIST(spot04_sceneExitList_0001B4),
+                SCENE_CMD_ENV_LIGHT_SETTINGS(12, spot04_sceneLightSettings0x0001CC),
+                SCENE_CMD_END(),
+            };
+
+            u16 spot04_sceneExitList_0001B4[] = {
+                ENTR_KOKIRI_FOREST_0,
+                ENTR_DEKU_TREE_0,
+                ENTR_LOST_WOODS_9,
+                ENTR_LINKS_HOUSE_1,
+                ENTR_KOKIRI_SHOP_0,
+                ENTR_KNOW_IT_ALL_BROS_HOUSE_0,
+                ENTR_LOST_WOODS_0,
+                ENTR_KOKIRI_FOREST_0,
+                ENTR_TWINS_HOUSE_0,
+                ENTR_MIDOS_HOUSE_0,
+                ENTR_SARIAS_HOUSE_0,
+                ENTR_DEKU_TREE_0,
+            };
+
+            EnvLightSettings spot04_sceneLightSettings0x0001CC[] = {
+                { 0x82, 0x5A, 0x5A, 0x49, 0x49, 0x49, 0xFF, 0x7D, 0x7D, 0xB7, 0xB7, 0xB7, 0x50, 0x50, 0x9B, 0x78, 0x50, 0x50,
+                0xFFDE, 0x16A8 },
+            };
+
+            Vec3s spot04_scenePathwayList_0002E0[] = {
+                {  -1474,    -80,   -295 },
+                {  -1416,    -74,   -138 },
+            };
+
+            Path spot04_scenePathList_00030C[] = {
+                { ARRAY_COUNT(spot04_scenePathwayList_0002E0), spot04_scenePathwayList_0002E0 },
+            };
+            """
+        )
+        let output = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: output)
+        }
+
+        try seedActorTableManifest(at: output)
+
+        let extractor = SceneExtractor()
+        try extractor.extract(using: OOTExtractionContext(source: source, output: output))
+
+        let sceneDirectory = try metadataDirectory(in: output)
+        let environment = try decode(
+            SceneEnvironmentFile.self,
+            from: sceneDirectory.appendingPathComponent("environment.json")
+        )
+        let paths = try decode(ScenePathsFile.self, from: sceneDirectory.appendingPathComponent("paths.json"))
+        let exits = try decode(SceneExitsFile.self, from: sceneDirectory.appendingPathComponent("exits.json"))
+
+        XCTAssertEqual(environment.lightSettings.count, 1)
+        XCTAssertEqual(environment.lightSettings[0].fogNear, 990)
+        XCTAssertEqual(paths.paths.count, 1)
+        XCTAssertEqual(exits.exits.count, 12)
+    }
+
     func testExtractIgnoresNonAssetSceneLikeSources() throws {
         let source = try makeTemporaryDirectory()
         let output = try makeTemporaryDirectory()
