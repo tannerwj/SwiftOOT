@@ -14,7 +14,10 @@ extension SceneExtractor {
             }
 
             let sceneSource = try Self.readSource(at: sceneFile)
-            let sceneCommands = try Self.primaryCommands(in: sceneSource)
+            let sceneCommands = try Self.sceneCommands(
+                sceneName: group.sceneName,
+                source: sceneSource
+            )
             let actors = try group.roomFiles.map { roomFile in
                 let roomSource = try Self.readSource(at: roomFile.fileURL)
                 return try Self.parseRoomActors(
@@ -136,6 +139,11 @@ private extension SceneExtractor {
                 throw SceneExtractorError.invalidCommand("\(name) expected \(expected) arguments, found \(arguments.count)")
             }
         }
+    }
+
+    struct ParsedCommandArray {
+        let array: ParsedArray
+        let commands: [ParsedCommand]
     }
 
     static func loadActorIDs(from outputRoot: URL) throws -> [String: Int] {
@@ -389,7 +397,7 @@ private extension SceneExtractor {
         source: String,
         actorIDByName: [String: Int]
     ) throws -> RoomActorSpawns {
-        let commands = try primaryCommands(in: source)
+        let commands = try roomCommands(roomName: roomName, in: source)
         guard let invocation = commands.first(where: { $0.name == "SCENE_CMD_ACTOR_LIST" }) else {
             return RoomActorSpawns(roomName: roomName, actors: [])
         }
@@ -585,9 +593,85 @@ private extension SceneExtractor {
         )
     }
 
+    static func sceneCommands(sceneName: String, source: String) throws -> [ParsedCommand] {
+        let preferredName = "\(sceneName)_sceneCommands"
+        let candidates = try parsedCommandArrays(in: source)
+        guard candidates.isEmpty == false else {
+            throw SceneExtractorError.missingArray(type: "SceneCmd", name: "<first>")
+        }
+
+        if let preferred = candidates.first(where: { $0.array.name == preferredName }) {
+            return preferred.commands
+        }
+
+        return selectBestSceneCommands(from: candidates)
+    }
+
+    static func roomCommands(roomName: String, in source: String) throws -> [ParsedCommand] {
+        let preferredName = "\(roomName)Commands"
+        if let array = try? array(named: preferredName, type: "SceneCmd", in: source) {
+            return try ParsedCommand.parseAll(in: array.body)
+        }
+
+        return try primaryCommands(in: source)
+    }
+
     static func primaryCommands(in source: String) throws -> [ParsedCommand] {
         let array = try firstArray(ofType: "SceneCmd", in: source)
         return try ParsedCommand.parseAll(in: array.body)
+    }
+
+    static func parsedCommandArrays(in source: String) throws -> [ParsedCommandArray] {
+        try orderedArrays(ofType: "SceneCmd", in: source).map { array in
+            ParsedCommandArray(array: array, commands: try ParsedCommand.parseAll(in: array.body))
+        }
+    }
+
+    static func selectBestSceneCommands(from candidates: [ParsedCommandArray]) -> [ParsedCommand] {
+        candidates
+            .enumerated()
+            .max { lhs, rhs in
+                let lhsScore = sceneCommandScore(for: lhs.element)
+                let rhsScore = sceneCommandScore(for: rhs.element)
+                if lhsScore == rhsScore {
+                    return lhs.offset > rhs.offset
+                }
+                return lhsScore < rhsScore
+            }?
+            .element
+            .commands ?? []
+    }
+
+    static func sceneCommandScore(for candidate: ParsedCommandArray) -> Int {
+        let commandNames = Set(candidate.commands.map(\.name))
+        var score = 0
+
+        if candidate.array.name.hasSuffix("_sceneCommands") {
+            score += 1_000
+        }
+        if commandNames.contains("SCENE_CMD_ENV_LIGHT_SETTINGS") {
+            score += 200
+        }
+        if commandNames.contains("SCENE_CMD_ROOM_LIST") {
+            score += 100
+        }
+        if commandNames.contains("SCENE_CMD_PATH_LIST") {
+            score += 50
+        }
+        if commandNames.contains("SCENE_CMD_EXIT_LIST") {
+            score += 50
+        }
+        if commandNames.contains("SCENE_CMD_ENTRANCE_LIST") {
+            score += 30
+        }
+        if commandNames.contains("SCENE_CMD_SPAWN_LIST") {
+            score += 20
+        }
+        if commandNames.contains("SCENE_CMD_ACTOR_LIST") {
+            score -= 100
+        }
+
+        return score
     }
 
     static func firstArray(ofType type: String, in source: String) throws -> ParsedArray {
@@ -607,7 +691,7 @@ private extension SceneExtractor {
         return ParsedArray(name: name, body: substring(in: sanitized, range: bodyRange))
     }
 
-    static func arrays(ofType type: String, in source: String) throws -> [String: ParsedArray] {
+    static func orderedArrays(ofType type: String, in source: String) throws -> [ParsedArray] {
         let sanitized = stripLineComments(from: source)
         let pattern = #"(?:^|\s)(?:static\s+)?\#(NSRegularExpression.escapedPattern(for: type))\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]]*\])?\s*=\s*\{"#
         let regex = try NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines])
@@ -616,11 +700,17 @@ private extension SceneExtractor {
             range: NSRange(sanitized.startIndex..<sanitized.endIndex, in: sanitized)
         )
 
-        return try matches.reduce(into: [String: ParsedArray]()) { result, match in
+        return try matches.map { match in
             let name = substring(in: sanitized, range: match.range(at: 1))
             let braceLocation = match.range.location + match.range.length - 1
             let bodyRange = try matchingBraceRange(in: sanitized, openingBraceLocation: braceLocation)
-            result[name] = ParsedArray(name: name, body: substring(in: sanitized, range: bodyRange))
+            return ParsedArray(name: name, body: substring(in: sanitized, range: bodyRange))
+        }
+    }
+
+    static func arrays(ofType type: String, in source: String) throws -> [String: ParsedArray] {
+        try orderedArrays(ofType: type, in: source).reduce(into: [String: ParsedArray]()) { result, array in
+            result[array.name] = array
         }
     }
 
