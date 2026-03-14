@@ -742,10 +742,27 @@ struct CMacroPreprocessor {
         process.standardError = stderr
 
         try process.run()
-        process.waitUntilExit()
+        let group = DispatchGroup()
+        let outputCapture = PipeCapture()
+        let errorCapture = PipeCapture()
 
-        let output = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let error = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            outputCapture.data = stdout.fileHandleForReading.readDataToEndOfFile()
+            group.leave()
+        }
+
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            errorCapture.data = stderr.fileHandleForReading.readDataToEndOfFile()
+            group.leave()
+        }
+
+        process.waitUntilExit()
+        group.wait()
+
+        let output = String(data: outputCapture.data, encoding: .utf8) ?? ""
+        let error = String(data: errorCapture.data, encoding: .utf8) ?? ""
 
         guard process.terminationStatus == 0 else {
             throw DisplayListParserError.preprocessorFailure(error.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -799,6 +816,10 @@ struct CMacroPreprocessor {
         #include "\(escapedPath)"
         """
     }
+}
+
+private final class PipeCapture: @unchecked Sendable {
+    var data = Data()
 }
 
 private struct IntegerExpressionParser {
