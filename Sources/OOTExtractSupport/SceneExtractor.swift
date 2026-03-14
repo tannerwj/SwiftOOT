@@ -166,34 +166,47 @@ private extension SceneExtractor {
         var roomFiles: [String: [RoomAssetFile]] = [:]
         var sceneNamesByKey: [String: String] = [:]
 
-        for assetRoot in sceneAssetRoots(in: root, fileManager: fileManager) {
-            guard let enumerator = fileManager.enumerator(
-                at: assetRoot,
-                includingPropertiesForKeys: [.isRegularFileKey],
-                options: [.skipsHiddenFiles]
-            ) else {
-                continue
-            }
-
-            for case let fileURL as URL in enumerator {
-                let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
-                guard values.isRegularFile == true else {
-                    continue
-                }
-
+        if let sourceFiles = try sceneAssetSourceFiles(in: root, fileManager: fileManager) {
+            for fileURL in sourceFiles {
                 let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
                 guard let assetKind = classifyAsset(relativePath: relativePath) else {
                     continue
                 }
+                register(
+                    assetKind: assetKind,
+                    fileURL: fileURL,
+                    sceneNamesByKey: &sceneNamesByKey,
+                    sceneFiles: &sceneFiles,
+                    roomFiles: &roomFiles
+                )
+            }
+        } else {
+            for assetRoot in sceneAssetRoots(in: root, fileManager: fileManager) {
+                guard let enumerator = fileManager.enumerator(
+                    at: assetRoot,
+                    includingPropertiesForKeys: [.isRegularFileKey],
+                    options: [.skipsHiddenFiles]
+                ) else {
+                    continue
+                }
 
-                switch assetKind {
-                case .scene(let name, let outputRelativePath):
-                    sceneNamesByKey[outputRelativePath] = name
-                    sceneFiles[outputRelativePath] = fileURL
-                case .room(let sceneName, let roomName, let outputRelativePath):
-                    sceneNamesByKey[outputRelativePath] = sceneName
-                    roomFiles[outputRelativePath, default: []].append(
-                        RoomAssetFile(roomName: roomName, fileURL: fileURL)
+                for case let fileURL as URL in enumerator {
+                    let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
+                    guard values.isRegularFile == true else {
+                        continue
+                    }
+
+                    let relativePath = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
+                    guard let assetKind = classifyAsset(relativePath: relativePath) else {
+                        continue
+                    }
+
+                    register(
+                        assetKind: assetKind,
+                        fileURL: fileURL,
+                        sceneNamesByKey: &sceneNamesByKey,
+                        sceneFiles: &sceneFiles,
+                        roomFiles: &roomFiles
                     )
                 }
             }
@@ -208,6 +221,74 @@ private extension SceneExtractor {
                 roomFiles: (roomFiles[key] ?? []).sorted { $0.roomName < $1.roomName }
             )
         }
+    }
+
+    static func register(
+        assetKind: AssetKind,
+        fileURL: URL,
+        sceneNamesByKey: inout [String: String],
+        sceneFiles: inout [String: URL],
+        roomFiles: inout [String: [RoomAssetFile]]
+    ) {
+        switch assetKind {
+        case .scene(let name, let outputRelativePath):
+            sceneNamesByKey[outputRelativePath] = name
+            sceneFiles[outputRelativePath] = fileURL
+        case .room(let sceneName, let roomName, let outputRelativePath):
+            sceneNamesByKey[outputRelativePath] = sceneName
+            roomFiles[outputRelativePath, default: []].append(
+                RoomAssetFile(roomName: roomName, fileURL: fileURL)
+            )
+        }
+    }
+
+    static func sceneAssetSourceFiles(in root: URL, fileManager: FileManager) throws -> [URL]? {
+        let sourceListURL = root
+            .appendingPathComponent("tools", isDirectory: true)
+            .appendingPathComponent("assets", isDirectory: true)
+            .appendingPathComponent("extract", isDirectory: true)
+            .appendingPathComponent("write_source.txt")
+        guard fileManager.fileExists(atPath: sourceListURL.path) else {
+            return nil
+        }
+
+        let sourceList = try readSource(at: sourceListURL)
+        let canonicalRelativePaths = sourceList
+            .split(whereSeparator: \.isNewline)
+            .map(String.init)
+            .filter { $0.hasPrefix("assets/scenes/") }
+            .filter { $0.hasSuffix("_scene.c") || firstMatch(of: try! NSRegularExpression(pattern: #"_room_\d+\.c$"#), in: $0) != nil }
+
+        var resolvedFiles: [URL] = []
+        var seenPaths: Set<String> = []
+
+        for relativePath in canonicalRelativePaths {
+            let directURL = root.appendingPathComponent(relativePath)
+            if fileManager.fileExists(atPath: directURL.path), seenPaths.insert(directURL.path).inserted {
+                resolvedFiles.append(directURL)
+            }
+        }
+
+        let extractedRoot = root.appendingPathComponent("extracted", isDirectory: true)
+        if
+            fileManager.fileExists(atPath: extractedRoot.path),
+            let versions = try? fileManager.contentsOfDirectory(
+                at: extractedRoot,
+                includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )
+        {
+            for versionRoot in versions {
+                for relativePath in canonicalRelativePaths {
+                    let extractedURL = versionRoot.appendingPathComponent(relativePath)
+                    if fileManager.fileExists(atPath: extractedURL.path), seenPaths.insert(extractedURL.path).inserted {
+                        resolvedFiles.append(extractedURL)
+                    }
+                }
+            }
+        }
+
+        return resolvedFiles
     }
 
     static func sceneAssetRoots(in root: URL, fileManager: FileManager) -> [URL] {

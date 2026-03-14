@@ -146,6 +146,48 @@ final class SceneExtractorTests: XCTestCase {
         XCTAssertEqual(actors.rooms[0].actors.count, 78)
     }
 
+    func testExtractUsesCanonicalWriteSourceListWhenSceneFoldersContainExtraFragments() throws {
+        let source = try makeFixtureSource(includeWriteSourceManifest: true)
+        let output = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: output)
+        }
+
+        try write(
+            """
+            static u32 spot04_sceneNoise[] = {
+                0xDEADBEEF,
+            };
+            """,
+            to: source.appendingPathComponent("assets/scenes/overworld/spot04/scene/noise.inc.c")
+        )
+        try write(
+            """
+            static u32 spot04_room_0Noise[] = {
+                0xCAFEBABE,
+            };
+            """,
+            to: source.appendingPathComponent("assets/scenes/overworld/spot04/room_0/noise.inc.c")
+        )
+
+        try seedActorTableManifest(at: output)
+
+        let extractor = SceneExtractor()
+        try extractor.extract(using: OOTExtractionContext(source: source, output: output))
+
+        let sceneDirectory = try metadataDirectory(in: output)
+        let actors = try decode(SceneActorsFile.self, from: sceneDirectory.appendingPathComponent("actors.json"))
+        let environment = try decode(
+            SceneEnvironmentFile.self,
+            from: sceneDirectory.appendingPathComponent("environment.json")
+        )
+
+        XCTAssertEqual(actors.sceneName, "spot04")
+        XCTAssertEqual(actors.rooms[0].actors.count, 78)
+        XCTAssertEqual(environment.lightSettings.count, 12)
+    }
+
     func testExtractIgnoresNonAssetSceneLikeSources() throws {
         let source = try makeTemporaryDirectory()
         let output = try makeTemporaryDirectory()
@@ -191,7 +233,8 @@ final class SceneExtractorTests: XCTestCase {
     private func makeFixtureSource(
         sceneSource: String = sceneSourceFixture,
         roomSource: String = roomSourceFixture,
-        assetRootComponents: [String] = ["assets", "scenes"]
+        assetRootComponents: [String] = ["assets", "scenes"],
+        includeWriteSourceManifest: Bool = false
     ) throws -> URL {
         let root = try makeTemporaryDirectory()
         let sceneDirectory = assetRootComponents
@@ -205,6 +248,15 @@ final class SceneExtractorTests: XCTestCase {
         try write(sceneSource, to: sceneDirectory.appendingPathComponent("spot04_scene.c"))
         try write(roomSource, to: sceneDirectory.appendingPathComponent("spot04_room_0.c"))
         try write(entranceTableFixture, to: root.appendingPathComponent("include/tables/entrance_table.h"))
+        if includeWriteSourceManifest {
+            try write(
+                """
+                assets/scenes/overworld/spot04/spot04_scene.c
+                assets/scenes/overworld/spot04/spot04_room_0.c
+                """,
+                to: root.appendingPathComponent("tools/assets/extract/write_source.txt")
+            )
+        }
 
         return root
     }
