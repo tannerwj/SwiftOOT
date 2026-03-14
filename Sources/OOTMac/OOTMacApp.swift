@@ -4,7 +4,7 @@ import OOTUI
 @main
 struct OOTMacApp: App {
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("SwiftOOT") {
             OOTAppView()
                 .frame(minWidth: 960, minHeight: 540)
         }
