@@ -13,6 +13,7 @@ final class OOTDataModelTests: XCTestCase {
         assertCodableAndSendable(RoomManifest.self)
         assertCodableAndSendable(ActorProfile.self)
         assertCodableAndSendable(TextureDescriptor.self)
+        assertCodableAndSendable(TextureAssetMetadata.self)
         assertCodableAndSendable(SceneTableEntry.self)
         assertCodableAndSendable(ActorTableEntry.self)
         assertCodableAndSendable(ObjectTableEntry.self)

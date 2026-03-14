@@ -16,13 +16,17 @@ final class OOTRenderTests: XCTestCase {
         XCTAssertEqual(OOTRenderer.preferredFramesPerSecond, 60)
     }
 
-    func testRendererBundleContainsCompiledShaderLibrary() {
-        let shaderLibraryURL = OOTRenderer.resourceBundle.url(
-            forResource: "default",
-            withExtension: "metallib"
+    func testRendererCanLoadShaderLibrary() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("Metal is unavailable on this host")
+        }
+
+        let library = try OOTRenderer.makeLibrary(
+            device: device,
+            bundle: OOTRenderer.resourceBundle
         )
 
-        XCTAssertNotNil(shaderLibraryURL)
+        XCTAssertNotNil(library.makeFunction(name: "oot_passthrough_vertex"))
     }
 
     func testFrameUniformsAndCombinerUniformsMatchMetalPacking() {

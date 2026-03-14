@@ -154,7 +154,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         commandBuffer.waitUntilCompleted()
     }
 
-    private static func makeLibrary(
+    static func makeLibrary(
         device: MTLDevice,
         bundle: Bundle
     ) throws -> MTLLibrary {
@@ -163,13 +163,21 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         }
 
         guard let library = device.makeDefaultLibrary() else {
-            throw OOTRendererError.shaderLibraryUnavailable
+            let shaderSourceURL = URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .appendingPathComponent("OOTShaders.metal")
+
+            guard let shaderSource = try? String(contentsOf: shaderSourceURL) else {
+                throw OOTRendererError.shaderLibraryUnavailable
+            }
+
+            return try device.makeLibrary(source: shaderSource, options: nil)
         }
 
         return library
     }
 
-    private static func makeFunction(
+    static func makeFunction(
         named name: String,
         in library: MTLLibrary
     ) throws -> MTLFunction {
@@ -289,7 +297,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
             }
         }
 
-        fatalError("Missing \(bundleName).bundle")
+        return Bundle(for: BundleToken.self)
     }
 }
 

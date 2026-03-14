@@ -43,6 +43,13 @@ struct N64VertexIn {
     float4 color [[attribute(2)]];
 };
 
+struct DrawBatchVertexIn {
+    float4 clipPosition [[attribute(0)]];
+    float4 color [[attribute(1)]];
+    float2 texCoord [[attribute(2)]];
+    float fog [[attribute(3)]];
+};
+
 vertex VertexOut oot_passthrough_vertex(
     N64VertexIn rawVertex [[stage_in]],
     constant FrameUniforms& frameUniforms [[buffer(1)]],
@@ -65,6 +72,21 @@ vertex VertexOut oot_passthrough_vertex(
     out.color = vertexIn.color;
     out.fog = clamp((fogEnd - viewDistance) / (fogEnd - fogStart), 0.0, 1.0);
     return out;
+}
+
+vertex VertexOut oot_draw_batch_vertex(
+    DrawBatchVertexIn vertexIn [[stage_in]]
+) {
+    VertexOut out;
+    out.position = vertexIn.clipPosition;
+    out.texCoord = vertexIn.texCoord;
+    out.color = vertexIn.color;
+    out.fog = vertexIn.fog;
+    return out;
+}
+
+fragment float4 oot_flat_color_fragment(VertexOut in [[stage_in]]) {
+    return in.color;
 }
 
 constant uint kCombinerCombined = 0;
