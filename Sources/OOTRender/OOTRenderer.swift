@@ -1,6 +1,7 @@
 import Foundation
 import Metal
 import MetalKit
+import OOTDataModel
 import simd
 
 public enum OOTRendererError: Error {
@@ -28,6 +29,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     public let device: MTLDevice
     public let commandQueue: MTLCommandQueue
     public let renderPipelineState: MTLRenderPipelineState
+    let vertexDescriptor: MTLVertexDescriptor
 
     public init(bundle: Bundle = resourceBundle) throws {
         guard let device = MTLCreateSystemDefaultDevice() else {
@@ -44,17 +46,20 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
             in: library
         )
         let fragmentFunction = try Self.makeFunction(
-            named: "oot_solid_color_fragment",
+            named: "oot_flat_color_fragment",
             in: library
         )
+        let vertexDescriptor = makeN64VertexDescriptor()
         let pipelineDescriptor = MTLRenderPipelineDescriptor()
         pipelineDescriptor.label = "OOTRenderPipeline"
         pipelineDescriptor.vertexFunction = vertexFunction
         pipelineDescriptor.fragmentFunction = fragmentFunction
+        pipelineDescriptor.vertexDescriptor = vertexDescriptor
         pipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
 
         self.device = device
         self.commandQueue = commandQueue
+        self.vertexDescriptor = vertexDescriptor
         self.renderPipelineState = try device.makeRenderPipelineState(
             descriptor: pipelineDescriptor
         )
@@ -84,12 +89,44 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
             return
         }
 
-        encodeFrame(with: commandBuffer, renderPassDescriptor: renderPassDescriptor)
+        encodeFrame(
+            with: commandBuffer,
+            renderPassDescriptor: renderPassDescriptor,
+            vertices: Self.defaultTriangleVertices,
+            frameUniforms: Self.defaultFrameUniforms,
+            combinerUniforms: CombinerUniforms()
+        )
         commandBuffer.present(drawable)
         commandBuffer.commit()
     }
 
     func renderToTexture(_ texture: MTLTexture) {
+        renderToTexture(
+            texture,
+            vertices: Self.defaultTriangleVertices,
+            frameUniforms: Self.defaultFrameUniforms
+        )
+    }
+
+    func renderToTexture(
+        _ texture: MTLTexture,
+        frameUniforms: FrameUniforms,
+        combinerUniforms: CombinerUniforms = CombinerUniforms()
+    ) {
+        renderToTexture(
+            texture,
+            vertices: Self.defaultTriangleVertices,
+            frameUniforms: frameUniforms,
+            combinerUniforms: combinerUniforms
+        )
+    }
+
+    func renderToTexture(
+        _ texture: MTLTexture,
+        vertices: [N64Vertex],
+        frameUniforms: FrameUniforms,
+        combinerUniforms: CombinerUniforms = CombinerUniforms()
+    ) {
         let renderPassDescriptor = MTLRenderPassDescriptor()
         renderPassDescriptor.colorAttachments[0].texture = texture
         renderPassDescriptor.colorAttachments[0].loadAction = .clear
@@ -100,7 +137,13 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
             return
         }
 
-        encodeFrame(with: commandBuffer, renderPassDescriptor: renderPassDescriptor)
+        encodeFrame(
+            with: commandBuffer,
+            renderPassDescriptor: renderPassDescriptor,
+            vertices: vertices,
+            frameUniforms: frameUniforms,
+            combinerUniforms: combinerUniforms
+        )
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
     }
@@ -133,8 +176,15 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
 
     private func encodeFrame(
         with commandBuffer: MTLCommandBuffer,
-        renderPassDescriptor: MTLRenderPassDescriptor
+        renderPassDescriptor: MTLRenderPassDescriptor,
+        vertices: [N64Vertex],
+        frameUniforms: FrameUniforms,
+        combinerUniforms: CombinerUniforms
     ) {
+        guard !vertices.isEmpty else {
+            return
+        }
+
         guard let renderCommandEncoder = commandBuffer.makeRenderCommandEncoder(
             descriptor: renderPassDescriptor
         ) else {
@@ -142,7 +192,36 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         }
 
         renderCommandEncoder.setRenderPipelineState(renderPipelineState)
-        renderCommandEncoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        vertices.withUnsafeBytes { bytes in
+            guard let baseAddress = bytes.baseAddress else {
+                return
+            }
+
+            renderCommandEncoder.setVertexBytes(
+                baseAddress,
+                length: bytes.count,
+                index: OOTRenderBufferIndex.vertices.rawValue
+            )
+        }
+
+        var frameUniforms = frameUniforms
+        renderCommandEncoder.setVertexBytes(
+            &frameUniforms,
+            length: MemoryLayout<FrameUniforms>.stride,
+            index: OOTRenderBufferIndex.frameUniforms.rawValue
+        )
+
+        var combinerUniforms = combinerUniforms
+        renderCommandEncoder.setVertexBytes(
+            &combinerUniforms,
+            length: MemoryLayout<CombinerUniforms>.stride,
+            index: OOTRenderBufferIndex.combinerUniforms.rawValue
+        )
+        renderCommandEncoder.drawPrimitives(
+            type: .triangle,
+            vertexStart: 0,
+            vertexCount: vertices.count
+        )
         renderCommandEncoder.endEncoding()
     }
 
@@ -170,3 +249,30 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
 }
 
 private final class BundleToken {}
+
+private extension OOTRenderer {
+    static let defaultTriangleVertices: [N64Vertex] = [
+        N64Vertex(
+            position: Vector3s(x: -1, y: -1, z: 0),
+            flag: 0,
+            textureCoordinate: Vector2s(x: 0, y: 0),
+            colorOrNormal: RGBA8(red: 255, green: 0, blue: 0, alpha: 255)
+        ),
+        N64Vertex(
+            position: Vector3s(x: 1, y: -1, z: 0),
+            flag: 0,
+            textureCoordinate: Vector2s(x: 32, y: 0),
+            colorOrNormal: RGBA8(red: 255, green: 0, blue: 0, alpha: 255)
+        ),
+        N64Vertex(
+            position: Vector3s(x: 0, y: 1, z: 0),
+            flag: 0,
+            textureCoordinate: Vector2s(x: 16, y: 32),
+            colorOrNormal: RGBA8(red: 255, green: 0, blue: 0, alpha: 255)
+        ),
+    ]
+
+    static let defaultFrameUniforms = FrameUniforms(
+        mvp: simd_float4x4(diagonal: SIMD4<Float>(0.5, 0.5, 1.0, 1.0))
+    )
+}
