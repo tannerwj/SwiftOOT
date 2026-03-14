@@ -1,5 +1,5 @@
 import XCTest
-@testable import OOTExtractCLI
+@testable import OOTExtractSupport
 @testable import OOTDataModel
 
 final class DisplayListParserTests: XCTestCase {

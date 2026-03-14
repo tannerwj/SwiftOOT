@@ -9,9 +9,17 @@ let package = Package(
             name: "OOTDataModel",
             targets: ["OOTDataModel"]
         ),
+        .library(
+            name: "OOTExtractSupport",
+            targets: ["OOTExtractSupport"]
+        ),
         .executable(
             name: "OOTExtractCLI",
             targets: ["OOTExtractCLI"]
+        ),
+        .library(
+            name: "OOTRender",
+            targets: ["OOTRender"]
         ),
     ],
     dependencies: [
@@ -21,12 +29,21 @@ let package = Package(
         .target(
             name: "OOTDataModel"
         ),
+        .target(
+            name: "OOTExtractSupport",
+            dependencies: ["OOTDataModel"]
+        ),
         .executableTarget(
             name: "OOTExtractCLI",
             dependencies: [
-                "OOTDataModel",
+                "OOTExtractSupport",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ]
+        ),
+        .target(
+            name: "OOTRender",
+            dependencies: ["OOTDataModel"],
+            exclude: ["OOTShaders.metal"]
         ),
         .testTarget(
             name: "OOTDataModelTests",
@@ -34,7 +51,11 @@ let package = Package(
         ),
         .testTarget(
             name: "OOTExtractCLITests",
-            dependencies: ["OOTExtractCLI", "OOTDataModel"]
+            dependencies: ["OOTExtractSupport", "OOTDataModel"]
+        ),
+        .testTarget(
+            name: "OOTRenderTests",
+            dependencies: ["OOTRender", "OOTDataModel"]
         ),
     ]
 )
