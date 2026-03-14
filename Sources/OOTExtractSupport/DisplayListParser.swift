@@ -729,6 +729,8 @@ struct CMacroPreprocessor {
             "c",
             wrapperURL.path,
             "-I",
+            sourceRoot.appendingPathComponent("build").path,
+            "-I",
             sourceRoot.path,
             "-I",
             sourceRoot.appendingPathComponent("include").path,
