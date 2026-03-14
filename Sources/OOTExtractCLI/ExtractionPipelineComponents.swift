@@ -26,10 +26,6 @@ extension OOTExtractionPipelineComponent {
     }
 }
 
-struct TableExtractor: OOTExtractionPipelineComponent {
-    let name = "TableExtractor"
-}
-
 struct SceneExtractor: OOTExtractionPipelineComponent {
     let name = "SceneExtractor"
 }
