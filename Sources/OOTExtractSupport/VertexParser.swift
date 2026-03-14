@@ -1,6 +1,11 @@
 import Foundation
 import OOTDataModel
 
+struct ParsedVertexArray: Equatable, Sendable {
+    let name: String
+    let vertices: [N64Vertex]
+}
+
 extension VertexParser {
     public func extract(using context: OOTExtractionContext) throws {
         let fileManager = FileManager.default
@@ -44,14 +49,15 @@ extension VertexParser {
 
         print("[\(name)] verified \(vertexFiles.count) vertex binary file(s)")
     }
+
+    func parseVertexArrays(in fileURL: URL, sourceRoot: URL) throws -> [ParsedVertexArray] {
+        let preprocessedContents = try? CMacroPreprocessor().preprocess(fileURL: fileURL, sourceRoot: sourceRoot)
+        let contents = try preprocessedContents ?? String(contentsOf: fileURL, encoding: .utf8)
+        return try Self.parseVertexArrays(in: contents)
+    }
 }
 
-private extension VertexParser {
-    struct ParsedVertexArray {
-        let name: String
-        let vertices: [N64Vertex]
-    }
-
+extension VertexParser {
     static let integerPattern = #"([+-]?(?:0[xX][0-9A-Fa-f]+|\d+))"#
 
     static let arrayExpression = try! NSRegularExpression(
@@ -60,7 +66,7 @@ private extension VertexParser {
     )
 
     static let vertexExpression = try! NSRegularExpression(
-        pattern: #"VTX\(\s*\#(integerPattern),\s*\#(integerPattern),\s*\#(integerPattern),\s*\#(integerPattern),\s*\#(integerPattern),\s*\#(integerPattern),\s*\#(integerPattern),\s*\#(integerPattern),\s*\#(integerPattern),\s*\#(integerPattern)\s*\)"#
+        pattern: #"VTX\(\s*\#(integerPattern),\s*\#(integerPattern),\s*\#(integerPattern),\s*\#(integerPattern),\s*\#(integerPattern),\s*\#(integerPattern),\s*\#(integerPattern),\s*\#(integerPattern),\s*\#(integerPattern)\s*\)"#
     )
 
     static func vertexSourceFiles(in root: URL, fileManager: FileManager) throws -> [URL] {
@@ -137,15 +143,15 @@ private extension VertexParser {
         let searchRange = NSRange(body.startIndex..<body.endIndex, in: body)
 
         return try vertexExpression.matches(in: body, range: searchRange).map { match in
-            let values = try (1...10).map { index in
+            let values = try (1...9).map { index in
                 try parseIntegerLiteral(capturedGroup(index, from: match, in: body))
             }
 
             let color = RGBA8(
-                red: try parseUInt8(values[6], field: "r"),
-                green: try parseUInt8(values[7], field: "g"),
-                blue: try parseUInt8(values[8], field: "b"),
-                alpha: try parseUInt8(values[9], field: "a")
+                red: try parseUInt8(values[5], field: "r"),
+                green: try parseUInt8(values[6], field: "g"),
+                blue: try parseUInt8(values[7], field: "b"),
+                alpha: try parseUInt8(values[8], field: "a")
             )
 
             return N64Vertex(
@@ -154,10 +160,10 @@ private extension VertexParser {
                     y: try parseSigned16(values[1], field: "y"),
                     z: try parseSigned16(values[2], field: "z")
                 ),
-                flag: try parseUnsigned16(values[3], field: "flag"),
+                flag: 0,
                 textureCoordinate: Vector2s(
-                    x: try parseSigned16(values[4], field: "u"),
-                    y: try parseSigned16(values[5], field: "v")
+                    x: try parseSigned16(values[3], field: "u"),
+                    y: try parseSigned16(values[4], field: "v")
                 ),
                 colorOrNormal: color
             )
@@ -265,6 +271,40 @@ private extension VertexParser {
         return data
     }
 
+    static func decode(_ data: Data, path: String = "<memory>") throws -> [N64Vertex] {
+        guard data.count.isMultiple(of: MemoryLayout<N64Vertex>.size) else {
+            throw VertexParserError.invalidBinarySize(path, data.count)
+        }
+
+        var vertices: [N64Vertex] = []
+        vertices.reserveCapacity(data.count / MemoryLayout<N64Vertex>.size)
+
+        var offset = data.startIndex
+        while offset < data.endIndex {
+            let x = try readInteger(from: data, offset: &offset, as: Int16.self)
+            let y = try readInteger(from: data, offset: &offset, as: Int16.self)
+            let z = try readInteger(from: data, offset: &offset, as: Int16.self)
+            let flag = try readInteger(from: data, offset: &offset, as: UInt16.self)
+            let u = try readInteger(from: data, offset: &offset, as: Int16.self)
+            let v = try readInteger(from: data, offset: &offset, as: Int16.self)
+            let red = try readInteger(from: data, offset: &offset, as: UInt8.self)
+            let green = try readInteger(from: data, offset: &offset, as: UInt8.self)
+            let blue = try readInteger(from: data, offset: &offset, as: UInt8.self)
+            let alpha = try readInteger(from: data, offset: &offset, as: UInt8.self)
+
+            vertices.append(
+                N64Vertex(
+                    position: Vector3s(x: x, y: y, z: z),
+                    flag: flag,
+                    textureCoordinate: Vector2s(x: u, y: v),
+                    colorOrNormal: RGBA8(red: red, green: green, blue: blue, alpha: alpha)
+                )
+            )
+        }
+
+        return vertices
+    }
+
     static func outputDirectory(for sourceFile: URL, sourceRoot: URL, outputRoot: URL) throws -> URL {
         let rootPath = sourceRoot.standardizedFileURL.path
         let directoryPath = sourceFile.deletingLastPathComponent().standardizedFileURL.path
@@ -296,6 +336,23 @@ private extension VertexParser {
         }
 
         return fileSize.intValue
+    }
+
+    private static func readInteger<T: FixedWidthInteger>(
+        from data: Data,
+        offset: inout Data.Index,
+        as type: T.Type
+    ) throws -> T {
+        let end = offset + MemoryLayout<T>.size
+        guard end <= data.endIndex else {
+            throw VertexParserError.invalidBinarySize("<memory>", data.count)
+        }
+
+        let value = data[offset..<end].withUnsafeBytes { rawBuffer in
+            rawBuffer.load(as: T.self)
+        }
+        offset = end
+        return T(bigEndian: value)
     }
 }
 
