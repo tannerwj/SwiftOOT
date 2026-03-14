@@ -4,7 +4,45 @@ import PackageDescription
 
 let package = Package(
     name: "SwiftOOT",
+    products: [
+        .library(
+            name: "OOTDataModel",
+            targets: ["OOTDataModel"]
+        ),
+        .library(
+            name: "OOTExtractSupport",
+            targets: ["OOTExtractSupport"]
+        ),
+        .executable(
+            name: "OOTExtractCLI",
+            targets: ["OOTExtractCLI"]
+        ),
+    ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
+    ],
+    targets: [
+        .target(
+            name: "OOTDataModel"
+        ),
+        .target(
+            name: "OOTExtractSupport",
+            dependencies: ["OOTDataModel"]
+        ),
+        .executableTarget(
+            name: "OOTExtractCLI",
+            dependencies: [
+                "OOTExtractSupport",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ]
+        ),
+        .testTarget(
+            name: "OOTDataModelTests",
+            dependencies: ["OOTDataModel"]
+        ),
+        .testTarget(
+            name: "OOTExtractCLITests",
+            dependencies: ["OOTExtractSupport", "OOTDataModel"]
+        ),
     ]
 )

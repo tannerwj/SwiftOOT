@@ -25,7 +25,7 @@ public protocol OOTExtractionPipelineComponent: Sendable {
     func verify(using context: OOTVerificationContext) throws
 }
 
-extension OOTExtractionPipelineComponent {
+public extension OOTExtractionPipelineComponent {
     public func extract(using context: OOTExtractionContext) throws {
         print("[\(name)] extract \(context.source.path) -> \(context.output.path)")
     }
@@ -33,12 +33,6 @@ extension OOTExtractionPipelineComponent {
     public func verify(using context: OOTVerificationContext) throws {
         print("[\(name)] verify \(context.content.path)")
     }
-}
-
-public struct TableExtractor: OOTExtractionPipelineComponent {
-    public let name = "TableExtractor"
-
-    public init() {}
 }
 
 public struct SceneExtractor: OOTExtractionPipelineComponent {
