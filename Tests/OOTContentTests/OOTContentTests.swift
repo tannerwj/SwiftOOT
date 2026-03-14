@@ -2,7 +2,9 @@ import XCTest
 @testable import OOTContent
 
 final class OOTContentTests: XCTestCase {
-    func testPlaceholderCompiles() {
-        _ = OOTContentModule()
+    func testContentLoaderConformsToProtocol() {
+        let loader: any ContentLoading = ContentLoader()
+
+        XCTAssertNotNil(loader)
     }
 }

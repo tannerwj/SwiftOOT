@@ -2,7 +2,10 @@ import XCTest
 @testable import OOTCore
 
 final class OOTCoreTests: XCTestCase {
-    func testPlaceholderCompiles() {
-        _ = OOTCoreModule()
+    @MainActor
+    func testGameRuntimeStartsIdle() {
+        let runtime = GameRuntime()
+
+        XCTAssertEqual(runtime.state, .idle)
     }
 }
