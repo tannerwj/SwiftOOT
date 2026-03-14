@@ -13,6 +13,10 @@ let package = Package(
             name: "OOTExtractCLI",
             targets: ["OOTExtractCLI"]
         ),
+        .library(
+            name: "OOTRender",
+            targets: ["OOTRender"]
+        ),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
@@ -28,6 +32,11 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ]
         ),
+        .target(
+            name: "OOTRender",
+            dependencies: ["OOTDataModel"],
+            exclude: ["OOTShaders.metal"]
+        ),
         .testTarget(
             name: "OOTDataModelTests",
             dependencies: ["OOTDataModel"]
@@ -35,6 +44,10 @@ let package = Package(
         .testTarget(
             name: "OOTExtractCLITests",
             dependencies: ["OOTExtractCLI", "OOTDataModel"]
+        ),
+        .testTarget(
+            name: "OOTRenderTests",
+            dependencies: ["OOTRender", "OOTDataModel"]
         ),
     ]
 )
