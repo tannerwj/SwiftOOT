@@ -3,10 +3,12 @@ import Foundation
 public struct OOTExtractionContext: Sendable {
     public let source: URL
     public let output: URL
+    public let sceneName: String?
 
-    public init(source: URL, output: URL) {
+    public init(source: URL, output: URL, sceneName: String? = nil) {
         self.source = source
         self.output = output
+        self.sceneName = sceneName
     }
 }
 

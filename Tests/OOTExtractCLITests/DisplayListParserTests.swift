@@ -5,7 +5,7 @@ import XCTest
 final class DisplayListParserTests: XCTestCase {
     func testParserBuildsCommandsForRequiredMacroSet() throws {
         let fixtureRoot = try makeFixtureRoot()
-        let sourceFile = fixtureRoot.appending(path: "scene.c")
+        let sourceFile = fixtureRoot.appendingPathComponent("scene.c")
         try fixtureSource().write(to: sourceFile, atomically: true, encoding: .utf8)
 
         let parser = DisplayListParser()
@@ -18,8 +18,8 @@ final class DisplayListParserTests: XCTestCase {
 
     func testExtractorWritesJsonForIncludeBackedDisplayListArray() throws {
         let fixtureRoot = try makeFixtureRoot()
-        let assetsDirectory = fixtureRoot.appending(path: "assets", directoryHint: .isDirectory)
-        let objectDirectory = assetsDirectory.appending(path: "objects", directoryHint: .isDirectory)
+        let assetsDirectory = fixtureRoot.appendingPathComponent("assets", isDirectory: true)
+        let objectDirectory = assetsDirectory.appendingPathComponent("objects", isDirectory: true)
         try FileManager.default.createDirectory(at: objectDirectory, withIntermediateDirectories: true)
 
         let includeSource = """
@@ -28,7 +28,7 @@ final class DisplayListParserTests: XCTestCase {
         gsSPEndDisplayList(),
         """
         try includeSource.write(
-            to: objectDirectory.appending(path: "gSimpleDL.inc.c"),
+            to: objectDirectory.appendingPathComponent("gSimpleDL.inc.c"),
             atomically: true,
             encoding: .utf8
         )
@@ -40,17 +40,17 @@ final class DisplayListParserTests: XCTestCase {
         #include "assets/objects/gSimpleDL.inc.c"
         };
         """
-        let sourceFile = fixtureRoot.appending(path: "object.c")
+        let sourceFile = fixtureRoot.appendingPathComponent("object.c")
         try source.write(to: sourceFile, atomically: true, encoding: .utf8)
 
-        let outputRoot = fixtureRoot.appending(path: "Output", directoryHint: .isDirectory)
+        let outputRoot = fixtureRoot.appendingPathComponent("Output", isDirectory: true)
         try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true)
 
         try DisplayListParser().extract(using: OOTExtractionContext(source: fixtureRoot, output: outputRoot))
 
         let outputFile = try XCTUnwrap(
             FileManager.default.enumerator(
-                at: outputRoot.appending(path: "DisplayLists", directoryHint: .isDirectory),
+                at: outputRoot.appendingPathComponent("DisplayLists", isDirectory: true),
                 includingPropertiesForKeys: nil
             )?
             .compactMap { $0 as? URL }
@@ -77,21 +77,21 @@ final class DisplayListParserTests: XCTestCase {
 
     private func makeFixtureRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory
-            .appending(path: "swiftoot-displaylists-\(UUID().uuidString)", directoryHint: .isDirectory)
+            .appendingPathComponent("swiftoot-displaylists-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-        let includeDirectory = root.appending(path: "include/ultra64", directoryHint: .isDirectory)
+        let includeDirectory = root.appendingPathComponent("include/ultra64", isDirectory: true)
         try FileManager.default.createDirectory(at: includeDirectory, withIntermediateDirectories: true)
 
         try fixtureHeader().write(
-            to: includeDirectory.appending(path: "gbi.h"),
+            to: includeDirectory.appendingPathComponent("gbi.h"),
             atomically: true,
             encoding: .utf8
         )
         try """
         #include "ultra64/gbi.h"
         """.write(
-            to: root.appending(path: "gfx.h"),
+            to: root.appendingPathComponent("gfx.h"),
             atomically: true,
             encoding: .utf8
         )
