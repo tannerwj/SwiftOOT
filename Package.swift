@@ -5,32 +5,49 @@ import PackageDescription
 let package = Package(
     name: "SwiftOOT",
     products: [
-        .library(name: "OOTDataModel", targets: ["OOTDataModel"]),
-        .library(name: "OOTRender", targets: ["OOTRender"]),
+        .library(
+            name: "OOTDataModel",
+            targets: ["OOTDataModel"]
+        ),
+        .executable(
+            name: "OOTExtractCLI",
+            targets: ["OOTExtractCLI"]
+        ),
+        .library(
+            name: "OOTRender",
+            targets: ["OOTRender"]
+        ),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
     ],
     targets: [
         .target(
-            name: "OOTDataModel",
-            path: "Sources/OOTDataModel"
+            name: "OOTDataModel"
+        ),
+        .executableTarget(
+            name: "OOTExtractCLI",
+            dependencies: [
+                "OOTDataModel",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ]
         ),
         .target(
             name: "OOTRender",
             dependencies: ["OOTDataModel"],
-            path: "Sources/OOTRender",
             exclude: ["OOTShaders.metal"]
         ),
         .testTarget(
             name: "OOTDataModelTests",
-            dependencies: ["OOTDataModel"],
-            path: "Tests/OOTDataModelTests"
+            dependencies: ["OOTDataModel"]
+        ),
+        .testTarget(
+            name: "OOTExtractCLITests",
+            dependencies: ["OOTExtractCLI", "OOTDataModel"]
         ),
         .testTarget(
             name: "OOTRenderTests",
-            dependencies: ["OOTRender", "OOTDataModel"],
-            path: "Tests/OOTRenderTests"
+            dependencies: ["OOTRender", "OOTDataModel"]
         ),
     ]
 )
