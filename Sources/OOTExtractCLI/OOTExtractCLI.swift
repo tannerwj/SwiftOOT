@@ -1,6 +1,8 @@
 import ArgumentParser
 import Foundation
+import OOTExtractSupport
 
+@main
 struct OOTExtractCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "ootextractcli",
@@ -11,8 +13,6 @@ struct OOTExtractCLI: ParsableCommand {
         ]
     )
 }
-
-OOTExtractCLI.main()
 
 extension OOTExtractCLI {
     struct Extract: ParsableCommand {
