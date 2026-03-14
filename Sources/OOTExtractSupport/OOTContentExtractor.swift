@@ -1,18 +1,18 @@
 import Foundation
 
-final class OOTContentExtractor {
+public final class OOTContentExtractor {
     private let pipeline: [any OOTExtractionPipelineComponent]
     private let fileManager: FileManager
 
-    init(
-        pipeline: [any OOTExtractionPipelineComponent] = OOTContentExtractor.makeDefaultPipeline(),
+    public init(
+        pipeline: [any OOTExtractionPipelineComponent]? = nil,
         fileManager: FileManager = .default
     ) {
-        self.pipeline = pipeline
+        self.pipeline = pipeline ?? Self.makeDefaultPipeline()
         self.fileManager = fileManager
     }
 
-    func extract(from source: URL, to output: URL) throws {
+    public func extract(from source: URL, to output: URL) throws {
         guard fileManager.fileExists(atPath: source.path) else {
             throw OOTContentExtractorError.missingPath(source.path)
         }
@@ -29,7 +29,7 @@ final class OOTContentExtractor {
         print("Extraction pipeline complete")
     }
 
-    func verify(contentAt content: URL) throws {
+    public func verify(contentAt content: URL) throws {
         guard fileManager.fileExists(atPath: content.path) else {
             throw OOTContentExtractorError.missingPath(content.path)
         }

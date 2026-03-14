@@ -9,8 +9,8 @@ struct TableManifestCounts: Sendable, Equatable {
     static let pinnedOOT = TableManifestCounts(scenes: 101, actors: 471, objects: 402)
 }
 
-struct TableExtractor: OOTExtractionPipelineComponent {
-    let name = "TableExtractor"
+public struct TableExtractor: OOTExtractionPipelineComponent {
+    public let name = "TableExtractor"
 
     private let parser: CHeaderParser
     private let expectedCounts: TableManifestCounts
@@ -23,7 +23,7 @@ struct TableExtractor: OOTExtractionPipelineComponent {
         self.expectedCounts = expectedCounts
     }
 
-    func extract(using context: OOTExtractionContext) throws {
+    public func extract(using context: OOTExtractionContext) throws {
         let sceneEntries = try loadSceneEntries(from: context.source)
         let actorEntries = try loadActorEntries(from: context.source)
         let objectEntries = try loadObjectEntries(from: context.source)
@@ -44,7 +44,7 @@ struct TableExtractor: OOTExtractionPipelineComponent {
         print("[\(name)] wrote \(sceneEntries.count) scenes, \(actorEntries.count) actors, \(objectEntries.count) objects")
     }
 
-    func verify(using context: OOTVerificationContext) throws {
+    public func verify(using context: OOTVerificationContext) throws {
         let tablesDirectory = manifestsDirectory(in: context.content)
 
         let sceneEntries: [SceneTableEntry] = try readJSON(

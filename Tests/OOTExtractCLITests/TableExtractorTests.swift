@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-@testable import OOTExtractCLI
+@testable import OOTExtractSupport
 import OOTDataModel
 
 final class TableExtractorTests: XCTestCase {
