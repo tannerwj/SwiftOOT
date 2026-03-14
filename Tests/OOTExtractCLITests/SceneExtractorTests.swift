@@ -188,6 +188,43 @@ final class SceneExtractorTests: XCTestCase {
         XCTAssertEqual(environment.lightSettings.count, 12)
     }
 
+    func testExtractPrefersPrimarySceneCommandsWhenEarlierHeaderLacksEnvironmentSettings() throws {
+        let source = try makeFixtureSource(
+            sceneSource: sceneSourceFixture.replacingOccurrences(
+                of: "SceneCmd spot04_sceneCommands[] = {",
+                with: """
+                SceneCmd spot04_sceneNightHeaderCommands[] = {
+                    SCENE_CMD_ROOM_LIST(1, spot04_sceneRoomList0x000184),
+                    SCENE_CMD_END(),
+                };
+
+                SceneCmd spot04_sceneCommands[] = {
+                """
+            )
+        )
+        let output = try makeTemporaryDirectory()
+        defer {
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: output)
+        }
+
+        try seedActorTableManifest(at: output)
+
+        let extractor = SceneExtractor()
+        try extractor.extract(using: OOTExtractionContext(source: source, output: output))
+
+        let sceneDirectory = try metadataDirectory(in: output)
+        let environment = try decode(
+            SceneEnvironmentFile.self,
+            from: sceneDirectory.appendingPathComponent("environment.json")
+        )
+        let paths = try decode(ScenePathsFile.self, from: sceneDirectory.appendingPathComponent("paths.json"))
+
+        XCTAssertEqual(environment.lightSettings.count, 12)
+        XCTAssertEqual(environment.lightSettings[0].fogNear, 990)
+        XCTAssertEqual(paths.paths.count, 3)
+    }
+
     func testExtractIgnoresNonAssetSceneLikeSources() throws {
         let source = try makeTemporaryDirectory()
         let output = try makeTemporaryDirectory()
