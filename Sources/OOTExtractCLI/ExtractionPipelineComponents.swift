@@ -58,10 +58,6 @@ struct CollisionExtractor: OOTExtractionPipelineComponent {
     let name = "CollisionExtractor"
 }
 
-struct DisplayListParser: OOTExtractionPipelineComponent {
-    let name = "DisplayListParser"
-}
-
 struct VertexParser: OOTExtractionPipelineComponent {
     let name = "VertexParser"
 }
