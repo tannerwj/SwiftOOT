@@ -75,6 +75,131 @@ final class DisplayListParserTests: XCTestCase {
         )
     }
 
+    func testParserSupportsIndexedVertexAddresses() throws {
+        let fixtureRoot = try makeFixtureRoot()
+        let sourceFile = fixtureRoot.appendingPathComponent("indexed-scene.c")
+        try """
+        #include "gfx.h"
+
+        static Gfx indexedDL[] = {
+            gsSPVertex(&sceneName_Vtx_0000[2], 4, 0),
+            gsSPEndDisplayList(),
+        };
+        """.write(to: sourceFile, atomically: true, encoding: .utf8)
+
+        let displayLists = try DisplayListParser().parseDisplayLists(in: sourceFile, sourceRoot: fixtureRoot)
+
+        XCTAssertEqual(
+            displayLists,
+            [
+                ParsedDisplayList(
+                    name: "indexedDL",
+                    commands: [
+                        .spVertex(
+                            VertexCommand(
+                                address: DisplayListParser.stableID(for: "sceneName_Vtx_0000[2]"),
+                                count: 4,
+                                destinationIndex: 0
+                            )
+                        ),
+                        .spEndDisplayList,
+                    ]
+                ),
+            ]
+        )
+    }
+
+    func testParserExpandsLoadTextureBlockMacro() throws {
+        let fixtureRoot = try makeFixtureRoot()
+        let sourceFile = fixtureRoot.appendingPathComponent("texture-block.c")
+        try """
+        #include "gfx.h"
+
+        static Gfx textureBlockDL[] = {
+            gsDPLoadTextureBlock(sceneMainTex, G_IM_FMT_RGBA, G_IM_SIZ_16b, 32, 32, 0, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, 5, 5, G_TX_NOLOD, G_TX_NOLOD),
+            gsSPEndDisplayList(),
+        };
+        """.write(to: sourceFile, atomically: true, encoding: .utf8)
+
+        let displayLists = try DisplayListParser().parseDisplayLists(in: sourceFile, sourceRoot: fixtureRoot)
+
+        XCTAssertEqual(
+            displayLists,
+            [
+                ParsedDisplayList(
+                    name: "textureBlockDL",
+                    commands: [
+                        .dpSetTextureImage(
+                            ImageDescriptor(
+                                format: .rgba16,
+                                texelSize: .bits16,
+                                width: 1,
+                                address: DisplayListParser.stableID(for: "sceneMainTex")
+                            )
+                        ),
+                        .dpSetTile(
+                            TileDescriptor(
+                                format: .rgba16,
+                                texelSize: .bits16,
+                                line: 0,
+                                tmem: 0,
+                                tile: 7,
+                                palette: 0,
+                                clampS: false,
+                                mirrorS: false,
+                                maskS: 5,
+                                shiftS: 0,
+                                clampT: false,
+                                mirrorT: false,
+                                maskT: 5,
+                                shiftT: 0
+                            )
+                        ),
+                        .dpLoadSync,
+                        .dpLoadBlock(
+                            LoadBlockCommand(
+                                tile: 7,
+                                upperLeftS: 0,
+                                upperLeftT: 0,
+                                texelCount: 1023,
+                                dxt: 256
+                            )
+                        ),
+                        .dpPipeSync,
+                        .dpSetTile(
+                            TileDescriptor(
+                                format: .rgba16,
+                                texelSize: .bits16,
+                                line: 8,
+                                tmem: 0,
+                                tile: 0,
+                                palette: 0,
+                                clampS: false,
+                                mirrorS: false,
+                                maskS: 5,
+                                shiftS: 0,
+                                clampT: false,
+                                mirrorT: false,
+                                maskT: 5,
+                                shiftT: 0
+                            )
+                        ),
+                        .dpSetTileSize(
+                            TileSizeCommand(
+                                tile: 0,
+                                upperLeftS: 0,
+                                upperLeftT: 0,
+                                lowerRightS: 124,
+                                lowerRightT: 124
+                            )
+                        ),
+                        .spEndDisplayList,
+                    ]
+                ),
+            ]
+        )
+    }
+
     private func makeFixtureRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("swiftoot-displaylists-\(UUID().uuidString)", isDirectory: true)
@@ -123,6 +248,7 @@ final class DisplayListParserTests: XCTestCase {
         #define G_IM_SIZ_8b 1
         #define G_IM_SIZ_16b 2
         #define G_IM_SIZ_32b 3
+        #define G_TT_RGBA16 (2 << 14)
 
         #define G_ZBUFFER 0x00000001
         #define G_SHADE 0x00000004
@@ -190,6 +316,7 @@ final class DisplayListParserTests: XCTestCase {
 
         static Gfx sceneMainDL[] = {
             gsSPVertex(sceneName_Vtx_0000, 4, 0),
+            gsSPCullDisplayList(0, 3),
             gsSP1Triangle(0, 1, 2, 0),
             gsSP2Triangles(0, 2, 3, 0, 3, 2, 1, 0),
             gsSPDisplayList(sceneSubDL),
@@ -197,6 +324,7 @@ final class DisplayListParserTests: XCTestCase {
             gsSPMatrix(sceneMainMtx, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION),
             gsSPPopMatrix(G_MTX_MODELVIEW),
             gsSPTexture(0xFFFF, 0x4000, 0, G_TX_RENDERTILE, G_ON),
+            gsDPSetTextureLUT(G_TT_RGBA16),
             gsDPSetTextureImage(G_IM_FMT_RGBA, G_IM_SIZ_16b, sceneTexWidth, sceneMainTex),
             gsDPLoadBlock(G_TX_LOADTILE, 0, 0, 255, 16),
             gsDPLoadTile(G_TX_LOADTILE, 0, 0, 31, 31),
@@ -228,6 +356,7 @@ final class DisplayListParserTests: XCTestCase {
                     destinationIndex: 0
                 )
             ),
+            .spCullDisplayList(CullDisplayListCommand(firstVertex: 0, lastVertex: 3)),
             .sp1Triangle(TriangleCommand(vertex0: 0, vertex1: 1, vertex2: 2, flag: 0)),
             .sp2Triangles(
                 TrianglePairCommand(
@@ -247,6 +376,7 @@ final class DisplayListParserTests: XCTestCase {
             ),
             .spPopMatrix(0),
             .spTexture(TextureState(scaleS: 0xFFFF, scaleT: 0x4000, level: 0, tile: 0, enabled: true)),
+            .dpSetTextureLUT(.rgba16),
             .dpSetTextureImage(
                 ImageDescriptor(
                     format: .rgba16,

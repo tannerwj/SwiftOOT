@@ -281,6 +281,59 @@ final class SceneExtractorTests: XCTestCase {
         )
         XCTAssertEqual(commands.count, 3)
     }
+
+    func testExtractExtractedRoomSourceResolvesAssetRelativeIncludes() throws {
+        let harness = try SceneHarness()
+        defer { harness.cleanup() }
+
+        try harness.writeSceneXML(
+            at: "assets/xml/scenes/overworld/spot04.xml",
+            contents: """
+            <Root>
+                <File Name="spot04_room_0" Segment="3">
+                    <Room Name="spot04_room_0" Offset="0x0"/>
+                </File>
+            </Root>
+            """
+        )
+
+        try harness.writeExtractedRoomSource(
+            extractedRoot: "extracted/ntsc-1.2",
+            sceneDirectory: "assets/scenes/overworld/spot04",
+            roomName: "spot04_room_0",
+            vertexArrayName: "spot04_room_0_03000580_RoomShapeCullable_0300058C_CullableEntries_03002A10_DL_03001270_Vtx_fused_",
+            vertices: """
+            VTX(-1, 2, 3, 0, 4, 5, 6, 7, 8),
+            VTX(10, 11, 12, 0, 13, 14, 15, 16, 17),
+            VTX(19, 20, 21, 0, 22, 23, 24, 25, 26),
+            """,
+            displayList: """
+            gsSPVertex(spot04_room_0_03000580_RoomShapeCullable_0300058C_CullableEntries_03002A10_DL_03001270_Vtx_fused_, 3, 0),
+            gsSP1Triangle(0, 1, 2, 0),
+            gsSPEndDisplayList(),
+            """
+        )
+
+        try SceneExtractor().extract(using: harness.extractionContext(sceneName: "spot04"))
+
+        let roomDirectory = harness.outputRoot
+            .appendingPathComponent("Scenes", isDirectory: true)
+            .appendingPathComponent("spot04", isDirectory: true)
+            .appendingPathComponent("rooms", isDirectory: true)
+            .appendingPathComponent("room_0", isDirectory: true)
+
+        let vertices = try VertexParser.decode(
+            Data(contentsOf: roomDirectory.appendingPathComponent("vtx.bin"))
+        )
+        XCTAssertEqual(vertices.count, 3)
+        XCTAssertEqual(vertices[0].position, Vector3s(x: -1, y: 2, z: 3))
+
+        let commands = try JSONDecoder().decode(
+            [F3DEX2Command].self,
+            from: Data(contentsOf: roomDirectory.appendingPathComponent("dl.json"))
+        )
+        XCTAssertEqual(commands.count, 3)
+    }
 }
 
 private struct SceneHarness {
@@ -386,6 +439,64 @@ private struct SceneHarness {
 
         Gfx \(roomName)DL[] = {
         #include "\(includeDirectory)/\(roomName).dl.inc.c"
+        };
+        """.write(
+            to: directory.appendingPathComponent("\(roomName).c"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        try vertices.write(
+            to: directory.appendingPathComponent("\(roomName).vtx.inc.c"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try displayList.write(
+            to: directory.appendingPathComponent("\(roomName).dl.inc.c"),
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+
+    func writeExtractedRoomSource(
+        extractedRoot: String,
+        sceneDirectory: String,
+        roomName: String,
+        vertexArrayName: String,
+        vertices: String,
+        displayList: String
+    ) throws {
+        let directory = sourceRoot
+            .appendingPathComponent(extractedRoot, isDirectory: true)
+            .appendingPathComponent(sceneDirectory, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        try "".write(
+            to: directory.appendingPathComponent("\(roomName).h"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "".write(
+            to: directory.appendingPathComponent("spot04_scene.h"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        try """
+        #include "\(roomName).h"
+        #include "assets/scenes/overworld/spot04/spot04_scene.h"
+        #include "gfx.h"
+
+        u8 \(roomName)_unaccounted_0006AC[] = {
+        #include "assets/scenes/overworld/spot04/\(roomName)_unaccounted_0006AC.bin.inc.c"
+        };
+
+        Vtx \(vertexArrayName)[] = {
+        #include "assets/scenes/overworld/spot04/\(roomName).vtx.inc.c"
+        };
+
+        Gfx \(roomName)DL[] = {
+        #include "assets/scenes/overworld/spot04/\(roomName).dl.inc.c"
         };
         """.write(
             to: directory.appendingPathComponent("\(roomName).c"),
