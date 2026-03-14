@@ -29,6 +29,9 @@ jobs:
           tuist version
           xcodebuild -version
 
+      - name: Resolve external packages
+        run: tuist install
+
       - name: Generate workspace
         run: tuist generate --no-open
 
