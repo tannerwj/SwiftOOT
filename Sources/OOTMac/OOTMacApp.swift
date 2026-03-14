@@ -1,10 +1,12 @@
 import SwiftUI
+import OOTRender
 
 @main
 struct OOTMacApp: App {
     var body: some Scene {
         WindowGroup {
-            Text("SwiftOOT")
+            MetalView()
+                .frame(minWidth: 960, minHeight: 540)
         }
     }
 }
