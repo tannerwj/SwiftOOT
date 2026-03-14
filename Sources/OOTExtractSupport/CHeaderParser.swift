@@ -242,7 +242,11 @@ struct CHeaderParser: Sendable {
         guard !rawValue.isEmpty else {
             return nil
         }
-        return Int(rawValue, radix: 16)
+
+        let normalized = rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "0x", with: "", options: [.caseInsensitive])
+        return Int(normalized, radix: 16)
     }
 
     private func isActive(_ stack: [ConditionalFrame]) -> Bool {
@@ -265,13 +269,36 @@ struct CHeaderParser: Sendable {
     }
 }
 
-private struct ConditionalFrame: Sendable {
-    let parentActive: Bool
-    var conditionSatisfied: Bool
-    var branchActive: Bool
+private extension CHeaderParser {
+    struct ConditionalFrame {
+        let parentActive: Bool
+        var conditionSatisfied: Bool
+        var branchActive: Bool
+    }
+
+    var invocationRegex: NSRegularExpression {
+        try! NSRegularExpression(
+            pattern: #"^\s*(?:/\*\s*([0-9A-Fa-fx]+)\s*\*/\s*)?([A-Z0-9_]+)\((.*)\)\s*$"#,
+            options: []
+        )
+    }
+
+    var directiveRegex: NSRegularExpression {
+        try! NSRegularExpression(
+            pattern: #"^#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)$"#,
+            options: []
+        )
+    }
+
+    var definedRegex: NSRegularExpression {
+        try! NSRegularExpression(
+            pattern: #"defined\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)"#,
+            options: []
+        )
+    }
 }
 
-enum CHeaderParserError: LocalizedError {
+private enum CHeaderParserError: LocalizedError {
     case unreadableFile(String, Error)
     case unexpectedDirective(String, Int)
     case unterminatedConditional
@@ -279,23 +306,11 @@ enum CHeaderParserError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unreadableFile(let path, let error):
-            return "Failed to read C header at \(path): \(error.localizedDescription)"
-        case .unexpectedDirective(let directive, let lineNumber):
-            return "Unexpected preprocessor directive #\(directive) at line \(lineNumber)"
+            return "Failed to read \(path): \(error.localizedDescription)"
+        case .unexpectedDirective(let directive, let line):
+            return "Unexpected #\(directive) at line \(line)"
         case .unterminatedConditional:
-            return "Encountered an unterminated preprocessor conditional block"
+            return "Encountered unterminated preprocessor conditional"
         }
     }
 }
-
-private let invocationRegex = try! NSRegularExpression(
-    pattern: #"^\s*(?:/\*\s*0x([0-9A-Fa-f]+)\s*\*/\s*)?(DEFINE_[A-Z0-9_]+)\((.*)\)\s*$"#
-)
-
-private let directiveRegex = try! NSRegularExpression(
-    pattern: #"^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)$"#
-)
-
-private let definedRegex = try! NSRegularExpression(
-    pattern: #"defined\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)"#
-)
