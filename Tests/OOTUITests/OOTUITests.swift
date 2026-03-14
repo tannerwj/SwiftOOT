@@ -1,8 +1,10 @@
 import XCTest
 @testable import OOTUI
 
+@MainActor
 final class OOTUITests: XCTestCase {
-    func testPlaceholderCompiles() {
-        _ = OOTUIModule()
+    func testAppViewCompiles() {
+        _ = OOTAppView()
+        _ = DebugSidebar()
     }
 }
