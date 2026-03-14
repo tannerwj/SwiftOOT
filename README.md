@@ -14,7 +14,7 @@ A build-time CLI extracts game data from the OoT decompilation (C source + XML a
 
 - macOS 26.0+
 - Xcode 26+
-- [Tuist](https://tuist.io)
+- [Tuist](https://tuist.io) 4.158.2 (pinned in [`.tool-versions`](/Users/tjohnson/code/symphony-workspaces/TAN-63/.tool-versions))
 - A base OoT ROM (not included)
 
 ## Setup
@@ -23,23 +23,26 @@ A build-time CLI extracts game data from the OoT decompilation (C source + XML a
 git submodule update --init
 cd Vendor/oot && gmake setup   # extracts assets via ZAPD
 cd ../..
-tuist generate
+mise install tuist             # optional, but matches CI's pinned Tuist setup
+tuist generate --no-open
 open SwiftOOT.xcworkspace
 ```
 
 ## Verification
 
-Until CI is in place, every issue should record the exact commands used for verification.
-
-Typical M0 verification flow:
+CI now runs the following M0 verification flow on every pull request. No extra
+environment variables are required for this path.
 
 ```bash
-tuist generate
-xcodebuild -workspace SwiftOOT.xcworkspace -scheme OOTMac build
-xcodebuild -workspace SwiftOOT.xcworkspace -scheme OOTMac test
+tuist generate --no-open
+xcodebuild -workspace SwiftOOT.xcworkspace -scheme OOTMac -destination 'platform=macOS' build
+xcodebuild -workspace SwiftOOT.xcworkspace -scheme SwiftOOT-Workspace -destination 'platform=macOS' test
 ```
 
-If a task affects only a subset of targets, prefer the narrowest relevant build/test command and record it in the issue or PR notes.
+`OOTMac` is the buildable app scheme, while `SwiftOOT-Workspace` is the scheme
+that runs the current M0 unit test bundles. If you use `mise`, `mise install
+tuist` reads the pinned version from `.tool-versions`; otherwise install Tuist
+4.158.2 manually before running the commands above.
 
 ## Agent Workflow
 
