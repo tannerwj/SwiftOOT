@@ -12,14 +12,14 @@ public final class OOTContentExtractor {
         self.fileManager = fileManager
     }
 
-    public func extract(from source: URL, to output: URL) throws {
+    public func extract(from source: URL, to output: URL, scene: String? = nil) throws {
         guard fileManager.fileExists(atPath: source.path) else {
             throw OOTContentExtractorError.missingPath(source.path)
         }
 
         try fileManager.createDirectory(at: output, withIntermediateDirectories: true)
 
-        let context = OOTExtractionContext(source: source, output: output)
+        let context = OOTExtractionContext(source: source, output: output, sceneName: scene)
         print("Starting extraction pipeline")
 
         for component in pipeline {
@@ -54,8 +54,6 @@ public final class OOTContentExtractor {
             AudioExtractor(),
             TextExtractor(),
             CollisionExtractor(),
-            DisplayListParser(),
-            VertexParser(),
         ]
     }
 }

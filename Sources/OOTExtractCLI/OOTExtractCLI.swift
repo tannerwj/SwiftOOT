@@ -25,9 +25,16 @@ extension OOTExtractCLI {
         @Option(help: "Path where extracted SwiftOOT content should be written.")
         var output: String
 
+        @Option(help: "Optional scene name to limit extraction to.")
+        var scene: String?
+
         func run() throws {
             let extractor = OOTContentExtractor()
-            try extractor.extract(from: URL(fileURLWithPath: source), to: URL(fileURLWithPath: output))
+            try extractor.extract(
+                from: URL(fileURLWithPath: source),
+                to: URL(fileURLWithPath: output),
+                scene: scene
+            )
         }
     }
 
