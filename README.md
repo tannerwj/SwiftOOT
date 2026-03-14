@@ -14,15 +14,34 @@ A build-time CLI extracts game data from the OoT decompilation (C source + XML a
 
 - macOS 26.0+
 - Xcode 26+
-- [Tuist](https://tuist.io) 4.158.2 (pinned in [`.tool-versions`](/Users/tjohnson/code/symphony-workspaces/TAN-63/.tool-versions))
+- [Tuist](https://tuist.io) 4.158.2 (pinned in [`.tool-versions`](.tool-versions))
 - A base OoT ROM (not included)
 
 ## Setup
 
+SwiftOOT pins the upstream [zeldaret/oot](https://github.com/zeldaret/oot)
+checkout as a git submodule in `Vendor/oot/`. `OOTExtractCLI` reads from that
+checkout after the upstream `gmake setup` flow has completed.
+
+1. Initialize the pinned submodule checkout:
+
 ```bash
 git submodule update --init
+```
+
+2. Install the macOS build prerequisites described in
+   [`Vendor/oot/docs/BUILDING_MACOS.md`](Vendor/oot/docs/BUILDING_MACOS.md).
+
+3. Run the upstream asset setup flow:
+
+```bash
 cd Vendor/oot && gmake setup   # extracts assets via ZAPD
 cd ../..
+```
+
+4. Generate the Xcode workspace:
+
+```bash
 mise install tuist             # optional, but matches CI's pinned Tuist setup
 tuist generate --no-open
 open SwiftOOT.xcworkspace
@@ -53,4 +72,5 @@ This project is intended for mostly serial, issue-by-issue agent execution:
 - The agent implements only that issue, runs verification, updates docs if needed, leaves a short handoff, and stops
 - The next agent starts from the updated main branch after review or merge
 
-See [AGENTS.md](/Users/tjohnson/repos/SwiftOOT/AGENTS.md) for the issue readiness rules, definition of done, and handoff format.
+See [AGENTS.md](AGENTS.md) for the issue readiness rules, definition of done,
+and handoff format.
