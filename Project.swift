@@ -24,6 +24,13 @@ let project = Project(
             ]
         ),
         staticFrameworkTarget(
+            name: "OOTExtractCLI",
+            dependencies: [
+                .target(name: "OOTDataModel"),
+                .external(name: "ArgumentParser"),
+            ]
+        ),
+        staticFrameworkTarget(
             name: "OOTRender",
             dependencies: [.target(name: "OOTDataModel")]
         ),
@@ -51,16 +58,11 @@ let project = Project(
                 .target(name: "OOTTelemetry"),
             ]
         ),
-        commandLineTarget(
-            name: "OOTExtractCLI",
-            dependencies: [
-                .target(name: "OOTDataModel"),
-                .external(name: "ArgumentParser"),
-            ]
-        ),
+        commandLineTarget(name: "OOTExtractTool", dependencies: [.target(name: "OOTExtractCLI")]),
         unitTestTarget(name: "OOTDataModelTests", testedTarget: "OOTDataModel"),
         unitTestTarget(name: "OOTContentTests", testedTarget: "OOTContent"),
         unitTestTarget(name: "OOTCoreTests", testedTarget: "OOTCore"),
+        unitTestTarget(name: "OOTExtractCLITests", testedTarget: "OOTExtractCLI"),
         unitTestTarget(name: "OOTRenderTests", testedTarget: "OOTRender"),
         unitTestTarget(name: "OOTUITests", testedTarget: "OOTUI"),
         unitTestTarget(name: "OOTTelemetryTests", testedTarget: "OOTTelemetry"),

@@ -1,0 +1,3 @@
+import OOTExtractCLI
+
+OOTExtractCLI.main()

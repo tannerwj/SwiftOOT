@@ -1,8 +1,8 @@
 import ArgumentParser
 import Foundation
 
-struct OOTExtractCLI: ParsableCommand {
-    static let configuration = CommandConfiguration(
+public struct OOTExtractCLI: ParsableCommand {
+    public static let configuration = CommandConfiguration(
         commandName: "ootextractcli",
         abstract: "Build-time content extraction tools for SwiftOOT.",
         subcommands: [
@@ -10,9 +10,9 @@ struct OOTExtractCLI: ParsableCommand {
             Verify.self,
         ]
     )
-}
 
-OOTExtractCLI.main()
+    public init() {}
+}
 
 extension OOTExtractCLI {
     struct Extract: ParsableCommand {
