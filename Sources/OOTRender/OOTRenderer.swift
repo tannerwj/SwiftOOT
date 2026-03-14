@@ -29,6 +29,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     public let device: MTLDevice
     public let commandQueue: MTLCommandQueue
     public let renderPipelineState: MTLRenderPipelineState
+    private let fallbackTexture: MTLTexture
     let vertexDescriptor: MTLVertexDescriptor
 
     public init(bundle: Bundle = resourceBundle) throws {
@@ -46,7 +47,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
             in: library
         )
         let fragmentFunction = try Self.makeFunction(
-            named: "oot_flat_color_fragment",
+            named: "oot_combiner_fragment",
             in: library
         )
         let vertexDescriptor = makeN64VertexDescriptor()
@@ -59,6 +60,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
 
         self.device = device
         self.commandQueue = commandQueue
+        self.fallbackTexture = try Self.makeFallbackTexture(device: device)
         self.vertexDescriptor = vertexDescriptor
         self.renderPipelineState = try device.makeRenderPipelineState(
             descriptor: pipelineDescriptor
@@ -125,7 +127,9 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         _ texture: MTLTexture,
         vertices: [N64Vertex],
         frameUniforms: FrameUniforms,
-        combinerUniforms: CombinerUniforms = CombinerUniforms()
+        combinerUniforms: CombinerUniforms = CombinerUniforms(),
+        texel0Texture: MTLTexture? = nil,
+        texel1Texture: MTLTexture? = nil
     ) {
         let renderPassDescriptor = MTLRenderPassDescriptor()
         renderPassDescriptor.colorAttachments[0].texture = texture
@@ -142,7 +146,9 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
             renderPassDescriptor: renderPassDescriptor,
             vertices: vertices,
             frameUniforms: frameUniforms,
-            combinerUniforms: combinerUniforms
+            combinerUniforms: combinerUniforms,
+            texel0Texture: texel0Texture,
+            texel1Texture: texel1Texture
         )
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
@@ -182,12 +188,38 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         return function
     }
 
+    private static func makeFallbackTexture(device: MTLDevice) throws -> MTLTexture {
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .rgba8Unorm,
+            width: 1,
+            height: 1,
+            mipmapped: false
+        )
+        descriptor.usage = .shaderRead
+        descriptor.storageMode = .shared
+
+        guard let texture = device.makeTexture(descriptor: descriptor) else {
+            throw OOTRendererError.metalUnavailable
+        }
+
+        var texel = [UInt8](repeating: 0, count: 4)
+        texture.replace(
+            region: MTLRegionMake2D(0, 0, 1, 1),
+            mipmapLevel: 0,
+            withBytes: &texel,
+            bytesPerRow: 4
+        )
+        return texture
+    }
+
     private func encodeFrame(
         with commandBuffer: MTLCommandBuffer,
         renderPassDescriptor: MTLRenderPassDescriptor,
         vertices: [N64Vertex],
         frameUniforms: FrameUniforms,
-        combinerUniforms: CombinerUniforms
+        combinerUniforms: CombinerUniforms,
+        texel0Texture: MTLTexture? = nil,
+        texel1Texture: MTLTexture? = nil
     ) {
         guard !vertices.isEmpty else {
             return
@@ -224,6 +256,19 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
             &combinerUniforms,
             length: MemoryLayout<CombinerUniforms>.stride,
             index: OOTRenderBufferIndex.combinerUniforms.rawValue
+        )
+        renderCommandEncoder.setFragmentBytes(
+            &combinerUniforms,
+            length: MemoryLayout<CombinerUniforms>.stride,
+            index: OOTRenderBufferIndex.combinerUniforms.rawValue
+        )
+        renderCommandEncoder.setFragmentTexture(
+            texel0Texture ?? fallbackTexture,
+            index: OOTRenderTextureIndex.texel0.rawValue
+        )
+        renderCommandEncoder.setFragmentTexture(
+            texel1Texture ?? fallbackTexture,
+            index: OOTRenderTextureIndex.texel1.rawValue
         )
         renderCommandEncoder.drawPrimitives(
             type: .triangle,
@@ -283,4 +328,9 @@ private extension OOTRenderer {
     static let defaultFrameUniforms = FrameUniforms(
         mvp: simd_float4x4(diagonal: SIMD4<Float>(0.5, 0.5, 1.0, 1.0))
     )
+}
+
+enum OOTRenderTextureIndex: Int {
+    case texel0 = 0
+    case texel1 = 1
 }
