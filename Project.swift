@@ -53,7 +53,10 @@ let project = Project(
         ),
         commandLineTarget(
             name: "OOTExtractCLI",
-            dependencies: [.target(name: "OOTDataModel")]
+            dependencies: [
+                .target(name: "OOTDataModel"),
+                .external(name: "ArgumentParser"),
+            ]
         ),
         unitTestTarget(name: "OOTDataModelTests", testedTarget: "OOTDataModel"),
         unitTestTarget(name: "OOTContentTests", testedTarget: "OOTContent"),
