@@ -13,7 +13,6 @@ struct OOTExtractCLI: ParsableCommand {
         ]
     )
 }
-
 extension OOTExtractCLI {
     struct Extract: ParsableCommand {
         static let configuration = CommandConfiguration(
