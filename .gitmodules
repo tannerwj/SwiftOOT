@@ -1,0 +1,3 @@
+[submodule "Vendor/oot"]
+	path = Vendor/oot
+	url = https://github.com/zeldaret/oot.git
