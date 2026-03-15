@@ -11,11 +11,31 @@ final class OOTUITests: XCTestCase {
     func testAppViewCompiles() {
         _ = OOTAppView(
             runtime: GameRuntime(
+                contentLoader: StubContentLoader(),
                 sceneLoader: UITestSceneLoader(),
                 suspender: { _ in }
             )
         )
         _ = DebugSidebar()
+        _ = MessageView(
+            presentation: MessagePresentation(
+                messageID: 0x1000,
+                variant: .blue,
+                phase: .displaying,
+                textRuns: [
+                    MessageTextRun(text: "Hello ", color: .white),
+                    MessageTextRun(text: "Link", color: .yellow),
+                ],
+                icon: MessageIcon(rawValue: "fairy"),
+                choiceState: MessageChoiceState(
+                    options: [
+                        MessageChoiceOption(title: "Yes"),
+                        MessageChoiceOption(title: "No"),
+                    ]
+                )
+            )
+        )
+        _ = ActionPromptView(label: "Talk")
     }
 
     func testRootViewStateMatchesRuntimeState() {
@@ -158,8 +178,8 @@ private extension OOTUITests {
                 name: "spot04",
                 title: "Kokiri Forest",
                 rooms: [
-                    RoomManifest(id: 0, name: "spot04_room_0"),
-                    RoomManifest(id: 1, name: "spot04_room_1"),
+                    RoomManifest(id: 0, name: "spot04_room_0", directory: "spot04"),
+                    RoomManifest(id: 1, name: "spot04_room_1", directory: "spot04"),
                 ]
             ),
             collision: CollisionMesh(
@@ -193,7 +213,7 @@ private extension OOTUITests {
             ),
             rooms: [
                 LoadedSceneRoom(
-                    manifest: RoomManifest(id: 0, name: "spot04_room_0"),
+                    manifest: RoomManifest(id: 0, name: "spot04_room_0", directory: "spot04"),
                     displayList: [],
                     vertexData: Data()
                 ),
@@ -309,4 +329,8 @@ private struct UITestSceneLoader: SceneLoading {
     func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh? { nil }
     func loadRoomDisplayList(for room: RoomManifest) throws -> [F3DEX2Command] { [] }
     func loadRoomVertexData(for room: RoomManifest) throws -> Data { Data() }
+}
+
+private struct StubContentLoader: ContentLoading {
+    func loadInitialContent() async throws {}
 }
