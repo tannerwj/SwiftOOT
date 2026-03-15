@@ -88,6 +88,7 @@ public struct TableExtractor: OOTExtractionPipelineComponent {
 
             return SceneTableEntry(
                 index: macro.tableIndex ?? offset,
+                segmentName: macro.arguments[0],
                 enumName: macro.arguments[2],
                 title: sanitizeOptionalIdentifier(macro.arguments[1]),
                 drawConfig: drawConfig

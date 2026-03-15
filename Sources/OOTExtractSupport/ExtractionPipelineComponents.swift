@@ -79,6 +79,12 @@ public struct CollisionExtractor: OOTExtractionPipelineComponent {
     public init() {}
 }
 
+public struct SceneManifestExtractor: OOTExtractionPipelineComponent {
+    public let name = "SceneManifestExtractor"
+
+    public init() {}
+}
+
 public struct VertexParser: OOTExtractionPipelineComponent {
     public let name = "VertexParser"
 

@@ -54,6 +54,7 @@ public final class OOTContentExtractor {
             AudioExtractor(),
             TextExtractor(),
             CollisionExtractor(),
+            SceneManifestExtractor(),
         ]
     }
 }
