@@ -4,6 +4,19 @@ Native macOS app reimplementing Zelda: Ocarina of Time in Swift/Metal, using dat
 
 Inspired by [Dimillian/PokeSwift](https://github.com/Dimillian/PokeSwift).
 
+## Legal
+
+SwiftOOT is an unofficial fan project. It is not affiliated with or endorsed by
+Nintendo.
+
+- This repository does not include any Nintendo ROMs, textures, audio, text, or
+  other game assets.
+- To use the extraction pipeline, you must supply your own legally obtained copy
+  of Ocarina of Time.
+- The `Vendor/oot` checkout is a separate upstream submodule. SwiftOOT's MIT
+  license applies to the original code in this repository, not to third-party
+  dependencies or to any content generated from a game ROM.
+
 ## Architecture
 
 A build-time CLI extracts game data from the OoT decompilation (C source + XML assets) into JSON manifests and binary assets. The runtime app is pure Swift/Metal — it never touches C or assembly.
@@ -49,6 +62,28 @@ git submodule update --init
 
 5. Put your ROM in the matching upstream baserom folder.
 
+This follows the same layout `zeldaret/oot` expects: choose a supported
+version, place the ROM in `baseroms/<version>/`, and name it `baserom.z64`,
+`baserom.n64`, or `baserom.v64`.
+
+Supported upstream versions include:
+
+- `ntsc-1.0`
+- `ntsc-1.1`
+- `ntsc-1.2`
+- `pal-1.0`
+- `pal-1.1`
+- `gc-jp`
+- `gc-jp-mq`
+- `gc-us`
+- `gc-us-mq`
+- `gc-eu-mq-dbg`
+- `gc-eu-dbg`
+- `gc-eu`
+- `gc-eu-mq`
+- `gc-jp-ce`
+- `ique-cn`
+
 Validated local flow:
 
 ```bash
@@ -62,6 +97,9 @@ Vendor/oot/baseroms/<version>/baserom.z64
 Vendor/oot/baseroms/<version>/baserom.n64
 Vendor/oot/baseroms/<version>/baserom.v64
 ```
+
+If you are unsure which version you have, compare it against the supported
+version table in `Vendor/oot/README.md`.
 
 6. Run the upstream asset setup flow.
 
@@ -110,8 +148,9 @@ Committed:
 - Swift source, tests, project definitions, docs
 - the `Vendor/oot` submodule pointer
 
-Generated locally and ignored by git:
+Generated or supplied locally and not committed to this repository:
 
+- `Vendor/oot/baseroms/`
 - `Vendor/oot/extracted/`
 - `Vendor/oot/build/`
 - `Content/OOT/`
