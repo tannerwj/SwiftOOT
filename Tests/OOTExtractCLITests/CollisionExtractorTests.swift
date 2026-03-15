@@ -35,7 +35,7 @@ final class CollisionExtractorTests: XCTestCase {
         let collisionData = try Data(contentsOf: collisionURL)
         let collision = try CollisionExtractor.decode(collisionData, path: collisionURL.path)
 
-        XCTAssertEqual(collisionData.count, 100)
+        XCTAssertEqual(collisionData.count, 116)
         XCTAssertEqual(collision.minimumBounds, Vector3s(x: -1000, y: -200, z: -3000))
         XCTAssertEqual(collision.maximumBounds, Vector3s(x: 4000, y: 500, z: 6000))
         XCTAssertEqual(
@@ -65,12 +65,45 @@ final class CollisionExtractorTests: XCTestCase {
                     normal: Vector3s(x: 1, y: 2, z: 3),
                     distance: 4
                 ),
+                CollisionPolygonBinary(
+                    surfaceType: 0,
+                    vertexA: 1,
+                    vertexB: 2,
+                    vertexC: 0,
+                    normal: Vector3s(
+                        x: collisionNormal(-0.84445),
+                        y: collisionNormal(0.48751),
+                        z: collisionNormal(-0.22191)
+                    ),
+                    distance: 981
+                ),
             ]
         )
         XCTAssertEqual(
             collision.surfaceTypes,
             [
-                CollisionSurfaceTypeBinary(low: 0x12345678, high: 0x90ABCDEF),
+                CollisionSurfaceTypeBinary(
+                    low: surfaceType0(
+                        bgCamIndex: 11,
+                        exitIndex: 0,
+                        floorType: 0,
+                        unk18: 0,
+                        wallType: 0,
+                        floorProperty: 0,
+                        isSoft: false,
+                        isHorseBlocked: false
+                    ),
+                    high: surfaceType1(
+                        material: 10,
+                        floorEffect: 0,
+                        lightSetting: 31,
+                        echo: 1,
+                        canHookshot: false,
+                        conveyorSpeed: 0,
+                        conveyorDirection: 0,
+                        unk27: false
+                    )
+                ),
                 CollisionSurfaceTypeBinary(low: 0x00000001, high: 0x00000002),
             ]
         )
@@ -224,10 +257,27 @@ Vec3s spot04_sceneCollisionHeader_000100Vertices[] = {
 CollisionPoly spot04_sceneCollisionHeader_000100Polygons[] = {
     { 0x0000, 0x0000, 0x2001, 0x4002, { 0x0000, 0x7FFF, 0x0000 }, -10 },
     { 0x0001, 0x0002, 0x0001, 0x0000, 0x0001, 0x0002, 0x0003, 0x0004 },
+    {
+        0,
+        {
+            COLPOLY_VTX(1, 0),
+            COLPOLY_VTX(2, COLPOLY_IS_FLOOR_CONVEYOR),
+            COLPOLY_VTX(0, COLPOLY_IGNORE_ENTITY | COLPOLY_IGNORE_PROJECTILES),
+        },
+        {
+            COLPOLY_SNORMAL(-0.84445),
+            COLPOLY_SNORMAL(0.48751),
+            COLPOLY_SNORMAL(-0.22191),
+        },
+        981,
+    },
 };
 
 SurfaceType spot04_sceneCollisionHeader_000100SurfaceTypes[] = {
-    { 0x12345678, 0x90ABCDEF },
+    {
+        SURFACETYPE0(11, 0, FLOOR_TYPE_0, 0, WALL_TYPE_0, FLOOR_PROPERTY_0, false, false),
+        SURFACETYPE1(SURFACE_MATERIAL_WOOD, FLOOR_EFFECT_0, 31, 1, false, CONVEYOR_SPEED_DISABLED, CONVEYOR_DIRECTION_FROM_BINANG(0x0), false),
+    },
     { 0x00000001, 0x00000002 },
 };
 
@@ -245,3 +295,47 @@ CollisionHeader spot04_sceneCollisionHeader_000100 = {
     ARRAY_COUNT(spot04_sceneCollisionHeader_000100WaterBoxes), spot04_sceneCollisionHeader_000100WaterBoxes,
 };
 """
+
+private func collisionNormal(_ value: Double) -> Int16 {
+    Int16((value * 32767.0).rounded(.towardZero))
+}
+
+private func surfaceType0(
+    bgCamIndex: UInt32,
+    exitIndex: UInt32,
+    floorType: UInt32,
+    unk18: UInt32,
+    wallType: UInt32,
+    floorProperty: UInt32,
+    isSoft: Bool,
+    isHorseBlocked: Bool
+) -> UInt32 {
+    (((bgCamIndex)     & 0xFF) <<  0) |
+    (((exitIndex)      & 0x1F) <<  8) |
+    (((floorType)      & 0x1F) << 13) |
+    (((unk18)          & 0x07) << 18) |
+    (((wallType)       & 0x1F) << 21) |
+    (((floorProperty)  & 0x0F) << 26) |
+    ((isSoft ? 1 : 0) << 30) |
+    ((isHorseBlocked ? 1 : 0) << 31)
+}
+
+private func surfaceType1(
+    material: UInt32,
+    floorEffect: UInt32,
+    lightSetting: UInt32,
+    echo: UInt32,
+    canHookshot: Bool,
+    conveyorSpeed: UInt32,
+    conveyorDirection: UInt32,
+    unk27: Bool
+) -> UInt32 {
+    (((material)          & 0x0F) <<  0) |
+    (((floorEffect)       & 0x03) <<  4) |
+    (((lightSetting)      & 0x1F) <<  6) |
+    (((echo)              & 0x3F) << 11) |
+    ((canHookshot ? 1 : 0) << 17) |
+    (((conveyorSpeed)     & 0x07) << 18) |
+    (((conveyorDirection) & 0x3F) << 21) |
+    ((unk27 ? 1 : 0) << 27)
+}

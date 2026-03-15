@@ -1404,7 +1404,22 @@ private extension SceneExtractor {
     }
 
     static func parseSigned16Expression(_ expression: String) throws -> Int16 {
-        try parseSigned16(parseIntegerExpression(expression), field: expression)
+        let trimmed = trimExpression(expression)
+        if
+            let match = firstMatch(
+                of: try! NSRegularExpression(pattern: #"COLPOLY_SNORMAL\(\s*([^)]+?)\s*\)"#),
+                in: trimmed
+            )
+        {
+            let normal = try parseFloatingPointLiteral(substring(in: trimmed, range: match.range(at: 1)))
+            let scaled = (normal * 32767.0).rounded(.towardZero)
+            guard scaled >= Double(Int16.min), scaled <= Double(Int16.max) else {
+                throw SceneExtractorError.integerOutOfRange(expression, Int64(scaled))
+            }
+            return Int16(scaled)
+        }
+
+        return try parseSigned16(parseIntegerExpression(expression), field: expression)
     }
 
     static func parseUnsigned8Expression(_ expression: String) throws -> UInt8 {
@@ -1455,6 +1470,17 @@ private extension SceneExtractor {
         }
 
         return try parseIntegerLiteral(trimmed)
+    }
+
+    static func parseFloatingPointLiteral(_ literal: String) throws -> Double {
+        var trimmed = trimExpression(literal)
+        if trimmed.hasSuffix("f") || trimmed.hasSuffix("F") {
+            trimmed.removeLast()
+        }
+        guard trimmed.isEmpty == false, let value = Double(trimmed) else {
+            throw SceneExtractorError.invalidIntegerLiteral(literal)
+        }
+        return value
     }
 
     static func parseIntegerLiteral(_ literal: String) throws -> Int64 {
@@ -1591,6 +1617,12 @@ private extension SceneExtractor {
 
     static func trimExpression(_ expression: String) -> String {
         expression.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func stripBlockComments(from expression: String) -> String {
+        let regex = try! NSRegularExpression(pattern: #"/\*.*?\*/"#, options: [.dotMatchesLineSeparators])
+        let range = NSRange(expression.startIndex..<expression.endIndex, in: expression)
+        return regex.stringByReplacingMatches(in: expression, range: range, withTemplate: " ")
     }
 
     static func readSource(at url: URL) throws -> String {
@@ -1851,6 +1883,16 @@ private extension CollisionExtractor {
     static func parsePolygon(_ entry: String) throws -> CollisionPolygonBinary {
         let fields = SceneExtractor.splitTopLevel(entry)
         switch fields.count {
+        case 4:
+            let vertices = try parsePackedVertexTriplet(fields[1])
+            return try CollisionPolygonBinary(
+                surfaceType: parseUnsigned16Expression(fields[0]),
+                vertexA: vertices.0,
+                vertexB: vertices.1,
+                vertexC: vertices.2,
+                normal: SceneExtractor.parseVector3s(fields[2]),
+                distance: SceneExtractor.parseSigned16Expression(fields[3])
+            )
         case 6:
             return try CollisionPolygonBinary(
                 surfaceType: parseUnsigned16Expression(fields[0]),
@@ -1879,13 +1921,16 @@ private extension CollisionExtractor {
     }
 
     static func parseSurfaceType(_ entry: String) throws -> CollisionSurfaceTypeBinary {
-        let fields = SceneExtractor.splitTopLevel(entry)
+        var fields = SceneExtractor.splitTopLevel(entry)
+        if fields.count != 2, let nestedEntries = try? SceneExtractor.topLevelBraceEntries(in: entry), nestedEntries.count == 1 {
+            fields = SceneExtractor.splitTopLevel(nestedEntries[0])
+        }
         guard fields.count == 2 else {
             throw CollisionExtractorError.invalidEntry("SurfaceType", entry)
         }
         return try CollisionSurfaceTypeBinary(
-            low: parseUnsigned32Expression(fields[0]),
-            high: parseUnsigned32Expression(fields[1])
+            low: parseSurfaceTypeWord(fields[0]),
+            high: parseSurfaceTypeWord(fields[1])
         )
     }
 
@@ -2014,15 +2059,248 @@ private extension CollisionExtractor {
     }
 
     static func parseUnsigned32Expression(_ expression: String) throws -> UInt32 {
-        let value = try SceneExtractor.parseIntegerExpression(expression)
+        let trimmed = SceneExtractor.trimExpression(SceneExtractor.stripBlockComments(from: expression))
+        if
+            let match = SceneExtractor.firstMatch(
+                of: try! NSRegularExpression(pattern: #"(?s)WATERBOX_PROPERTIES\(\s*(.*)\s*\)"#),
+                in: trimmed
+            )
+        {
+            let arguments = SceneExtractor.splitTopLevel(
+                SceneExtractor.substring(in: trimmed, range: match.range(at: 1))
+            )
+            guard arguments.count == 4 else {
+                throw CollisionExtractorError.invalidEntry("WaterBox", expression)
+            }
+
+            let bgCamIndex = try parseSurfaceTypeScalar(arguments[0])
+            let lightIndex = try parseSurfaceTypeScalar(arguments[1])
+            let room = try parseSurfaceTypeScalar(arguments[2])
+            let setFlag19 = try parseSurfaceTypeScalar(arguments[3])
+
+            let words: [UInt32] = [
+                UInt32((bgCamIndex & 0xFF) << 0),
+                UInt32((lightIndex & 0x1F) << 8),
+                UInt32((room & 0x3F) << 13),
+                UInt32((setFlag19 & 1) << 19),
+            ]
+            return words.reduce(0, |)
+        }
+
+        let value = try SceneExtractor.parseIntegerExpression(trimmed)
         guard 0...Int64(UInt32.max) ~= value else {
             throw CollisionExtractorError.integerOutOfRange(field: expression, value: value)
         }
         return UInt32(value)
     }
 
+    static func parseSurfaceTypeWord(_ expression: String) throws -> UInt32 {
+        let trimmed = SceneExtractor.trimExpression(expression)
+
+        if
+            let match = SceneExtractor.firstMatch(
+                of: try! NSRegularExpression(pattern: #"(?s)SURFACETYPE([01])\(\s*(.*)\s*\)"#),
+                in: trimmed
+            )
+        {
+            let variant = SceneExtractor.substring(in: trimmed, range: match.range(at: 1))
+            let arguments = SceneExtractor.splitTopLevel(
+                SceneExtractor.substring(in: trimmed, range: match.range(at: 2))
+            )
+
+            switch variant {
+            case "0":
+                guard arguments.count == 8 else {
+                    throw CollisionExtractorError.invalidEntry("SurfaceType", expression)
+                }
+                let bgCamIndex = try parseSurfaceTypeScalar(arguments[0])
+                let exitIndex = try parseSurfaceTypeScalar(arguments[1])
+                let floorType = try parseSurfaceTypeScalar(arguments[2])
+                let unk18 = try parseSurfaceTypeScalar(arguments[3])
+                let wallType = try parseSurfaceTypeScalar(arguments[4])
+                let floorProperty = try parseSurfaceTypeScalar(arguments[5])
+                let isSoft = try parseSurfaceTypeScalar(arguments[6])
+                let isHorseBlocked = try parseSurfaceTypeScalar(arguments[7])
+
+                let words: [UInt32] = [
+                    UInt32((bgCamIndex & 0xFF) << 0),
+                    UInt32((exitIndex & 0x1F) << 8),
+                    UInt32((floorType & 0x1F) << 13),
+                    UInt32((unk18 & 0x07) << 18),
+                    UInt32((wallType & 0x1F) << 21),
+                    UInt32((floorProperty & 0x0F) << 26),
+                    UInt32((isSoft & 1) << 30),
+                    UInt32((isHorseBlocked & 1) << 31),
+                ]
+                return words.reduce(0, |)
+            case "1":
+                guard arguments.count == 8 else {
+                    throw CollisionExtractorError.invalidEntry("SurfaceType", expression)
+                }
+                let material = try parseSurfaceTypeScalar(arguments[0])
+                let floorEffect = try parseSurfaceTypeScalar(arguments[1])
+                let lightSetting = try parseSurfaceTypeScalar(arguments[2])
+                let echo = try parseSurfaceTypeScalar(arguments[3])
+                let canHookshot = try parseSurfaceTypeScalar(arguments[4])
+                let conveyorSpeed = try parseSurfaceTypeScalar(arguments[5])
+                let conveyorDirection = try parseSurfaceTypeScalar(arguments[6])
+                let unk27 = try parseSurfaceTypeScalar(arguments[7])
+
+                let words: [UInt32] = [
+                    UInt32((material & 0x0F) << 0),
+                    UInt32((floorEffect & 0x03) << 4),
+                    UInt32((lightSetting & 0x1F) << 6),
+                    UInt32((echo & 0x3F) << 11),
+                    UInt32((canHookshot & 1) << 17),
+                    UInt32((conveyorSpeed & 0x07) << 18),
+                    UInt32((conveyorDirection & 0x3F) << 21),
+                    UInt32((unk27 & 1) << 27),
+                ]
+                return words.reduce(0, |)
+            default:
+                break
+            }
+        }
+
+        return try parseUnsigned32Expression(trimmed)
+    }
+
     static func parsePackedVertexIndex(_ expression: String) throws -> UInt16 {
-        try parseUnsigned16Expression(expression) & 0x1FFF
+        let trimmed = SceneExtractor.trimExpression(expression)
+        if
+            let match = SceneExtractor.firstMatch(
+                of: try! NSRegularExpression(
+                    pattern: #"COLPOLY_VTX\(\s*([^,]+?)\s*,\s*([^)]+?)\s*\)"#
+                ),
+                in: trimmed
+            )
+        {
+            let vertexID = try SceneExtractor.parseIntegerExpression(
+                SceneExtractor.substring(in: trimmed, range: match.range(at: 1))
+            )
+            let flags = try parseCollisionVertexFlags(
+                SceneExtractor.substring(in: trimmed, range: match.range(at: 2))
+            )
+
+            guard 0...0x1FFF ~= vertexID, 0...7 ~= flags else {
+                throw CollisionExtractorError.invalidEntry("CollisionPoly vertex", expression)
+            }
+
+            let packed = (((UInt16(flags) & 7) << 13) | (UInt16(vertexID) & 0x1FFF))
+            return packed & 0x1FFF
+        }
+
+        return try parseUnsigned16Expression(expression) & 0x1FFF
+    }
+
+    static func parsePackedVertexTriplet(_ expression: String) throws -> (UInt16, UInt16, UInt16) {
+        let trimmed = SceneExtractor.trimExpression(expression)
+        let contents: String
+        if trimmed.first == "{", trimmed.last == "}" {
+            contents = String(trimmed.dropFirst().dropLast())
+        } else {
+            contents = trimmed
+        }
+
+        let values = SceneExtractor.splitTopLevel(contents)
+        guard values.count == 3 else {
+            throw CollisionExtractorError.invalidEntry("CollisionPoly vertices", expression)
+        }
+
+        return try (
+            parsePackedVertexIndex(values[0]),
+            parsePackedVertexIndex(values[1]),
+            parsePackedVertexIndex(values[2])
+        )
+    }
+
+    static func parseCollisionVertexFlags(_ expression: String) throws -> Int64 {
+        let trimmed = SceneExtractor.trimExpression(SceneExtractor.stripBlockComments(from: expression))
+        if trimmed.contains("|") {
+            return try SceneExtractor.splitTopLevel(trimmed.replacingOccurrences(of: "|", with: ","))
+                .reduce(0) { partial, component in
+                    partial | (try parseCollisionVertexFlags(component))
+                }
+        }
+
+        switch trimmed {
+        case "0", "COLPOLY_IGNORE_NONE":
+            return 0
+        case "COLPOLY_IGNORE_CAMERA", "COLPOLY_IS_FLOOR_CONVEYOR":
+            return 1
+        case "COLPOLY_IGNORE_ENTITY":
+            return 2
+        case "COLPOLY_IGNORE_PROJECTILES":
+            return 4
+        default:
+            return try SceneExtractor.parseIntegerExpression(trimmed)
+        }
+    }
+
+    static func parseSurfaceTypeScalar(_ expression: String) throws -> Int64 {
+        let trimmed = SceneExtractor.trimExpression(SceneExtractor.stripBlockComments(from: expression))
+
+        if trimmed.contains("|") {
+            return try SceneExtractor.splitTopLevel(trimmed.replacingOccurrences(of: "|", with: ","))
+                .reduce(0) { partial, component in
+                    partial | (try parseSurfaceTypeScalar(component))
+                }
+        }
+
+        if let value = try? Int64(SceneExtractor.parseBoolExpression(trimmed) ? 1 : 0) {
+            return value
+        }
+
+        if
+            let match = SceneExtractor.firstMatch(
+                of: try! NSRegularExpression(pattern: #"CONVEYOR_DIRECTION_FROM_BINANG\(\s*([^)]+?)\s*\)"#),
+                in: trimmed
+            )
+        {
+            let raw = try SceneExtractor.parseIntegerExpression(
+                SceneExtractor.substring(in: trimmed, range: match.range(at: 1))
+            )
+            return raw / (0x10000 / 64)
+        }
+
+        let mappedValues: [String: Int64] = [
+            "CONVEYOR_SPEED_DISABLED": 0,
+            "CONVEYOR_SPEED_SLOW": 1,
+            "CONVEYOR_SPEED_MEDIUM": 2,
+            "CONVEYOR_SPEED_FAST": 3,
+            "SURFACE_MATERIAL_DIRT": 0,
+            "SURFACE_MATERIAL_SAND": 1,
+            "SURFACE_MATERIAL_STONE": 2,
+            "SURFACE_MATERIAL_JABU": 3,
+            "SURFACE_MATERIAL_WATER_SHALLOW": 4,
+            "SURFACE_MATERIAL_WATER_DEEP": 5,
+            "SURFACE_MATERIAL_TALL_GRASS": 6,
+            "SURFACE_MATERIAL_LAVA": 7,
+            "SURFACE_MATERIAL_GRASS": 8,
+            "SURFACE_MATERIAL_BRIDGE": 9,
+            "SURFACE_MATERIAL_WOOD": 10,
+            "SURFACE_MATERIAL_DIRT_SOFT": 11,
+            "SURFACE_MATERIAL_ICE": 12,
+            "SURFACE_MATERIAL_CARPET": 13,
+        ]
+        if let mapped = mappedValues[trimmed] {
+            return mapped
+        }
+
+        if
+            let match = SceneExtractor.firstMatch(
+                of: try! NSRegularExpression(
+                    pattern: #"^(?:FLOOR_TYPE|WALL_TYPE|FLOOR_EFFECT|FLOOR_PROPERTY)_([0-9]+)$"#
+                ),
+                in: trimmed
+            )
+        {
+            return try SceneExtractor.parseIntegerExpression(
+                SceneExtractor.substring(in: trimmed, range: match.range(at: 1))
+            )
+        }
+
+        return try SceneExtractor.parseIntegerExpression(trimmed)
     }
 
     static func sanitizeReference(_ expression: String) -> String {
