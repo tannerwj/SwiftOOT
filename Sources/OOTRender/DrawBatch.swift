@@ -23,6 +23,10 @@ public protocol RenderPipelineStateLookup {
     func renderPipelineState(for key: RenderStateKey) throws -> MTLRenderPipelineState
 }
 
+public protocol DepthStencilStateLookup {
+    func depthStencilState(for key: RenderStateKey) -> MTLDepthStencilState
+}
+
 public struct AnyRenderPipelineStateLookup: RenderPipelineStateLookup {
     private let resolver: (RenderStateKey) throws -> MTLRenderPipelineState
 
@@ -39,16 +43,36 @@ public struct AnyRenderPipelineStateLookup: RenderPipelineStateLookup {
     }
 }
 
+public struct AnyDepthStencilStateLookup: DepthStencilStateLookup {
+    private let resolver: (RenderStateKey) -> MTLDepthStencilState
+
+    public init(
+        _ resolver: @escaping (RenderStateKey) -> MTLDepthStencilState
+    ) {
+        self.resolver = resolver
+    }
+
+    public func depthStencilState(for key: RenderStateKey) -> MTLDepthStencilState {
+        resolver(key)
+    }
+}
+
 public struct DrawBatchResources {
     public let device: MTLDevice
     public let pipelineLookup: any RenderPipelineStateLookup
+    public let depthStencilLookup: any DepthStencilStateLookup
+    public let fallbackTexture: MTLTexture
 
     public init(
         device: MTLDevice,
-        pipelineLookup: any RenderPipelineStateLookup
+        pipelineLookup: any RenderPipelineStateLookup,
+        depthStencilLookup: any DepthStencilStateLookup,
+        fallbackTexture: MTLTexture
     ) {
         self.device = device
         self.pipelineLookup = pipelineLookup
+        self.depthStencilLookup = depthStencilLookup
+        self.fallbackTexture = fallbackTexture
     }
 }
 
@@ -61,7 +85,9 @@ public enum DrawBatchError: Error, Equatable {
 
 public struct DrawBatch {
     public var renderStateKey: RenderStateKey
-    public var texture: MTLTexture?
+    public var combinerUniforms: CombinerUniforms
+    public var texel0Texture: MTLTexture?
+    public var texel1Texture: MTLTexture?
 
     public private(set) var totalTriangleCount: Int = 0
     public private(set) var drawCallCount: Int = 0
@@ -72,11 +98,15 @@ public struct DrawBatch {
 
     public init(
         renderStateKey: RenderStateKey,
-        texture: MTLTexture? = nil,
+        combinerUniforms: CombinerUniforms = CombinerUniforms(),
+        texel0Texture: MTLTexture? = nil,
+        texel1Texture: MTLTexture? = nil,
         resources: DrawBatchResources? = nil
     ) {
         self.renderStateKey = renderStateKey
-        self.texture = texture
+        self.combinerUniforms = combinerUniforms
+        self.texel0Texture = texel0Texture
+        self.texel1Texture = texel1Texture
         self.resources = resources
     }
 
@@ -154,15 +184,29 @@ public struct DrawBatch {
         let flushedTriangleCount = pendingTriangleCount
 
         encoder.setRenderPipelineState(pipelineState)
+        encoder.setDepthStencilState(
+            resources.depthStencilLookup.depthStencilState(for: renderStateKey)
+        )
         encoder.setCullMode(cullMode(for: renderStateKey.geometryMode))
         encoder.setVertexBuffer(
             vertexBuffer,
             offset: 0,
             index: OOTRenderBufferIndex.vertices.rawValue
         )
-        if let texture {
-            encoder.setFragmentTexture(texture, index: 0)
-        }
+        var combinerUniforms = self.combinerUniforms
+        encoder.setFragmentBytes(
+            &combinerUniforms,
+            length: MemoryLayout<CombinerUniforms>.stride,
+            index: OOTRenderBufferIndex.combinerUniforms.rawValue
+        )
+        encoder.setFragmentTexture(
+            texel0Texture ?? resources.fallbackTexture,
+            index: OOTRenderTextureIndex.texel0.rawValue
+        )
+        encoder.setFragmentTexture(
+            texel1Texture ?? resources.fallbackTexture,
+            index: OOTRenderTextureIndex.texel1.rawValue
+        )
         encoder.drawIndexedPrimitives(
             type: .triangle,
             indexCount: indexStorage.count,
@@ -208,6 +252,7 @@ func makeDrawBatchPipelineState(
     device: MTLDevice,
     bundle: Bundle = OOTRenderer.resourceBundle,
     colorPixelFormat: MTLPixelFormat = .bgra8Unorm,
+    depthPixelFormat: MTLPixelFormat = .depth32Float,
     renderStateKey: RenderStateKey
 ) throws -> MTLRenderPipelineState {
     let library = try OOTRenderer.makeLibrary(device: device, bundle: bundle)
@@ -216,7 +261,7 @@ func makeDrawBatchPipelineState(
         in: library
     )
     let fragmentFunction = try OOTRenderer.makeFunction(
-        named: "oot_flat_color_fragment",
+        named: "oot_combiner_fragment",
         in: library
     )
     let descriptor = MTLRenderPipelineDescriptor()
@@ -230,6 +275,17 @@ func makeDrawBatchPipelineState(
     descriptor.fragmentFunction = fragmentFunction
     descriptor.vertexDescriptor = makeDrawBatchVertexDescriptor()
     descriptor.colorAttachments[0].pixelFormat = colorPixelFormat
+    descriptor.depthAttachmentPixelFormat = depthPixelFormat
+
+    if renderStateKey.renderMode.isTranslucent {
+        descriptor.colorAttachments[0].isBlendingEnabled = true
+        descriptor.colorAttachments[0].rgbBlendOperation = .add
+        descriptor.colorAttachments[0].alphaBlendOperation = .add
+        descriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        descriptor.colorAttachments[0].sourceAlphaBlendFactor = .sourceAlpha
+        descriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        descriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+    }
 
     return try device.makeRenderPipelineState(descriptor: descriptor)
 }
@@ -269,4 +325,18 @@ private func cullMode(for geometryMode: GeometryMode) -> MTLCullMode {
     }
 
     return .none
+}
+
+extension RenderMode {
+    var usesDepthCompare: Bool {
+        (flags & 0x0010) != 0
+    }
+
+    var usesDepthWrite: Bool {
+        (flags & 0x0020) != 0
+    }
+
+    var isTranslucent: Bool {
+        (flags & (0x0800 | 0x4000)) != 0
+    }
 }

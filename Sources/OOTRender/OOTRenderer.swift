@@ -1,3 +1,4 @@
+import Dispatch
 import Foundation
 import Metal
 import MetalKit
@@ -8,10 +9,13 @@ public enum OOTRendererError: Error {
     case metalUnavailable
     case shaderLibraryUnavailable
     case shaderFunctionUnavailable(name: String)
+    case uniformBufferAllocationFailed(length: Int)
+    case depthTextureAllocationFailed(width: Int, height: Int)
 }
 
 public final class OOTRenderer: NSObject, MTKViewDelegate {
     public static let preferredFramesPerSecond = 60
+    public static let depthPixelFormat: MTLPixelFormat = .depth32Float
     public static let zeldaGreen = SIMD4<Float>(
         45.0 / 255.0,
         155.0 / 255.0,
@@ -26,20 +30,33 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     )
     public static let resourceBundle = makeResourceBundle()
 
+    private static let inFlightFrameCount = 3
+
     public let device: MTLDevice
     public let commandQueue: MTLCommandQueue
     public let renderPipelineState: MTLRenderPipelineState
     public let sceneBounds: SceneBounds
-    private let fallbackTexture: MTLTexture
     let vertexDescriptor: MTLVertexDescriptor
     let orbitCameraController: OrbitCameraController
+
+    private let renderScene: OOTRenderScene
+    private let fallbackTexture: MTLTexture
+    private let opaqueDepthStencilState: MTLDepthStencilState
+    private let translucentDepthStencilState: MTLDepthStencilState
     private let sceneVertices: [N64Vertex]
+    private let inFlightSemaphore = DispatchSemaphore(value: OOTRenderer.inFlightFrameCount)
+
+    private var frameUniformBuffers: [MTLBuffer]
+    private var frameUniformBufferIndex = 0
+    private var renderPipelineCache: [RenderStateKey: MTLRenderPipelineState]
 
     public init(
         bundle: Bundle = resourceBundle,
-        sceneVertices: [N64Vertex]? = nil
+        sceneVertices: [N64Vertex]? = nil,
+        scene: OOTRenderScene? = nil
     ) throws {
         let sceneVertices = sceneVertices ?? OOTRenderer.defaultTriangleVertices
+        let renderScene = scene ?? OOTRenderScene.syntheticScene(vertices: sceneVertices)
 
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw OOTRendererError.metalUnavailable
@@ -60,21 +77,41 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         )
         let vertexDescriptor = makeN64VertexDescriptor()
         let pipelineDescriptor = MTLRenderPipelineDescriptor()
-        pipelineDescriptor.label = "OOTRenderPipeline"
+        pipelineDescriptor.label = "OOTRawVertexPipeline"
         pipelineDescriptor.vertexFunction = vertexFunction
         pipelineDescriptor.fragmentFunction = fragmentFunction
         pipelineDescriptor.vertexDescriptor = vertexDescriptor
         pipelineDescriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        pipelineDescriptor.depthAttachmentPixelFormat = Self.depthPixelFormat
+
+        let fallbackTexture = try Self.makeFallbackTexture(device: device)
+        let opaqueDepthStencilState = try Self.makeDepthStencilState(
+            device: device,
+            compareFunction: .lessEqual,
+            depthWriteEnabled: true,
+            label: "OOTDepthOpaque"
+        )
+        let translucentDepthStencilState = try Self.makeDepthStencilState(
+            device: device,
+            compareFunction: .lessEqual,
+            depthWriteEnabled: false,
+            label: "OOTDepthTranslucent"
+        )
+        let frameUniformBuffers = try Self.makeFrameUniformBuffers(device: device)
+        let sceneBounds = renderScene.sceneBounds
 
         self.device = device
         self.commandQueue = commandQueue
+        self.renderScene = renderScene
         self.sceneVertices = sceneVertices
-        self.sceneBounds = SceneBounds(vertices: sceneVertices)
-        self.orbitCameraController = OrbitCameraController(
-            sceneBounds: self.sceneBounds
-        )
-        self.fallbackTexture = try Self.makeFallbackTexture(device: device)
+        self.sceneBounds = sceneBounds
         self.vertexDescriptor = vertexDescriptor
+        self.orbitCameraController = OrbitCameraController(sceneBounds: sceneBounds)
+        self.fallbackTexture = fallbackTexture
+        self.opaqueDepthStencilState = opaqueDepthStencilState
+        self.translucentDepthStencilState = translucentDepthStencilState
+        self.frameUniformBuffers = frameUniformBuffers
+        self.renderPipelineCache = [:]
         self.renderPipelineState = try device.makeRenderPipelineState(
             descriptor: pipelineDescriptor
         )
@@ -85,7 +122,8 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     public func configure(_ view: MTKView) {
         view.device = device
         view.colorPixelFormat = .bgra8Unorm
-        view.clearColor = Self.clearColor
+        view.depthStencilPixelFormat = Self.depthPixelFormat
+        view.clearColor = clearColor(for: renderScene.skyColor)
         view.preferredFramesPerSecond = Self.preferredFramesPerSecond
         view.enableSetNeedsDisplay = false
         view.isPaused = false
@@ -99,23 +137,38 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     }
 
     public func draw(in view: MTKView) {
+        inFlightSemaphore.wait()
+
         guard
             let renderPassDescriptor = view.currentRenderPassDescriptor,
             let drawable = view.currentDrawable,
             let commandBuffer = commandQueue.makeCommandBuffer()
         else {
+            inFlightSemaphore.signal()
             return
         }
 
-        encodeFrame(
-            with: commandBuffer,
-            renderPassDescriptor: renderPassDescriptor,
-            vertices: sceneVertices,
-            frameUniforms: orbitCameraController.frameUniforms(),
-            combinerUniforms: CombinerUniforms()
-        )
-        commandBuffer.present(drawable)
-        commandBuffer.commit()
+        commandBuffer.addCompletedHandler { [inFlightSemaphore] _ in
+            inFlightSemaphore.signal()
+        }
+
+        let frameUniforms = orbitCameraController.frameUniforms()
+        advanceFrameUniformBuffer(with: frameUniforms)
+        renderPassDescriptor.colorAttachments[0].clearColor = clearColor(for: renderScene.skyColor)
+        configureDepthAttachment(for: renderPassDescriptor)
+
+        do {
+            try encodeSceneFrame(
+                with: commandBuffer,
+                renderPassDescriptor: renderPassDescriptor,
+                viewportSize: view.drawableSize,
+                frameUniforms: frameUniforms
+            )
+            commandBuffer.present(drawable)
+            commandBuffer.commit()
+        } catch {
+            commandBuffer.commit()
+        }
     }
 
     func renderToTexture(_ texture: MTLTexture) {
@@ -147,17 +200,37 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         texel0Texture: MTLTexture? = nil,
         texel1Texture: MTLTexture? = nil
     ) {
+        inFlightSemaphore.wait()
+
         let renderPassDescriptor = MTLRenderPassDescriptor()
         renderPassDescriptor.colorAttachments[0].texture = texture
         renderPassDescriptor.colorAttachments[0].loadAction = .clear
         renderPassDescriptor.colorAttachments[0].storeAction = .store
         renderPassDescriptor.colorAttachments[0].clearColor = Self.clearColor
 
-        guard let commandBuffer = commandQueue.makeCommandBuffer() else {
+        do {
+            renderPassDescriptor.depthAttachment.texture = try makeDepthTexture(
+                width: texture.width,
+                height: texture.height
+            )
+        } catch {
+            inFlightSemaphore.signal()
             return
         }
 
-        encodeFrame(
+        configureDepthAttachment(for: renderPassDescriptor)
+
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else {
+            inFlightSemaphore.signal()
+            return
+        }
+
+        commandBuffer.addCompletedHandler { [inFlightSemaphore] _ in
+            inFlightSemaphore.signal()
+        }
+
+        advanceFrameUniformBuffer(with: frameUniforms)
+        encodeRawVertexFrame(
             with: commandBuffer,
             renderPassDescriptor: renderPassDescriptor,
             vertices: vertices,
@@ -168,6 +241,59 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         )
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
+    }
+
+    func renderCurrentSceneToTexture(
+        _ texture: MTLTexture,
+        frameUniforms: FrameUniforms = FrameUniforms.identity
+    ) throws {
+        inFlightSemaphore.wait()
+        defer { inFlightSemaphore.signal() }
+
+        let renderPassDescriptor = MTLRenderPassDescriptor()
+        renderPassDescriptor.colorAttachments[0].texture = texture
+        renderPassDescriptor.colorAttachments[0].loadAction = .clear
+        renderPassDescriptor.colorAttachments[0].storeAction = .store
+        renderPassDescriptor.colorAttachments[0].clearColor = clearColor(for: renderScene.skyColor)
+        renderPassDescriptor.depthAttachment.texture = try makeDepthTexture(
+            width: texture.width,
+            height: texture.height
+        )
+        configureDepthAttachment(for: renderPassDescriptor)
+
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else {
+            return
+        }
+
+        advanceFrameUniformBuffer(with: frameUniforms)
+        try encodeSceneFrame(
+            with: commandBuffer,
+            renderPassDescriptor: renderPassDescriptor,
+            viewportSize: CGSize(width: texture.width, height: texture.height),
+            frameUniforms: frameUniforms
+        )
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+    }
+
+    var cachedRenderPipelineStateCount: Int {
+        renderPipelineCache.count
+    }
+
+    var inFlightUniformBufferCount: Int {
+        frameUniformBuffers.count
+    }
+
+    func cachedRenderPipelineState(
+        for key: RenderStateKey
+    ) throws -> MTLRenderPipelineState {
+        try renderPipelineState(for: key)
+    }
+
+    func depthStencilState(for key: RenderStateKey) -> MTLDepthStencilState {
+        key.renderMode.isTranslucent
+            ? translucentDepthStencilState
+            : opaqueDepthStencilState
     }
 
     static func makeLibrary(
@@ -183,7 +309,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
                 .deletingLastPathComponent()
                 .appendingPathComponent("OOTShaders.metal")
 
-            guard let shaderSource = try? String(contentsOf: shaderSourceURL) else {
+            guard let shaderSource = try? String(contentsOf: shaderSourceURL, encoding: .utf8) else {
                 throw OOTRendererError.shaderLibraryUnavailable
             }
 
@@ -228,7 +354,80 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         return texture
     }
 
-    private func encodeFrame(
+    private static func makeDepthStencilState(
+        device: MTLDevice,
+        compareFunction: MTLCompareFunction,
+        depthWriteEnabled: Bool,
+        label: String
+    ) throws -> MTLDepthStencilState {
+        let descriptor = MTLDepthStencilDescriptor()
+        descriptor.label = label
+        descriptor.depthCompareFunction = compareFunction
+        descriptor.isDepthWriteEnabled = depthWriteEnabled
+
+        guard let state = device.makeDepthStencilState(descriptor: descriptor) else {
+            throw OOTRendererError.metalUnavailable
+        }
+
+        return state
+    }
+
+    private static func makeFrameUniformBuffers(device: MTLDevice) throws -> [MTLBuffer] {
+        try (0..<inFlightFrameCount).map { index in
+            guard let buffer = device.makeBuffer(
+                length: MemoryLayout<FrameUniforms>.stride,
+                options: .storageModeShared
+            ) else {
+                throw OOTRendererError.uniformBufferAllocationFailed(
+                    length: MemoryLayout<FrameUniforms>.stride
+                )
+            }
+
+            buffer.label = "OOTFrameUniforms-\(index)"
+            return buffer
+        }
+    }
+}
+
+private extension OOTRenderer {
+    func encodeSceneFrame(
+        with commandBuffer: MTLCommandBuffer,
+        renderPassDescriptor: MTLRenderPassDescriptor,
+        viewportSize: CGSize,
+        frameUniforms: FrameUniforms
+    ) throws {
+        guard let renderCommandEncoder = commandBuffer.makeRenderCommandEncoder(
+            descriptor: renderPassDescriptor
+        ) else {
+            return
+        }
+
+        renderCommandEncoder.setViewport(
+            MTLViewport(
+                originX: 0,
+                originY: 0,
+                width: Double(viewportSize.width),
+                height: Double(viewportSize.height),
+                znear: 0,
+                zfar: 1
+            )
+        )
+        renderCommandEncoder.setDepthStencilState(opaqueDepthStencilState)
+
+        for room in renderScene.visibleRooms {
+            let interpreter = F3DEX2Interpreter(
+                segmentTable: makeSegmentTable(for: room),
+                projectionMatrix: frameUniforms.mvp,
+                drawBatchResources: makeDrawBatchResources()
+            )
+            try interpreter.interpret(room.displayList, encoder: renderCommandEncoder)
+            try interpreter.flush(encoder: renderCommandEncoder)
+        }
+
+        renderCommandEncoder.endEncoding()
+    }
+
+    func encodeRawVertexFrame(
         with commandBuffer: MTLCommandBuffer,
         renderPassDescriptor: MTLRenderPassDescriptor,
         vertices: [N64Vertex],
@@ -248,6 +447,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         }
 
         renderCommandEncoder.setRenderPipelineState(renderPipelineState)
+        renderCommandEncoder.setDepthStencilState(opaqueDepthStencilState)
         vertices.withUnsafeBytes { bytes in
             guard let baseAddress = bytes.baseAddress else {
                 return
@@ -260,10 +460,9 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
             )
         }
 
-        var frameUniforms = frameUniforms
-        renderCommandEncoder.setVertexBytes(
-            &frameUniforms,
-            length: MemoryLayout<FrameUniforms>.stride,
+        renderCommandEncoder.setVertexBuffer(
+            currentFrameUniformBuffer,
+            offset: 0,
             index: OOTRenderBufferIndex.frameUniforms.rawValue
         )
 
@@ -294,7 +493,94 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         renderCommandEncoder.endEncoding()
     }
 
-    private static func makeResourceBundle() -> Bundle {
+    func advanceFrameUniformBuffer(with frameUniforms: FrameUniforms) {
+        frameUniformBufferIndex = (frameUniformBufferIndex + 1) % frameUniformBuffers.count
+        let buffer = currentFrameUniformBuffer
+        var frameUniforms = frameUniforms
+        memcpy(
+            buffer.contents(),
+            &frameUniforms,
+            MemoryLayout<FrameUniforms>.stride
+        )
+    }
+
+    var currentFrameUniformBuffer: MTLBuffer {
+        frameUniformBuffers[frameUniformBufferIndex]
+    }
+
+    func configureDepthAttachment(for renderPassDescriptor: MTLRenderPassDescriptor) {
+        renderPassDescriptor.depthAttachment.loadAction = .clear
+        renderPassDescriptor.depthAttachment.storeAction = .dontCare
+        renderPassDescriptor.depthAttachment.clearDepth = 1.0
+    }
+
+    func makeDepthTexture(width: Int, height: Int) throws -> MTLTexture {
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: Self.depthPixelFormat,
+            width: width,
+            height: height,
+            mipmapped: false
+        )
+        descriptor.usage = .renderTarget
+        descriptor.storageMode = .private
+
+        guard let texture = device.makeTexture(descriptor: descriptor) else {
+            throw OOTRendererError.depthTextureAllocationFailed(width: width, height: height)
+        }
+
+        return texture
+    }
+
+    func makeSegmentTable(for room: OOTRenderRoom) -> SegmentTable {
+        var segmentTable = SegmentTable()
+        for (segmentID, data) in room.segmentData {
+            try? segmentTable.setSegment(segmentID, data: data)
+        }
+        return segmentTable
+    }
+
+    func makeDrawBatchResources() -> DrawBatchResources {
+        let opaqueDepthStencilState = self.opaqueDepthStencilState
+        return DrawBatchResources(
+            device: device,
+            pipelineLookup: AnyRenderPipelineStateLookup { [weak self] key in
+                guard let self else {
+                    throw OOTRendererError.metalUnavailable
+                }
+                return try self.renderPipelineState(for: key)
+            },
+            depthStencilLookup: AnyDepthStencilStateLookup { [weak self] key in
+                self?.depthStencilState(for: key) ?? opaqueDepthStencilState
+            },
+            fallbackTexture: fallbackTexture
+        )
+    }
+
+    func renderPipelineState(
+        for key: RenderStateKey
+    ) throws -> MTLRenderPipelineState {
+        if let pipelineState = renderPipelineCache[key] {
+            return pipelineState
+        }
+
+        let pipelineState = try makeDrawBatchPipelineState(
+            device: device,
+            renderStateKey: key
+        )
+        renderPipelineCache[key] = pipelineState
+        return pipelineState
+    }
+
+    func clearColor(for skyColor: SIMD4<Float>) -> MTLClearColor {
+        MTLClearColor(
+            red: Double(skyColor.x),
+            green: Double(skyColor.y),
+            blue: Double(skyColor.z),
+            alpha: Double(skyColor.w)
+        )
+    }
+
+    static func makeResourceBundle() -> Bundle {
         let bundleName = "SwiftOOT_OOTRender"
         let candidates = [
             Bundle.main.resourceURL,
@@ -315,11 +601,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
 
         return Bundle(for: BundleToken.self)
     }
-}
 
-private final class BundleToken {}
-
-private extension OOTRenderer {
     static let defaultTriangleVertices: [N64Vertex] = [
         N64Vertex(
             position: Vector3s(x: -1, y: -1, z: 0),
@@ -345,6 +627,8 @@ private extension OOTRenderer {
         mvp: simd_float4x4(diagonal: SIMD4<Float>(0.5, 0.5, 1.0, 1.0))
     )
 }
+
+private final class BundleToken {}
 
 enum OOTRenderTextureIndex: Int {
     case texel0 = 0
