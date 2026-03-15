@@ -43,10 +43,12 @@ public struct OOTRenderRoom: Sendable, Equatable {
 
 public struct OOTRenderScene: Sendable, Equatable {
     public var rooms: [OOTRenderRoom]
+    public var skeletons: [OOTRenderSkeleton]
     public var skyColor: SIMD4<Float>
 
     public init(
         rooms: [OOTRenderRoom],
+        skeletons: [OOTRenderSkeleton] = [],
         skyColor: SIMD4<Float> = SIMD4<Float>(
             45.0 / 255.0,
             155.0 / 255.0,
@@ -55,6 +57,7 @@ public struct OOTRenderScene: Sendable, Equatable {
         )
     ) {
         self.rooms = rooms
+        self.skeletons = skeletons
         self.skyColor = skyColor
     }
 
@@ -85,6 +88,7 @@ public struct OOTRenderScene: Sendable, Equatable {
                     vertexData: encodeVertices(vertices)
                 )
             ],
+            skeletons: [],
             skyColor: skyColor
         )
     }

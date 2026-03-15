@@ -442,6 +442,7 @@ private extension OOTRenderer {
             )
         )
         renderCommandEncoder.setDepthStencilState(opaqueDepthStencilState)
+        let drawBatchResources = makeDrawBatchResources()
 
         var frameStats = SceneFrameStats(roomCount: renderScene.visibleRooms.count)
 
@@ -449,7 +450,7 @@ private extension OOTRenderer {
             let interpreter = F3DEX2Interpreter(
                 segmentTable: makeSegmentTable(for: room),
                 projectionMatrix: frameUniforms.mvp,
-                drawBatchResources: makeDrawBatchResources(),
+                drawBatchResources: drawBatchResources,
                 textureResolver: { [textureBindings] assetID in
                     textureBindings[assetID]
                 }
@@ -459,6 +460,15 @@ private extension OOTRenderer {
             frameStats.vertexCount += room.vertexCount
             frameStats.triangleCount += interpreter.drawBatch.totalTriangleCount
             frameStats.drawCallCount += interpreter.drawBatch.drawCallCount
+        }
+
+        let skelAnimeRenderer = SkelAnimeRenderer(drawBatchResources: drawBatchResources)
+        for skeleton in renderScene.skeletons {
+            try skelAnimeRenderer.render(
+                skeleton,
+                encoder: renderCommandEncoder,
+                projectionMatrix: frameUniforms.mvp
+            )
         }
 
         renderCommandEncoder.endEncoding()

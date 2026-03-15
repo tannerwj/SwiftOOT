@@ -27,6 +27,10 @@ final class SceneLoaderTests: XCTestCase {
         )
         XCTAssertEqual(scene.rooms[1].displayList.count, 2)
         XCTAssertEqual(scene.rooms.map { $0.vertexData.count }, [3 * 16, 1 * 16])
+        XCTAssertEqual(scene.collision?.vertices.count, 3)
+        XCTAssertEqual(scene.collision?.polygons.count, 1)
+        XCTAssertEqual(scene.collision?.surfaceTypes.first?.wallType, 3)
+        XCTAssertEqual(scene.collision?.waterBoxes.first?.roomIndex, 2)
 
         XCTAssertEqual(scene.actors, fixture.actors)
         XCTAssertEqual(scene.environment, fixture.environment)
@@ -143,6 +147,7 @@ private struct SceneLoaderFixture {
         try seedSceneManifest(filename: manifestFilename)
         try seedSceneMetadata()
         try seedTextureAssets()
+        try seedCollision()
         try seedRoom(
             id: 0,
             vertices: [
@@ -263,6 +268,48 @@ private struct SceneLoaderFixture {
         )
     }
 
+    private func seedCollision() throws {
+        let collision = CollisionMesh(
+            minimumBounds: Vector3s(x: -10, y: 0, z: -10),
+            maximumBounds: Vector3s(x: 10, y: 20, z: 10),
+            vertices: [
+                Vector3s(x: -10, y: 0, z: -10),
+                Vector3s(x: 10, y: 0, z: -10),
+                Vector3s(x: -10, y: 0, z: 10),
+            ],
+            polygons: [
+                CollisionPoly(
+                    surfaceType: 0,
+                    vertexA: 0,
+                    vertexB: 1,
+                    vertexC: 2,
+                    normal: Vector3s(x: 0, y: 0x7FFF, z: 0),
+                    distance: 0
+                )
+            ],
+            surfaceTypes: [
+                CollisionSurfaceType(
+                    low: (7 << 8) | (3 << 21),
+                    high: (5 << 6) | (1 << 17)
+                )
+            ],
+            waterBoxes: [
+                CollisionWaterBox(
+                    xMin: -3,
+                    ySurface: 4,
+                    zMin: -5,
+                    xLength: 6,
+                    zLength: 8,
+                    properties: (2 << 13)
+                )
+            ]
+        )
+
+        try collisionBinary(for: collision).write(
+            to: sceneDirectory.appendingPathComponent("collision.bin"),
+            options: .atomic
+        )
+    }
     private func seedRoom(
         id: Int,
         vertices: [N64Vertex],
@@ -324,6 +371,54 @@ private struct SceneLoaderFixture {
                 vertex.colorOrNormal.blue,
                 vertex.colorOrNormal.alpha,
             ])
+        }
+
+        return data
+    }
+
+    private func collisionBinary(for collision: CollisionMesh) -> Data {
+        var data = Data()
+
+        append(collision.minimumBounds.x, to: &data)
+        append(collision.minimumBounds.y, to: &data)
+        append(collision.minimumBounds.z, to: &data)
+        append(collision.maximumBounds.x, to: &data)
+        append(collision.maximumBounds.y, to: &data)
+        append(collision.maximumBounds.z, to: &data)
+        append(UInt16(collision.vertices.count), to: &data)
+        append(UInt16(collision.polygons.count), to: &data)
+        append(UInt16(collision.surfaceTypes.count), to: &data)
+        append(UInt16(collision.waterBoxes.count), to: &data)
+
+        for vertex in collision.vertices {
+            append(vertex.x, to: &data)
+            append(vertex.y, to: &data)
+            append(vertex.z, to: &data)
+        }
+
+        for polygon in collision.polygons {
+            append(polygon.surfaceType, to: &data)
+            append(polygon.vertexA, to: &data)
+            append(polygon.vertexB, to: &data)
+            append(polygon.vertexC, to: &data)
+            append(polygon.normal.x, to: &data)
+            append(polygon.normal.y, to: &data)
+            append(polygon.normal.z, to: &data)
+            append(polygon.distance, to: &data)
+        }
+
+        for surfaceType in collision.surfaceTypes {
+            append(surfaceType.low, to: &data)
+            append(surfaceType.high, to: &data)
+        }
+
+        for waterBox in collision.waterBoxes {
+            append(waterBox.xMin, to: &data)
+            append(waterBox.ySurface, to: &data)
+            append(waterBox.zMin, to: &data)
+            append(waterBox.xLength, to: &data)
+            append(waterBox.zLength, to: &data)
+            append(waterBox.properties, to: &data)
         }
 
         return data

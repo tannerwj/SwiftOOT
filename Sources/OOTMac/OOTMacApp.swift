@@ -4,9 +4,11 @@ import OOTUI
 
 @main
 struct OOTMacApp: App {
+    @State private var runtime = GameRuntime()
+
     var body: some Scene {
         WindowGroup("SwiftOOT") {
-            OOTMacRootView()
+            OOTAppView(runtime: runtime)
                 .frame(minWidth: 960, minHeight: 540)
         }
     }
