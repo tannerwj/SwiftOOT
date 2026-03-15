@@ -8,6 +8,7 @@ public protocol ContentLoading: Sendable {
     func loadMessageCatalog() throws -> MessageCatalog
     func loadObjectTable() throws -> [ObjectTableEntry]
     func loadObject(named name: String) throws -> LoadedObject
+    func loadEntranceTable() throws -> [EntranceTableEntry]
 }
 
 public enum ContentLoaderError: Error, LocalizedError, Sendable, Equatable {
@@ -42,6 +43,10 @@ public extension ContentLoading {
     }
 
     func loadObject(named name: String) throws -> LoadedObject {
+        throw ContentLoaderError.sceneLoadingUnavailable
+    }
+
+    func loadEntranceTable() throws -> [EntranceTableEntry] {
         throw ContentLoaderError.sceneLoadingUnavailable
     }
 }
@@ -79,5 +84,9 @@ public struct ContentLoader: ContentLoading {
 
     public func loadObject(named name: String) throws -> LoadedObject {
         try sceneLoader.loadObject(named: name)
+    }
+
+    public func loadEntranceTable() throws -> [EntranceTableEntry] {
+        try sceneLoader.loadEntranceTable()
     }
 }

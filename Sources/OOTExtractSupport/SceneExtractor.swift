@@ -29,6 +29,7 @@ extension SceneExtractor {
             try fileManager.createDirectory(at: sceneDirectory, withIntermediateDirectories: true)
 
             var roomActors: [RoomActorSpawns] = []
+            var roomSourcesByName: [String: String] = [:]
 
             for room in scene.rooms {
                 let sourceFile: URL
@@ -102,6 +103,7 @@ extension SceneExtractor {
 
                 if let metadataReferences {
                     let roomSource = try Self.readExpandedSource(at: sourceFile, sourceRoot: context.source)
+                    roomSourcesByName[room.symbolName] = roomSource
                     roomActors.append(
                         try Self.parseRoomActors(
                             roomName: room.symbolName,
@@ -178,6 +180,17 @@ extension SceneExtractor {
                 ),
                 to: metadataDirectory.appendingPathComponent("exits.json")
             )
+            try Self.writeJSON(
+                try Self.parseSceneHeader(
+                    sceneName: scene.name,
+                    scene: scene,
+                    sceneSource: sceneSource,
+                    sceneCommands: sceneCommands,
+                    roomSourcesByName: roomSourcesByName,
+                    metadataReferences: metadataReferences
+                ),
+                to: metadataDirectory.appendingPathComponent("scene-header.json")
+            )
             extractedMetadataScenes += 1
         }
 
@@ -219,6 +232,9 @@ extension SceneExtractor {
             )
             let _: ScenePathsFile = try Self.readJSON(from: metadataDirectory.appendingPathComponent("paths.json"))
             let _: SceneExitsFile = try Self.readJSON(from: metadataDirectory.appendingPathComponent("exits.json"))
+            let _: SceneHeaderDefinition = try Self.readJSON(
+                from: metadataDirectory.appendingPathComponent("scene-header.json")
+            )
             verifiedMetadataScenes += 1
         }
 
@@ -646,7 +662,7 @@ extension SceneManifestExtractor {
                 )
             }
 
-            let metadataNames = ["actors.json", "spawns.json", "environment.json", "paths.json", "exits.json"]
+            let metadataNames = ["actors.json", "spawns.json", "environment.json", "paths.json", "exits.json", "scene-header.json"]
             for metadataName in metadataNames {
                 let metadataURL = metadataDirectory.appendingPathComponent(metadataName)
                 guard fileManager.fileExists(atPath: metadataURL.path) else {
@@ -688,6 +704,10 @@ extension SceneManifestExtractor {
                 exitsPath: try Self.relativePath(
                     from: context.output,
                     to: metadataDirectory.appendingPathComponent("exits.json")
+                ),
+                sceneHeaderPath: try Self.relativePath(
+                    from: context.output,
+                    to: metadataDirectory.appendingPathComponent("scene-header.json")
                 ),
                 textureDirectories: Self.textureDirectories(
                     named: [scene.sceneSourceName, scene.sceneSymbolName],
@@ -869,6 +889,10 @@ private extension SceneManifestExtractor {
             let exitsURL = try referencedURL(path: exitsPath, contentRoot: contentRoot)
             let _: SceneExitsFile = try readJSON(from: exitsURL)
         }
+        if let sceneHeaderPath = manifest.sceneHeaderPath {
+            let sceneHeaderURL = try referencedURL(path: sceneHeaderPath, contentRoot: contentRoot)
+            let _: SceneHeaderDefinition = try readJSON(from: sceneHeaderURL)
+        }
 
         try verifyTextureDirectories(manifest.textureDirectories, contentRoot: contentRoot)
     }
@@ -938,6 +962,7 @@ private enum SceneManifestExtractorError: LocalizedError {
 private extension SceneExtractor {
     struct MetadataReferenceTables {
         let actorIDByName: [String: Int]
+        let objectIDByName: [String: Int]
         let entranceIndexByName: [String: Int]
     }
 
@@ -980,6 +1005,7 @@ private extension SceneExtractor {
     static func loadMetadataReferences(outputRoot: URL, sourceRoot: URL) throws -> MetadataReferenceTables {
         MetadataReferenceTables(
             actorIDByName: try loadActorIDs(from: outputRoot),
+            objectIDByName: (try? loadObjectIDs(from: outputRoot)) ?? [:],
             entranceIndexByName: try loadEntranceIndices(from: sourceRoot)
         )
     }
@@ -991,6 +1017,15 @@ private extension SceneExtractor {
             .appendingPathComponent("actor-table.json")
         let actors: [ActorTableEntry] = try readJSON(from: actorsURL)
         return Dictionary(uniqueKeysWithValues: actors.map { ($0.enumName, $0.id) })
+    }
+
+    static func loadObjectIDs(from outputRoot: URL) throws -> [String: Int] {
+        let objectsURL = outputRoot
+            .appendingPathComponent("Manifests", isDirectory: true)
+            .appendingPathComponent("tables", isDirectory: true)
+            .appendingPathComponent("object-table.json")
+        let objects: [ObjectTableEntry] = try readJSON(from: objectsURL)
+        return Dictionary(uniqueKeysWithValues: objects.map { ($0.enumName, $0.id) })
     }
 
     static func loadEntranceIndices(from sourceRoot: URL) throws -> [String: Int] {
@@ -1462,6 +1497,286 @@ private extension SceneExtractor {
             }
 
         return SceneExitsFile(sceneName: sceneName, exits: exits)
+    }
+
+    static func parseSceneHeader(
+        sceneName: String,
+        scene: SceneDefinition,
+        sceneSource: String,
+        sceneCommands: [ParsedCommand],
+        roomSourcesByName: [String: String],
+        metadataReferences: MetadataReferenceTables
+    ) throws -> SceneHeaderDefinition {
+        let soundSettings = try parseSoundSettings(commands: sceneCommands)
+        let specialFiles = try parseSpecialFiles(commands: sceneCommands)
+        let (entrances, roomIDBySpawnIndex) = try parseEntranceDefinitions(
+            source: sceneSource,
+            commands: sceneCommands
+        )
+        let spawns = try parseSceneHeaderSpawns(
+            source: sceneSource,
+            commands: sceneCommands,
+            roomIDBySpawnIndex: roomIDBySpawnIndex
+        )
+        let rooms = try scene.rooms.enumerated().map { index, room in
+            guard let roomSource = roomSourcesByName[room.symbolName] else {
+                throw SceneExtractorError.missingRoomSource(scene.name, room.outputName, scene.xmlURL.path)
+            }
+            return try parseRoomDefinition(
+                id: index,
+                roomName: room.symbolName,
+                source: roomSource,
+                objectIDByName: metadataReferences.objectIDByName
+            )
+        }
+
+        return SceneHeaderDefinition(
+            sceneName: sceneName,
+            sceneObjectIDs: parseSceneObjectIDs(
+                specialFiles: specialFiles,
+                objectIDByName: metadataReferences.objectIDByName
+            ),
+            spawns: spawns,
+            entrances: entrances,
+            rooms: rooms,
+            transitionTriggers: try parseTransitionTriggers(source: sceneSource, commands: sceneCommands),
+            soundSettings: soundSettings,
+            specialFiles: specialFiles,
+            cutsceneIDs: parseCutsceneIDs(commands: sceneCommands)
+        )
+    }
+
+    static func parseRoomDefinition(
+        id: Int,
+        roomName: String,
+        source: String,
+        objectIDByName: [String: Int]
+    ) throws -> SceneRoomDefinition {
+        let commands = try roomCommands(roomName: roomName, in: source)
+        let objectIDs = try parseRoomObjectIDs(source: source, commands: commands, objectIDByName: objectIDByName)
+        let echo = try parseRoomEcho(commands: commands)
+        let behavior = try parseRoomBehavior(commands: commands)
+
+        return SceneRoomDefinition(
+            id: id,
+            shape: try parseRoomShape(commands: commands),
+            objectIDs: objectIDs,
+            echo: echo,
+            behavior: behavior
+        )
+    }
+
+    static func parseRoomShape(commands: [ParsedCommand]) throws -> SceneRoomShape {
+        guard let invocation = commands.first(where: { $0.name == "SCENE_CMD_ROOM_SHAPE" }) else {
+            return .normal
+        }
+        try invocation.requireCount(1)
+
+        let shapeName = trimExpression(invocation.arguments[0]).trimmingPrefix("&")
+        if shapeName.contains("RoomShapeImage") {
+            return .image
+        }
+        if shapeName.contains("RoomShapeCullable") {
+            return .cullable
+        }
+        return .normal
+    }
+
+    static func parseRoomObjectIDs(
+        source: String,
+        commands: [ParsedCommand],
+        objectIDByName: [String: Int]
+    ) throws -> [Int] {
+        guard let invocation = commands.first(where: { $0.name == "SCENE_CMD_OBJECT_LIST" }) else {
+            return []
+        }
+        try invocation.requireCount(2)
+
+        let objectArray = try integerArray(named: trimExpression(invocation.arguments[1]), in: source)
+        return splitTopLevel(objectArray.body)
+            .filter { trimExpression($0).isEmpty == false }
+            .compactMap { token in
+                let name = trimExpression(token)
+                if let objectID = objectIDByName[name] {
+                    return objectID
+                }
+                if let parsed = try? Int(parseIntegerExpression(name)) {
+                    return parsed
+                }
+                return nil
+            }
+    }
+
+    static func parseRoomEcho(commands: [ParsedCommand]) throws -> Int? {
+        guard let invocation = commands.first(where: { $0.name == "SCENE_CMD_ECHO_SETTINGS" }) else {
+            return nil
+        }
+        try invocation.requireCount(1)
+        return Int(try parseUnsigned8Expression(invocation.arguments[0]))
+    }
+
+    static func parseRoomBehavior(commands: [ParsedCommand]) throws -> SceneRoomBehavior? {
+        guard let invocation = commands.first(where: { $0.name == "SCENE_CMD_ROOM_BEHAVIOR" }) else {
+            return nil
+        }
+        try invocation.requireCount(4)
+        return SceneRoomBehavior(
+            disableWarpSongs: try parseBoolExpression(invocation.arguments[2]),
+            showInvisibleActors: try parseBoolExpression(invocation.arguments[3])
+        )
+    }
+
+    static func parseEntranceDefinitions(
+        source: String,
+        commands: [ParsedCommand]
+    ) throws -> ([SceneEntranceDefinition], [Int: Int]) {
+        guard let invocation = commands.first(where: { $0.name == "SCENE_CMD_ENTRANCE_LIST" }) else {
+            return ([], [:])
+        }
+        try invocation.requireCount(1)
+
+        let entranceArray: ParsedArray
+        if let spawnArray = try? array(named: trimExpression(invocation.arguments[0]), type: "Spawn", in: source) {
+            entranceArray = spawnArray
+        } else {
+            entranceArray = try array(named: trimExpression(invocation.arguments[0]), type: "EntranceEntry", in: source)
+        }
+        var roomIDBySpawnIndex: [Int: Int] = [:]
+        let entrances = try topLevelBraceEntries(in: entranceArray.body).enumerated().map { index, entry in
+            let fields = splitTopLevel(entry)
+            guard fields.count == 2 else {
+                throw SceneExtractorError.invalidCommand("Unable to parse entrance entry: \(entry)")
+            }
+
+            let spawnIndex = Int(try parseIntegerExpression(fields[0]))
+            let roomID = Int(try parseIntegerExpression(fields[1]))
+            roomIDBySpawnIndex[spawnIndex] = roomID
+            return SceneEntranceDefinition(index: index, spawnIndex: spawnIndex)
+        }
+
+        return (entrances, roomIDBySpawnIndex)
+    }
+
+    static func parseSceneHeaderSpawns(
+        source: String,
+        commands: [ParsedCommand],
+        roomIDBySpawnIndex: [Int: Int]
+    ) throws -> [SceneSpawnPoint] {
+        guard let invocation = commands.first(where: { $0.name == "SCENE_CMD_SPAWN_LIST" }) else {
+            return []
+        }
+        try invocation.requireCount(2)
+
+        let spawnArray = try array(named: trimExpression(invocation.arguments[1]), type: "ActorEntry", in: source)
+        return try topLevelBraceEntries(in: spawnArray.body).enumerated().map { index, entry in
+            let fields = splitTopLevel(entry)
+            guard fields.count == 4 else {
+                throw SceneExtractorError.invalidActorEntry(entry)
+            }
+
+            return SceneSpawnPoint(
+                index: index,
+                roomID: roomIDBySpawnIndex[index] ?? 0,
+                position: try parseVector3s(fields[1]),
+                rotation: try parseVector3s(fields[2])
+            )
+        }
+    }
+
+    static func parseTransitionTriggers(
+        source: String,
+        commands: [ParsedCommand]
+    ) throws -> [SceneTransitionTrigger] {
+        guard let invocation = commands.first(where: { $0.name == "SCENE_CMD_TRANSITION_ACTOR_LIST" }) else {
+            return []
+        }
+        try invocation.requireCount(2)
+
+        let transitionArray = try array(
+            named: trimExpression(invocation.arguments[1]),
+            type: "TransitionActorEntry",
+            in: source
+        )
+        return try topLevelBraceEntries(in: transitionArray.body).enumerated().compactMap { index, entry in
+            let fields = splitTopLevel(entry)
+            guard fields.count == 8 || fields.count == 10 else {
+                throw SceneExtractorError.invalidCommand("Unable to parse transition actor entry: \(entry)")
+            }
+
+            let roomID = Int(try parseIntegerExpression(fields[0]))
+            guard roomID >= 0 else {
+                return nil
+            }
+
+            let destinationRoomID = Int(try parseIntegerExpression(fields[2]))
+            let position: Vector3s
+            if fields.count == 8 {
+                position = try parseVector3s(fields[5])
+            } else {
+                position = Vector3s(
+                    x: try parseSigned16Expression(fields[5]),
+                    y: try parseSigned16Expression(fields[6]),
+                    z: try parseSigned16Expression(fields[7])
+                )
+            }
+
+            return SceneTransitionTrigger(
+                id: index,
+                kind: .door,
+                roomID: roomID,
+                destinationRoomID: destinationRoomID >= 0 ? destinationRoomID : nil,
+                effect: .fade,
+                volume: SceneTriggerVolume(minimum: position, maximum: position)
+            )
+        }
+    }
+
+    static func parseSoundSettings(commands: [ParsedCommand]) throws -> SceneSoundSettings? {
+        guard let invocation = commands.first(where: { $0.name == "SCENE_CMD_SOUND_SETTINGS" }) else {
+            return nil
+        }
+        try invocation.requireCount(3)
+        return SceneSoundSettings(
+            specID: Int(try parseUnsigned8Expression(invocation.arguments[0])),
+            natureAmbienceID: Int(try parseUnsigned8Expression(invocation.arguments[1])),
+            sequenceID: Int(try parseUnsigned8Expression(invocation.arguments[2]))
+        )
+    }
+
+    static func parseSpecialFiles(commands: [ParsedCommand]) throws -> SceneSpecialFiles? {
+        guard let invocation = commands.first(where: { $0.name == "SCENE_CMD_SPECIAL_FILES" }) else {
+            return nil
+        }
+        try invocation.requireCount(2)
+        return SceneSpecialFiles(
+            naviHintName: sanitizeOptionalSymbol(invocation.arguments[0]),
+            keepObjectName: sanitizeOptionalSymbol(invocation.arguments[1])
+        )
+    }
+
+    static func parseSceneObjectIDs(
+        specialFiles: SceneSpecialFiles?,
+        objectIDByName: [String: Int]
+    ) -> [Int] {
+        guard let keepObjectName = specialFiles?.keepObjectName else {
+            return []
+        }
+        if let objectID = objectIDByName[keepObjectName] {
+            return objectID > 0 ? [objectID] : []
+        }
+        if let parsed = try? Int(parseIntegerExpression(keepObjectName)) {
+            return parsed > 0 ? [parsed] : []
+        }
+        return []
+    }
+
+    static func parseCutsceneIDs(commands: [ParsedCommand]) -> [Int] {
+        commands.compactMap { command in
+            guard command.name == "SCENE_CMD_CUTSCENE_DATA", command.arguments.count == 1 else {
+                return nil
+            }
+            return try? Int(parseIntegerExpression(command.arguments[0]))
+        }
     }
 
     static func parseLightSetting(_ entry: String) throws -> SceneLightSetting {
@@ -2160,6 +2475,11 @@ private extension SceneExtractor {
 
     static func trimExpression(_ expression: String) -> String {
         expression.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func sanitizeOptionalSymbol(_ rawValue: String) -> String? {
+        let trimmed = trimExpression(rawValue)
+        return trimmed == "0" || trimmed == "NULL" ? nil : trimmed
     }
 
     static func stripBlockComments(from expression: String) -> String {

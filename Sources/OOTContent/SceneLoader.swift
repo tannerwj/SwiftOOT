@@ -12,6 +12,7 @@ public protocol SceneLoading: Sendable {
     func loadActorTable() throws -> [ActorTableEntry]
     func loadObjectTable() throws -> [ObjectTableEntry]
     func loadObject(named name: String) throws -> LoadedObject
+    func loadEntranceTable() throws -> [EntranceTableEntry]
     func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh?
     func loadRoomDisplayList(for room: RoomManifest) throws -> [F3DEX2Command]
     func loadRoomVertexData(for room: RoomManifest) throws -> Data
@@ -24,6 +25,8 @@ public struct LoadedScene: Sendable, Equatable {
     public var spawns: SceneSpawnsFile?
     public var environment: SceneEnvironmentFile?
     public var paths: ScenePathsFile?
+    public var exits: SceneExitsFile?
+    public var sceneHeader: SceneHeaderDefinition?
     public var rooms: [LoadedSceneRoom]
 
     public init(
@@ -33,6 +36,8 @@ public struct LoadedScene: Sendable, Equatable {
         spawns: SceneSpawnsFile? = nil,
         environment: SceneEnvironmentFile? = nil,
         paths: ScenePathsFile? = nil,
+        exits: SceneExitsFile? = nil,
+        sceneHeader: SceneHeaderDefinition? = nil,
         rooms: [LoadedSceneRoom]
     ) {
         self.manifest = manifest
@@ -41,6 +46,8 @@ public struct LoadedScene: Sendable, Equatable {
         self.spawns = spawns
         self.environment = environment
         self.paths = paths
+        self.exits = exits
+        self.sceneHeader = sceneHeader
         self.rooms = rooms
     }
 }
@@ -137,6 +144,11 @@ public struct SceneLoader: SceneLoading {
     public func loadActorTable() throws -> [ActorTableEntry] {
         try loadJSON([ActorTableEntry].self, from: actorTableURL)
     }
+
+    public func loadEntranceTable() throws -> [EntranceTableEntry] {
+        try loadJSON([EntranceTableEntry].self, from: entranceTableURL)
+    }
+
     public func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh? {
         guard let collisionPath = manifest.collisionPath, collisionPath.isEmpty == false else {
             return nil
@@ -178,6 +190,14 @@ public struct SceneLoader: SceneLoading {
 
     public func loadPaths(for manifest: SceneManifest) throws -> ScenePathsFile? {
         try loadOptionalJSON(ScenePathsFile.self, fromRelativePath: manifest.pathsPath)
+    }
+
+    public func loadExits(for manifest: SceneManifest) throws -> SceneExitsFile? {
+        try loadOptionalJSON(SceneExitsFile.self, fromRelativePath: manifest.exitsPath)
+    }
+
+    public func loadSceneHeader(for manifest: SceneManifest) throws -> SceneHeaderDefinition? {
+        try loadOptionalJSON(SceneHeaderDefinition.self, fromRelativePath: manifest.sceneHeaderPath)
     }
 }
 
@@ -241,23 +261,27 @@ private extension SceneLoader {
             return fallbackRoot
         }
 
-        let primaryCandidateBases = [
+        let ancestorCandidateBases = [
             URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true),
             sourceRoot,
         ]
+        let directOnlyCandidateBases = [
+            Bundle.main.resourceURL,
+            Bundle.main.bundleURL,
+        ]
 
-        for baseURL in primaryCandidateBases {
-            if let resolved = resolveContentRoot(from: baseURL, fileManager: fileManager) {
+        for baseURL in ancestorCandidateBases {
+            if let resolved = resolveContentRoot(from: baseURL, fileManager: fileManager, searchAncestors: true) {
                 return resolved
             }
         }
 
-        for baseURL in [Bundle.main.resourceURL, Bundle.main.bundleURL] {
+        for baseURL in directOnlyCandidateBases {
             guard let baseURL else {
                 continue
             }
 
-            if let resolved = resolveContentRoot(from: baseURL, fileManager: fileManager) {
+            if let resolved = resolveContentRoot(from: baseURL, fileManager: fileManager, searchAncestors: false) {
                 return resolved
             }
         }
@@ -294,6 +318,13 @@ private extension SceneLoader {
         contentRoot.appendingPathComponent("Objects", isDirectory: true)
     }
 
+    var entranceTableURL: URL {
+        contentRoot
+            .appendingPathComponent("Manifests", isDirectory: true)
+            .appendingPathComponent("tables", isDirectory: true)
+            .appendingPathComponent("entrance-table.json")
+    }
+
     func loadScene(from directory: URL) throws -> LoadedScene {
         let manifest = try loadSceneManifest(from: directory)
 
@@ -304,6 +335,8 @@ private extension SceneLoader {
             spawns: loadSpawns(for: manifest),
             environment: loadEnvironment(for: manifest),
             paths: loadPaths(for: manifest),
+            exits: loadExits(for: manifest),
+            sceneHeader: loadSceneHeader(for: manifest),
             rooms: manifest.rooms.map { room in
                 try LoadedSceneRoom(
                     manifest: room,
@@ -373,7 +406,8 @@ private extension SceneLoader {
 
     static func resolveContentRoot(
         from baseURL: URL,
-        fileManager: FileManager
+        fileManager: FileManager,
+        searchAncestors: Bool = true
     ) -> URL? {
         let normalizedBaseURL = baseURL.resolvingSymlinksInPath().standardizedFileURL
         let directCandidates = [
@@ -385,6 +419,10 @@ private extension SceneLoader {
 
         for candidate in directCandidates where hasSceneTable(at: candidate, fileManager: fileManager) {
             return candidate
+        }
+
+        guard searchAncestors else {
+            return nil
         }
 
         var currentURL = normalizedBaseURL

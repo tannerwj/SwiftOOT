@@ -494,6 +494,202 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual(runtime.actors.count, 1)
     }
 
+    @MainActor
+    func testLoadSceneResolvesEntranceToSpawnRoomAndObjectSlots() throws {
+        let scene = makeScene(
+            roomSpawns: [
+                0: [makeSpawn(id: 10, name: "ACTOR_ROOM0_TEST")],
+                1: [makeSpawn(id: 20, name: "ACTOR_ROOM1_TEST")],
+            ],
+            sceneObjectIDs: [100, 101],
+            roomObjectIDs: [0: [200], 1: [300]],
+            entrances: [SceneEntranceDefinition(index: 5, spawnIndex: 1)],
+            spawns: [
+                SceneSpawnPoint(
+                    index: 0,
+                    roomID: 0,
+                    position: Vector3s(x: 0, y: 0, z: 0),
+                    rotation: Vector3s(x: 0, y: 0, z: 0)
+                ),
+                SceneSpawnPoint(
+                    index: 1,
+                    roomID: 1,
+                    position: Vector3s(x: 10, y: 0, z: 0),
+                    rotation: Vector3s(x: 0, y: 0x4000, z: 0)
+                ),
+            ]
+        )
+        let fixture = RuntimeFixture(
+            scene: scene,
+            actorTable: [
+                makeActorTableEntry(id: 10, name: "ACTOR_ROOM0_TEST", category: .npc, objectID: 210),
+                makeActorTableEntry(id: 20, name: "ACTOR_ROOM1_TEST", category: .npc, objectID: 310),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55, entranceIndex: 5)
+
+        XCTAssertEqual(runtime.playState?.currentSceneID, 0x55)
+        XCTAssertEqual(runtime.playState?.currentEntranceIndex, 5)
+        XCTAssertEqual(runtime.playState?.currentSpawnIndex, 1)
+        XCTAssertEqual(runtime.playState?.currentRoomID, 1)
+        XCTAssertEqual(runtime.playState?.activeRoomIDs, [1])
+        XCTAssertEqual(runtime.playState?.loadedObjectIDs, [100, 101, 300, 310])
+        XCTAssertFalse(runtime.playState?.objectSlotOverflow ?? true)
+    }
+
+    @MainActor
+    func testDoorTransitionKeepsAtMostTwoRoomsActiveAndReloadsObjects() throws {
+        let scene = makeScene(
+            roomSpawns: [
+                0: [makeSpawn(id: 10, name: "ACTOR_ROOM0_TEST")],
+                1: [makeSpawn(id: 20, name: "ACTOR_ROOM1_TEST")],
+            ],
+            sceneObjectIDs: [100],
+            roomObjectIDs: [0: [200], 1: [300]],
+            transitionTriggers: [
+                SceneTransitionTrigger(
+                    id: 77,
+                    kind: .door,
+                    roomID: 0,
+                    destinationRoomID: 1,
+                    effect: .circleIris,
+                    volume: SceneTriggerVolume(
+                        minimum: Vector3s(x: 0, y: 0, z: 0),
+                        maximum: Vector3s(x: 10, y: 10, z: 10)
+                    )
+                )
+            ]
+        )
+        let fixture = RuntimeFixture(
+            scene: scene,
+            actorTable: [
+                makeActorTableEntry(id: 10, name: "ACTOR_ROOM0_TEST", category: .npc, objectID: 210),
+                makeActorTableEntry(id: 20, name: "ACTOR_ROOM1_TEST", category: .npc, objectID: 310),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+        try runtime.activateDoorTransition(id: 77)
+
+        XCTAssertEqual(runtime.playState?.currentRoomID, 1)
+        XCTAssertEqual(runtime.playState?.activeRoomIDs, [0, 1])
+        XCTAssertEqual(runtime.playState?.loadedObjectIDs, [100, 200, 210, 300, 310])
+        XCTAssertEqual(runtime.playState?.transitionEffect, .circleIris)
+    }
+
+    @MainActor
+    func testLoadingZoneTransitionsToDestinationSceneUsingEntranceTable() throws {
+        let sourceScene = makeScene(
+            sceneID: 0x55,
+            sceneName: "source_scene",
+            roomSpawns: [0: [makeSpawn(id: 10, name: "ACTOR_SOURCE_TEST")]],
+            entrances: [SceneEntranceDefinition(index: 5, spawnIndex: 0)],
+            spawns: [
+                SceneSpawnPoint(
+                    index: 0,
+                    roomID: 0,
+                    position: Vector3s(x: 0, y: 0, z: 0),
+                    rotation: Vector3s(x: 0, y: 0, z: 0)
+                )
+            ],
+            transitionTriggers: [
+                SceneTransitionTrigger(
+                    id: 88,
+                    kind: .loadingZone,
+                    roomID: 0,
+                    exitIndex: 0,
+                    effect: .wipe,
+                    volume: SceneTriggerVolume(
+                        minimum: Vector3s(x: -5, y: -5, z: -5),
+                        maximum: Vector3s(x: 5, y: 5, z: 5)
+                    )
+                )
+            ],
+            exits: [
+                SceneExitDefinition(index: 0, entranceIndex: 9, entranceName: "ENTR_DEST_0")
+            ]
+        )
+        let destinationScene = makeScene(
+            sceneID: 0x66,
+            sceneName: "destination_scene",
+            roomSpawns: [2: [makeSpawn(id: 20, name: "ACTOR_DEST_TEST")]],
+            entrances: [SceneEntranceDefinition(index: 9, spawnIndex: 1)],
+            spawns: [
+                SceneSpawnPoint(
+                    index: 1,
+                    roomID: 2,
+                    position: Vector3s(x: 50, y: 0, z: 0),
+                    rotation: Vector3s(x: 0, y: 0x2000, z: 0)
+                )
+            ]
+        )
+        let contentLoader = MockContentLoader(
+            scenesByID: [
+                0x55: sourceScene,
+                0x66: destinationScene,
+            ],
+            actorTable: [
+                makeActorTableEntry(id: 10, name: "ACTOR_SOURCE_TEST", category: .npc, objectID: 210),
+                makeActorTableEntry(id: 20, name: "ACTOR_DEST_TEST", category: .npc, objectID: 310),
+            ],
+            entranceTable: [
+                EntranceTableEntry(
+                    index: 9,
+                    name: "ENTR_DEST_0",
+                    sceneID: 0x66,
+                    spawnIndex: 1,
+                    continueBGM: false,
+                    displayTitleCard: true,
+                    transitionIn: .fade,
+                    transitionOut: .fade
+                )
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55, entranceIndex: 5)
+        try runtime.evaluateLoadingZone(at: Vector3s(x: 0, y: 0, z: 0))
+
+        XCTAssertEqual(runtime.playState?.currentSceneID, 0x66)
+        XCTAssertEqual(runtime.playState?.currentEntranceIndex, 9)
+        XCTAssertEqual(runtime.playState?.currentRoomID, 2)
+        XCTAssertEqual(runtime.playState?.transitionEffect, .wipe)
+    }
+
+    @MainActor
+    func testSceneManagerCapsLoadedObjectSlotsAtNineteen() throws {
+        let scene = makeScene(
+            roomSpawns: [0: []],
+            sceneObjectIDs: Array(1...25)
+        )
+        let fixture = RuntimeFixture(scene: scene, actorTable: [])
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+
+        XCTAssertEqual(runtime.playState?.loadedObjectIDs.count, 19)
+        XCTAssertTrue(runtime.playState?.objectSlotOverflow ?? false)
+    }
+
     func testPrimaryGameplayInputRequestsDialogueFromTalkActor() async throws {
         try await MainActor.run {
             let fixture = RuntimeFixture(
@@ -590,31 +786,68 @@ final class OOTCoreTests: XCTestCase {
     }
 }
 
+@MainActor
+private func makeRuntime(
+    saveContext: SaveContext = SaveContext(),
+    contentLoader: any ContentLoading = ContentLoader(sceneLoader: MockSceneLoader()),
+    sceneLoader: any SceneLoading = MockSceneLoader(),
+    telemetryPublisher: any TelemetryPublishing = TelemetryPublisher(),
+    actorRegistry: ActorRegistry? = nil,
+    suspender: @escaping GameRuntime.RuntimeSuspender = { _ in }
+) -> GameRuntime {
+    GameRuntime(
+        saveContext: saveContext,
+        contentLoader: contentLoader,
+        sceneLoader: sceneLoader,
+        telemetryPublisher: telemetryPublisher,
+        actorRegistry: actorRegistry,
+        suspender: suspender
+    )
+}
+
 private struct RuntimeFixture {
     let contentLoader: MockContentLoader
 
     init(
         scene: LoadedScene,
         actorTable: [ActorTableEntry],
-        messageCatalog: MessageCatalog = MessageCatalog()
+        messageCatalog: MessageCatalog = MessageCatalog(),
+        entranceTable: [EntranceTableEntry] = []
     ) {
         contentLoader = MockContentLoader(
-            scene: scene,
+            scenesByID: [scene.manifest.id: scene],
             actorTable: actorTable,
-            messageCatalog: messageCatalog
+            messageCatalog: messageCatalog,
+            entranceTable: entranceTable
         )
     }
 }
 
 private struct MockContentLoader: ContentLoading {
-    let scene: LoadedScene
+    let scenesByID: [Int: LoadedScene]
     let actorTable: [ActorTableEntry]
     let messageCatalog: MessageCatalog
+    let entranceTable: [EntranceTableEntry]
+
+    init(
+        scenesByID: [Int: LoadedScene],
+        actorTable: [ActorTableEntry],
+        messageCatalog: MessageCatalog = MessageCatalog(),
+        entranceTable: [EntranceTableEntry] = []
+    ) {
+        self.scenesByID = scenesByID
+        self.actorTable = actorTable
+        self.messageCatalog = messageCatalog
+        self.entranceTable = entranceTable
+    }
 
     func loadInitialContent() async throws {}
 
     func loadScene(id: Int) throws -> LoadedScene {
-        scene
+        guard let scene = scenesByID[id] else {
+            throw ContentLoaderError.sceneLoadingUnavailable
+        }
+        return scene
     }
 
     func loadActorTable() throws -> [ActorTableEntry] {
@@ -623,6 +856,14 @@ private struct MockContentLoader: ContentLoading {
 
     func loadMessageCatalog() throws -> MessageCatalog {
         messageCatalog
+    }
+
+    func loadObjectTable() throws -> [ObjectTableEntry] {
+        []
+    }
+
+    func loadEntranceTable() throws -> [EntranceTableEntry] {
+        entranceTable
     }
 }
 
@@ -682,7 +923,17 @@ private final class RecordingActor: DamageableBaseActor {
     }
 }
 
-private func makeScene(roomSpawns: [Int: [SceneActorSpawn]]) -> LoadedScene {
+private func makeScene(
+    sceneID: Int = 0x55,
+    sceneName: String = "test_scene",
+    roomSpawns: [Int: [SceneActorSpawn]],
+    sceneObjectIDs: [Int] = [],
+    roomObjectIDs: [Int: [Int]] = [:],
+    entrances: [SceneEntranceDefinition] = [],
+    spawns: [SceneSpawnPoint] = [],
+    transitionTriggers: [SceneTransitionTrigger] = [],
+    exits: [SceneExitDefinition] = []
+) -> LoadedScene {
     let sortedRooms = roomSpawns.keys.sorted()
     let manifestRooms = sortedRooms.map { roomID in
         RoomManifest(
@@ -699,7 +950,7 @@ private func makeScene(roomSpawns: [Int: [SceneActorSpawn]]) -> LoadedScene {
         )
     }
     let actors = SceneActorsFile(
-        sceneName: "test_scene",
+        sceneName: sceneName,
         rooms: manifestRooms.map { room in
             RoomActorSpawns(
                 roomName: room.name,
@@ -710,12 +961,27 @@ private func makeScene(roomSpawns: [Int: [SceneActorSpawn]]) -> LoadedScene {
 
     return LoadedScene(
         manifest: SceneManifest(
-            id: 0x55,
-            name: "test_scene",
+            id: sceneID,
+            name: sceneName,
             rooms: manifestRooms,
             actorsPath: "Manifests/scenes/test_scene/actors.json"
         ),
         actors: actors,
+        exits: SceneExitsFile(sceneName: sceneName, exits: exits),
+        sceneHeader: SceneHeaderDefinition(
+            sceneName: sceneName,
+            sceneObjectIDs: sceneObjectIDs,
+            spawns: spawns,
+            entrances: entrances,
+            rooms: manifestRooms.map { room in
+                SceneRoomDefinition(
+                    id: room.id,
+                    shape: .normal,
+                    objectIDs: roomObjectIDs[room.id, default: []]
+                )
+            },
+            transitionTriggers: transitionTriggers
+        ),
         rooms: loadedRooms
     )
 }
@@ -739,7 +1005,8 @@ private func makeSpawn(
 private func makeActorTableEntry(
     id: Int,
     name: String,
-    category: ActorCategory
+    category: ActorCategory,
+    objectID: Int = 0
 ) -> ActorTableEntry {
     ActorTableEntry(
         id: id,
@@ -748,7 +1015,7 @@ private func makeActorTableEntry(
             id: id,
             category: category.rawValue,
             flags: 0,
-            objectID: 0
+            objectID: objectID
         )
     )
 }
@@ -816,6 +1083,10 @@ private struct MockSceneLoader: SceneLoading {
     }
 
     func loadObjectTable() throws -> [ObjectTableEntry] {
+        []
+    }
+
+    func loadEntranceTable() throws -> [EntranceTableEntry] {
         []
     }
 

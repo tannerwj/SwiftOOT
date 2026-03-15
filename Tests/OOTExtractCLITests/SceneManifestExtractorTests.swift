@@ -52,6 +52,7 @@ final class SceneManifestExtractorTests: XCTestCase {
                 environmentPath: "\(metadataPrefix)/environment.json",
                 pathsPath: "\(metadataPrefix)/paths.json",
                 exitsPath: "\(metadataPrefix)/exits.json",
+                sceneHeaderPath: "\(metadataPrefix)/scene-header.json",
                 textureDirectories: ["Textures/spot04_scene"]
             )
         )
@@ -228,6 +229,10 @@ private struct ManifestHarness {
         try writeJSON(
             SceneExitsFile(sceneName: "spot04", exits: []),
             to: metadataRoot.appendingPathComponent("exits.json")
+        )
+        try writeJSON(
+            SceneHeaderDefinition(sceneName: "spot04"),
+            to: metadataRoot.appendingPathComponent("scene-header.json")
         )
 
         try FileManager.default.createDirectory(
