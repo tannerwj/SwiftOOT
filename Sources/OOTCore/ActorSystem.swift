@@ -63,6 +63,12 @@ public protocol Actor: AnyObject {
     func destroy(playState: PlayState)
 }
 
+@MainActor
+public protocol TalkRequestingActor: Actor {
+    var talkPrompt: String { get }
+    func talkRequested(playState: PlayState) -> Bool
+}
+
 public extension Actor {
     var drawPasses: Set<ActorDrawPass> { [.opaque] }
 
@@ -73,6 +79,10 @@ public extension Actor {
     func draw(playState: PlayState, pass: ActorDrawPass) {}
 
     func destroy(playState: PlayState) {}
+}
+
+public extension TalkRequestingActor {
+    var talkPrompt: String { "Talk" }
 }
 
 @MainActor
@@ -140,13 +150,25 @@ open class DamageableBaseActor: BaseActor, DamageableActor {
 }
 
 @MainActor
-public final class KokiriChildActor: DamageableBaseActor {}
+public final class KokiriChildActor: DamageableBaseActor, TalkRequestingActor {
+    public func talkRequested(playState: PlayState) -> Bool {
+        let messageID = params == 0 ? 0x1000 : Int(params)
+        playState.requestMessage(messageID)
+        return true
+    }
+}
 
 @MainActor
 public final class DoorActor: BaseActor {}
 
 @MainActor
-public final class SignActor: DamageableBaseActor {}
+public final class SignActor: DamageableBaseActor, TalkRequestingActor {
+    public func talkRequested(playState: PlayState) -> Bool {
+        let messageID = params == 0 ? 0x1001 : Int(params)
+        playState.requestMessage(messageID)
+        return true
+    }
+}
 
 @MainActor
 public final class GenericPropActor: DamageableBaseActor {}
@@ -157,13 +179,22 @@ public final class PlaceholderActor: DamageableBaseActor {}
 @MainActor
 public final class ActorRuntimeHooks: @unchecked Sendable {
     private let destroyHandler: @MainActor (any Actor) -> Void
+    private let messageHandler: @MainActor (Int) -> Void
 
-    public init(destroyHandler: @escaping @MainActor (any Actor) -> Void) {
+    public init(
+        destroyHandler: @escaping @MainActor (any Actor) -> Void,
+        messageHandler: @escaping @MainActor (Int) -> Void
+    ) {
         self.destroyHandler = destroyHandler
+        self.messageHandler = messageHandler
     }
 
     public func requestDestroy(_ actor: any Actor) {
         destroyHandler(actor)
+    }
+
+    public func requestMessage(_ messageID: Int) {
+        messageHandler(messageID)
     }
 }
 

@@ -123,6 +123,59 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual(runtime.playState?.currentSceneName, "Hyrule Field")
     }
 
+    func testMessageContextRevealsPlayerNameDelayAndChoices() {
+        var context = MessageContext(
+            catalog: MessageCatalog(
+                messageList: [
+                    MessageDefinition(
+                        id: 0x1000,
+                        variant: .blue,
+                        segments: [
+                            .text("Hello "),
+                            .playerName,
+                            .delay(2),
+                            .color(.yellow),
+                            .text("!"),
+                            .choice([
+                                MessageChoiceOption(title: "Yes"),
+                                MessageChoiceOption(title: "No"),
+                            ]),
+                        ]
+                    ),
+                ]
+            )
+        )
+
+        context.enqueue(messageID: 0x1000, playerName: "Link")
+        XCTAssertEqual(context.phase, .opening)
+
+        for _ in 0..<6 {
+            context.tick(playerName: "Link")
+        }
+
+        XCTAssertEqual(context.phase, .displaying)
+
+        for _ in 0..<64 where context.phase != .waitingForChoice {
+            context.tick(playerName: "Link")
+        }
+
+        XCTAssertEqual(
+            context.activePresentation?.textRuns,
+            [
+                MessageTextRun(text: "Hello Link", color: .white),
+                MessageTextRun(text: "!", color: .yellow),
+            ]
+        )
+        XCTAssertEqual(context.phase, .waitingForChoice)
+        XCTAssertEqual(context.activePresentation?.choiceState?.options.map(\.title), ["Yes", "No"])
+
+        context.moveSelection(delta: 1)
+        XCTAssertEqual(context.activePresentation?.choiceState?.selectedIndex, 1)
+
+        context.advanceOrConfirm(playerName: "Link")
+        XCTAssertEqual(context.phase, .closing)
+    }
+
     func testCollisionSystemFindsFloorAndCeiling() {
         let system = CollisionSystem(staticMeshes: [fixtureCollisionMesh()])
 
@@ -413,6 +466,43 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual(runtime.actors.count, 1)
     }
 
+    func testPrimaryGameplayInputRequestsDialogueFromTalkActor() async throws {
+        try await MainActor.run {
+            let fixture = RuntimeFixture(
+                scene: makeScene(
+                    roomSpawns: [
+                        0: [
+                            makeSpawn(id: 1, name: "ACTOR_EN_KO", params: 0x1000),
+                        ],
+                    ]
+                ),
+                actorTable: [
+                    makeActorTableEntry(id: 1, name: "ACTOR_EN_KO", category: .npc),
+                ],
+                messageCatalog: MessageCatalog(
+                    messageList: [
+                        MessageDefinition(
+                            id: 0x1000,
+                            variant: .white,
+                            segments: [.text("Welcome to Kokiri Forest.") ]
+                        ),
+                    ]
+                )
+            )
+            let runtime = GameRuntime(
+                contentLoader: fixture.contentLoader,
+                sceneLoader: MockSceneLoader(),
+                suspender: { _ in }
+            )
+
+            try runtime.loadScene(id: 0x55)
+            runtime.handlePrimaryGameplayInput()
+
+            XCTAssertEqual(runtime.activeMessagePresentation?.messageID, 0x1000)
+            XCTAssertEqual(runtime.gameplayActionLabel, "Next")
+        }
+    }
+
     @MainActor
     func testDrawPassesOnlyCallMatchingActors() throws {
         let recorder = EventRecorder()
@@ -475,14 +565,23 @@ final class OOTCoreTests: XCTestCase {
 private struct RuntimeFixture {
     let contentLoader: MockContentLoader
 
-    init(scene: LoadedScene, actorTable: [ActorTableEntry]) {
-        contentLoader = MockContentLoader(scene: scene, actorTable: actorTable)
+    init(
+        scene: LoadedScene,
+        actorTable: [ActorTableEntry],
+        messageCatalog: MessageCatalog = MessageCatalog()
+    ) {
+        contentLoader = MockContentLoader(
+            scene: scene,
+            actorTable: actorTable,
+            messageCatalog: messageCatalog
+        )
     }
 }
 
 private struct MockContentLoader: ContentLoading {
     let scene: LoadedScene
     let actorTable: [ActorTableEntry]
+    let messageCatalog: MessageCatalog
 
     func loadInitialContent() async throws {}
 
@@ -492,6 +591,10 @@ private struct MockContentLoader: ContentLoading {
 
     func loadActorTable() throws -> [ActorTableEntry] {
         actorTable
+    }
+
+    func loadMessageCatalog() throws -> MessageCatalog {
+        messageCatalog
     }
 }
 

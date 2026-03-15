@@ -17,7 +17,7 @@ public struct OOTAppView: View {
         self.runtime = runtime
     }
 
-    static func rootViewState(for state: GameState) -> OOTRootViewState {
+    nonisolated static func rootViewState(for state: GameState) -> OOTRootViewState {
         switch state {
         case .boot:
             return .boot
@@ -309,6 +309,20 @@ private struct GameplayShellView: View {
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .padding(16)
                 }
+
+                VStack(spacing: 16) {
+                    Spacer()
+
+                    if let presentation = runtime.activeMessagePresentation {
+                        MessageView(presentation: presentation)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    } else if let actionLabel = runtime.gameplayActionLabel {
+                        ActionPromptView(label: actionLabel)
+                            .transition(.opacity)
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 28)
             }
         }
         .task {
@@ -379,4 +393,5 @@ private extension GameplayShellView {
             renderErrorMessage = error.localizedDescription
         }
     }
+
 }

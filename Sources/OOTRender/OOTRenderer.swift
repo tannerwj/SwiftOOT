@@ -70,13 +70,15 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     private var frameUniformBufferIndex = 0
     private var renderPipelineCache: [RenderStateKey: MTLRenderPipelineState]
     private var frameStatsHandler: (SceneFrameStats) -> Void
+    private var frameTickHandler: @MainActor () -> Void
 
     public init(
         bundle: Bundle = resourceBundle,
         sceneVertices: [N64Vertex]? = nil,
         scene: OOTRenderScene? = nil,
         textureBindings: [UInt32: MTLTexture] = [:],
-        frameStatsHandler: @escaping (SceneFrameStats) -> Void = { _ in }
+        frameStatsHandler: @escaping (SceneFrameStats) -> Void = { _ in },
+        frameTickHandler: @escaping @MainActor () -> Void = {}
     ) throws {
         let sceneVertices = sceneVertices ?? OOTRenderer.defaultTriangleVertices
         let renderScene = scene ?? OOTRenderScene.syntheticScene(vertices: sceneVertices)
@@ -137,6 +139,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         self.frameUniformBuffers = frameUniformBuffers
         self.renderPipelineCache = [:]
         self.frameStatsHandler = frameStatsHandler
+        self.frameTickHandler = frameTickHandler
         self.renderPipelineState = try device.makeRenderPipelineState(
             descriptor: pipelineDescriptor
         )
@@ -165,11 +168,13 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         frameStatsHandler = handler
     }
 
+    public func setFrameTickHandler(_ handler: @escaping @MainActor () -> Void) {
+        frameTickHandler = handler
+    }
     public func updateScene(_ scene: OOTRenderScene, textureBindings: [UInt32: MTLTexture]) {
         renderScene = scene
         self.textureBindings = textureBindings
     }
-
     public func draw(in view: MTKView) {
         inFlightSemaphore.wait()
 
@@ -186,6 +191,9 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
             inFlightSemaphore.signal()
         }
 
+        MainActor.assumeIsolated {
+            frameTickHandler()
+        }
         let frameUniforms = orbitCameraController.frameUniforms()
         advanceFrameUniformBuffer(with: frameUniforms)
         renderPassDescriptor.colorAttachments[0].clearColor = clearColor(for: renderScene.skyColor)

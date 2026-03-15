@@ -5,17 +5,21 @@ public protocol ContentLoading: Sendable {
     func loadInitialContent() async throws
     func loadScene(id: Int) throws -> LoadedScene
     func loadActorTable() throws -> [ActorTableEntry]
+    func loadMessageCatalog() throws -> MessageCatalog
     func loadObjectTable() throws -> [ObjectTableEntry]
     func loadObject(named name: String) throws -> LoadedObject
 }
 
 public enum ContentLoaderError: Error, LocalizedError, Sendable, Equatable {
     case sceneLoadingUnavailable
+    case messageLoadingUnavailable
 
     public var errorDescription: String? {
         switch self {
         case .sceneLoadingUnavailable:
             "Scene-backed gameplay content is unavailable in the current content loader."
+        case .messageLoadingUnavailable:
+            "Message-backed gameplay content is unavailable in the current content loader."
         }
     }
 }
@@ -29,6 +33,10 @@ public extension ContentLoading {
         throw ContentLoaderError.sceneLoadingUnavailable
     }
 
+    func loadMessageCatalog() throws -> MessageCatalog {
+        throw ContentLoaderError.messageLoadingUnavailable
+    }
+
     func loadObjectTable() throws -> [ObjectTableEntry] {
         throw ContentLoaderError.sceneLoadingUnavailable
     }
@@ -40,12 +48,15 @@ public extension ContentLoading {
 
 public struct ContentLoader: ContentLoading {
     private let sceneLoader: any SceneLoading
+    private let messageLoader: any MessageLoading
 
     public init(
         contentRoot: URL? = nil,
-        sceneLoader: (any SceneLoading)? = nil
+        sceneLoader: (any SceneLoading)? = nil,
+        messageLoader: (any MessageLoading)? = nil
     ) {
         self.sceneLoader = sceneLoader ?? SceneLoader(contentRoot: contentRoot)
+        self.messageLoader = messageLoader ?? MessageLoader(contentRoot: contentRoot)
     }
 
     public func loadInitialContent() async throws {}
@@ -56,6 +67,10 @@ public struct ContentLoader: ContentLoading {
 
     public func loadActorTable() throws -> [ActorTableEntry] {
         try sceneLoader.loadActorTable()
+    }
+
+    public func loadMessageCatalog() throws -> MessageCatalog {
+        try messageLoader.loadMessageCatalog()
     }
 
     public func loadObjectTable() throws -> [ObjectTableEntry] {

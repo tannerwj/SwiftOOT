@@ -27,6 +27,10 @@ let package = Package(
             targets: ["OOTRender"]
         ),
         .library(
+            name: "OOTUI",
+            targets: ["OOTUI"]
+        ),
+        .library(
             name: "OOTTelemetry",
             targets: ["OOTTelemetry"]
         ),
@@ -63,6 +67,10 @@ let package = Package(
             exclude: ["OOTShaders.metal"]
         ),
         .target(
+            name: "OOTUI",
+            dependencies: ["OOTCore", "OOTRender", "OOTContent", "OOTDataModel", "OOTTelemetry"]
+        ),
+        .target(
             name: "OOTTelemetry",
             dependencies: ["OOTDataModel"]
         ),
@@ -93,6 +101,10 @@ let package = Package(
         .testTarget(
             name: "OOTRenderTests",
             dependencies: ["OOTRender", "OOTDataModel"]
+        ),
+        .testTarget(
+            name: "OOTUITests",
+            dependencies: ["OOTUI", "OOTCore", "OOTRender", "OOTContent", "OOTDataModel"]
         ),
     ]
 )

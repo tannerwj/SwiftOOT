@@ -11,11 +11,31 @@ final class OOTUITests: XCTestCase {
     func testAppViewCompiles() {
         _ = OOTAppView(
             runtime: GameRuntime(
+                contentLoader: StubContentLoader(),
                 sceneLoader: UITestSceneLoader(),
                 suspender: { _ in }
             )
         )
         _ = DebugSidebar()
+        _ = MessageView(
+            presentation: MessagePresentation(
+                messageID: 0x1000,
+                variant: .blue,
+                phase: .displaying,
+                textRuns: [
+                    MessageTextRun(text: "Hello ", color: .white),
+                    MessageTextRun(text: "Link", color: .yellow),
+                ],
+                icon: MessageIcon(rawValue: "fairy"),
+                choiceState: MessageChoiceState(
+                    options: [
+                        MessageChoiceOption(title: "Yes"),
+                        MessageChoiceOption(title: "No"),
+                    ]
+                )
+            )
+        )
+        _ = ActionPromptView(label: "Talk")
     }
 
     func testRootViewStateMatchesRuntimeState() {
@@ -232,4 +252,8 @@ private struct UITestSceneLoader: SceneLoading {
     func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh? { nil }
     func loadRoomDisplayList(for room: RoomManifest) throws -> [F3DEX2Command] { [] }
     func loadRoomVertexData(for room: RoomManifest) throws -> Data { Data() }
+}
+
+private struct StubContentLoader: ContentLoading {
+    func loadInitialContent() async throws {}
 }
