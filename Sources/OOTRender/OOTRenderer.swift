@@ -57,6 +57,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     public let sceneBounds: SceneBounds
     let vertexDescriptor: MTLVertexDescriptor
     let orbitCameraController: OrbitCameraController
+    let gameplayCameraController: GameplayCameraController?
 
     private var renderScene: OOTRenderScene
     private var textureBindings: [UInt32: MTLTexture]
@@ -70,6 +71,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     private var frameUniformBufferIndex = 0
     private var renderPipelineCache: [RenderStateKey: MTLRenderPipelineState]
     private var frameStatsHandler: (SceneFrameStats) -> Void
+    private(set) var isDebugCameraEnabled = false
     private var frameTickHandler: @MainActor () -> Void
 
     public init(
@@ -77,6 +79,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         sceneVertices: [N64Vertex]? = nil,
         scene: OOTRenderScene? = nil,
         textureBindings: [UInt32: MTLTexture] = [:],
+        gameplayCameraConfiguration: GameplayCameraConfiguration? = nil,
         frameStatsHandler: @escaping (SceneFrameStats) -> Void = { _ in },
         frameTickHandler: @escaping @MainActor () -> Void = {}
     ) throws {
@@ -133,6 +136,9 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         self.sceneBounds = sceneBounds
         self.vertexDescriptor = vertexDescriptor
         self.orbitCameraController = OrbitCameraController(sceneBounds: sceneBounds)
+        self.gameplayCameraController = gameplayCameraConfiguration.map {
+            GameplayCameraController(sceneBounds: sceneBounds, configuration: $0)
+        }
         self.fallbackTexture = fallbackTexture
         self.opaqueDepthStencilState = opaqueDepthStencilState
         self.translucentDepthStencilState = translucentDepthStencilState
@@ -158,10 +164,12 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         view.framebufferOnly = true
         view.delegate = self
         orbitCameraController.updateViewportSize(view.drawableSize)
+        gameplayCameraController?.updateViewportSize(view.drawableSize)
     }
 
     public func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         orbitCameraController.updateViewportSize(size)
+        gameplayCameraController?.updateViewportSize(size)
     }
 
     public func setFrameStatsHandler(_ handler: @escaping (SceneFrameStats) -> Void) {
@@ -175,6 +183,64 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         renderScene = scene
         self.textureBindings = textureBindings
     }
+
+    public func updateGameplayCameraConfiguration(_ configuration: GameplayCameraConfiguration?) {
+        guard let gameplayCameraController, let configuration else {
+            return
+        }
+
+        gameplayCameraController.updateConfiguration(configuration)
+    }
+
+    public func toggleDebugCamera() {
+        guard gameplayCameraController != nil else {
+            return
+        }
+
+        isDebugCameraEnabled.toggle()
+    }
+
+    public func handlePrimaryDrag(deltaX: CGFloat, deltaY: CGFloat) {
+        guard isDebugCameraEnabled else {
+            return
+        }
+
+        orbitCameraController.orbit(deltaX: deltaX, deltaY: deltaY)
+    }
+
+    public func handleSecondaryDrag(deltaX: CGFloat, deltaY: CGFloat) {
+        if isDebugCameraEnabled || gameplayCameraController == nil {
+            orbitCameraController.pan(deltaX: deltaX, deltaY: deltaY)
+            return
+        }
+
+        gameplayCameraController?.orbit(deltaX: deltaX, deltaY: deltaY)
+    }
+
+    public func handleScroll(scrollDeltaY: CGFloat) {
+        guard isDebugCameraEnabled || gameplayCameraController == nil else {
+            return
+        }
+
+        orbitCameraController.zoom(scrollDeltaY: scrollDeltaY)
+    }
+
+    public func handlePan(direction: OrbitPanDirection) {
+        guard isDebugCameraEnabled || gameplayCameraController == nil else {
+            return
+        }
+
+        orbitCameraController.pan(direction: direction)
+    }
+
+    public func snapGameplayCameraBehindPlayer() {
+        guard isDebugCameraEnabled == false else {
+            return
+        }
+
+        gameplayCameraController?.snapBehindPlayer()
+    }
+
     public func draw(in view: MTKView) {
         inFlightSemaphore.wait()
 
@@ -194,7 +260,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         MainActor.assumeIsolated {
             frameTickHandler()
         }
-        let frameUniforms = orbitCameraController.frameUniforms()
+        let frameUniforms = activeFrameUniforms()
         advanceFrameUniformBuffer(with: frameUniforms)
         renderPassDescriptor.colorAttachments[0].clearColor = clearColor(for: renderScene.skyColor)
         configureDepthAttachment(for: renderPassDescriptor)
@@ -689,6 +755,14 @@ private extension OOTRenderer {
     static let defaultFrameUniforms = FrameUniforms(
         mvp: simd_float4x4(diagonal: SIMD4<Float>(0.5, 0.5, 1.0, 1.0))
     )
+
+    func activeFrameUniforms() -> FrameUniforms {
+        if let gameplayCameraController, isDebugCameraEnabled == false {
+            return gameplayCameraController.frameUniforms()
+        }
+
+        return orbitCameraController.frameUniforms()
+    }
 }
 
 private final class BundleToken {}

@@ -76,6 +76,33 @@ final class OOTUITests: XCTestCase {
         XCTAssertFalse(runtime.controllerInputState.zPressed)
     }
 
+    func testGameplayCameraConfigurationUsesPlayerStateAndFallsBackToFirstSpawn() throws {
+        let scene = makeLoadedScene()
+        let playerState = PlayerState(
+            position: Vec3f(x: 12, y: 34, z: 56),
+            facingRadians: .pi / 2
+        )
+
+        let playerConfiguration = try XCTUnwrap(
+            SceneRenderPayloadBuilder.makeGameplayCameraConfiguration(
+                scene: scene,
+                playerState: playerState
+            )
+        )
+        XCTAssertEqual(playerConfiguration.playerPosition, SIMD3<Float>(12, 34, 56))
+        XCTAssertEqual(playerConfiguration.playerYaw, .pi / 2, accuracy: 0.000_1)
+        XCTAssertEqual(playerConfiguration.collision, scene.collision)
+
+        let spawnConfiguration = try XCTUnwrap(
+            SceneRenderPayloadBuilder.makeGameplayCameraConfiguration(
+                scene: scene,
+                playerState: nil
+            )
+        )
+        XCTAssertEqual(spawnConfiguration.playerPosition, SIMD3<Float>(100, 20, -40))
+        XCTAssertEqual(spawnConfiguration.playerYaw, Float(Int16(0x4000)) * (.pi / 32_768.0), accuracy: 0.000_1)
+        XCTAssertEqual(spawnConfiguration.collision, scene.collision)
+    }
     func testAppRuntimeLoadsRealExtractedSceneViewerContentWhenConfigured() async throws {
         guard let contentRootPath = ProcessInfo.processInfo.environment["SWIFTOOT_REAL_CONTENT_ROOT"] else {
             throw XCTSkip("Set SWIFTOOT_REAL_CONTENT_ROOT to run the real-content scene viewer validation.")
@@ -144,6 +171,56 @@ final class OOTUITests: XCTestCase {
 }
 
 private extension OOTUITests {
+    func makeLoadedScene() -> LoadedScene {
+        LoadedScene(
+            manifest: SceneManifest(
+                id: 4,
+                name: "spot04",
+                title: "Kokiri Forest",
+                rooms: [
+                    RoomManifest(id: 0, name: "spot04_room_0", directory: "spot04"),
+                    RoomManifest(id: 1, name: "spot04_room_1", directory: "spot04"),
+                ]
+            ),
+            collision: CollisionMesh(
+                vertices: [
+                    Vector3s(x: -100, y: 0, z: -100),
+                    Vector3s(x: 100, y: 0, z: -100),
+                    Vector3s(x: -100, y: 0, z: 100),
+                ],
+                polygons: [
+                    CollisionPoly(
+                        surfaceType: 0,
+                        vertexA: 0,
+                        vertexB: 1,
+                        vertexC: 2,
+                        normal: Vector3s(x: 0, y: 0, z: 0),
+                        distance: 0
+                    ),
+                ],
+                surfaceTypes: [CollisionSurfaceType(low: 0, high: 0)]
+            ),
+            spawns: SceneSpawnsFile(
+                sceneName: "spot04",
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        position: Vector3s(x: 100, y: 20, z: -40),
+                        rotation: Vector3s(x: 0, y: 0x4000, z: 0),
+                        params: 0
+                    ),
+                ]
+            ),
+            rooms: [
+                LoadedSceneRoom(
+                    manifest: RoomManifest(id: 0, name: "spot04_room_0", directory: "spot04"),
+                    displayList: [],
+                    vertexData: Data()
+                ),
+            ]
+        )
+    }
+
     func sceneName(for entry: SceneTableEntry) -> String {
         if entry.segmentName.hasSuffix("_scene") {
             return String(entry.segmentName.dropLast("_scene".count))

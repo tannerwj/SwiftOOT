@@ -13,6 +13,8 @@ final class OOTDataModelTests: XCTestCase {
         assertCodableAndSendable(SceneManifest.self)
         assertCodableAndSendable(SceneActorSpawn.self)
         assertCodableAndSendable(SceneActorsFile.self)
+        assertCodableAndSendable(SceneSpawnPoint.self)
+        assertCodableAndSendable(SceneSpawnsFile.self)
         assertCodableAndSendable(SceneEnvironmentFile.self)
         assertCodableAndSendable(SceneExitsFile.self)
         assertCodableAndSendable(SceneExitDefinition.self)
@@ -33,6 +35,8 @@ final class OOTDataModelTests: XCTestCase {
         assertCodableAndSendable(CollisionMesh.self)
         assertCodableAndSendable(CollisionPoly.self)
         assertCodableAndSendable(CollisionSurfaceType.self)
+        assertCodableAndSendable(CollisionBgCameraData.self)
+        assertCodableAndSendable(CollisionBgCamera.self)
         assertCodableAndSendable(CollisionWaterBox.self)
         assertCodableAndSendable(SkeletonData.self)
         assertCodableAndSendable(AnimationData.self)
@@ -88,6 +92,7 @@ final class OOTDataModelTests: XCTestCase {
             rooms: [room],
             collisionPath: "Scenes/spot04/collision.bin",
             actorsPath: "Manifests/scenes/overworld/spot04/actors.json",
+            spawnsPath: "Manifests/scenes/overworld/spot04/spawns.json",
             environmentPath: "Manifests/scenes/overworld/spot04/environment.json",
             pathsPath: "Manifests/scenes/overworld/spot04/paths.json",
             exitsPath: "Manifests/scenes/overworld/spot04/exits.json",

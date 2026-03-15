@@ -4,6 +4,7 @@ public struct CollisionMesh: Codable, Sendable, Equatable {
     public var vertices: [Vector3s]
     public var polygons: [CollisionPoly]
     public var surfaceTypes: [CollisionSurfaceType]
+    public var bgCameras: [CollisionBgCamera]
     public var waterBoxes: [CollisionWaterBox]
 
     public init(
@@ -12,6 +13,7 @@ public struct CollisionMesh: Codable, Sendable, Equatable {
         vertices: [Vector3s],
         polygons: [CollisionPoly],
         surfaceTypes: [CollisionSurfaceType] = [],
+        bgCameras: [CollisionBgCamera] = [],
         waterBoxes: [CollisionWaterBox] = []
     ) {
         let computedBounds = Self.bounds(for: vertices)
@@ -20,6 +22,7 @@ public struct CollisionMesh: Codable, Sendable, Equatable {
         self.vertices = vertices
         self.polygons = polygons
         self.surfaceTypes = surfaceTypes
+        self.bgCameras = bgCameras
         self.waterBoxes = waterBoxes
     }
 
@@ -83,6 +86,47 @@ public struct CollisionSurfaceType: Codable, Sendable, Equatable {
     public var conveyorSpeed: UInt32 { (high >> 18) & 0x07 }
     public var conveyorDirection: UInt32 { (high >> 21) & 0x3F }
     public var hasSpecialConveyorBehavior: Bool { ((high >> 27) & 1) != 0 }
+}
+
+public struct CollisionBgCameraData: Codable, Sendable, Equatable {
+    public var position: Vector3s
+    public var rotation: Vector3s
+    public var fov: Int16
+    public var parameter: Int16
+    public var unknown: Int16
+
+    public init(
+        position: Vector3s,
+        rotation: Vector3s,
+        fov: Int16,
+        parameter: Int16,
+        unknown: Int16
+    ) {
+        self.position = position
+        self.rotation = rotation
+        self.fov = fov
+        self.parameter = parameter
+        self.unknown = unknown
+    }
+}
+
+public struct CollisionBgCamera: Codable, Sendable, Equatable {
+    public var setting: UInt16
+    public var count: Int16
+    public var cameraData: CollisionBgCameraData?
+    public var crawlspacePoints: [Vector3s]
+
+    public init(
+        setting: UInt16,
+        count: Int16,
+        cameraData: CollisionBgCameraData? = nil,
+        crawlspacePoints: [Vector3s] = []
+    ) {
+        self.setting = setting
+        self.count = count
+        self.cameraData = cameraData
+        self.crawlspacePoints = crawlspacePoints
+    }
 }
 
 public struct CollisionWaterBox: Codable, Sendable, Equatable {

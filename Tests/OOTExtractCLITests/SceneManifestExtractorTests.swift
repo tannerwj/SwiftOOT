@@ -48,6 +48,7 @@ final class SceneManifestExtractorTests: XCTestCase {
                 ],
                 collisionPath: "Scenes/spot04/collision.bin",
                 actorsPath: "\(metadataPrefix)/actors.json",
+                spawnsPath: "\(metadataPrefix)/spawns.json",
                 environmentPath: "\(metadataPrefix)/environment.json",
                 pathsPath: "\(metadataPrefix)/paths.json",
                 exitsPath: "\(metadataPrefix)/exits.json",
@@ -174,6 +175,7 @@ private struct ManifestHarness {
             vertices: [Vector3s(x: 0, y: 0, z: 0)],
             polygons: [],
             surfaceTypes: [],
+            bgCameras: [],
             waterBoxes: []
         )
         try CollisionExtractor.encode(collision).write(
@@ -189,6 +191,20 @@ private struct ManifestHarness {
         try writeJSON(
             SceneActorsFile(sceneName: "spot04", rooms: [RoomActorSpawns(roomName: "spot04_room_0", actors: [])]),
             to: metadataRoot.appendingPathComponent("actors.json")
+        )
+        try writeJSON(
+            SceneSpawnsFile(
+                sceneName: "spot04",
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0),
+                        params: 0
+                    )
+                ]
+            ),
+            to: metadataRoot.appendingPathComponent("spawns.json")
         )
         try writeJSON(
             SceneEnvironmentFile(

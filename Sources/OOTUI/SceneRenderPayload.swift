@@ -10,6 +10,7 @@ struct SceneRenderPayload {
     let sceneID: Int
     let baseScene: OOTRenderScene
     let textureBindings: [UInt32: MTLTexture]
+    let gameplayCameraConfiguration: GameplayCameraConfiguration?
     let roomCount: Int
     let vertexCount: Int
     let playerRenderAssets: PlayerRenderAssets?
@@ -99,6 +100,7 @@ enum SceneRenderPayloadBuilder {
         }
 
         let textureBindings = try makeTextureBindings(textureAssetURLs: mergedTextureAssetURLs)
+        let gameplayCameraConfiguration = makeGameplayCameraConfiguration(scene: scene, playerState: nil)
         let vertexCount = scene.rooms.reduce(0) { partialResult, room in
             partialResult + (room.vertexData.count / MemoryLayout<N64Vertex>.stride)
         }
@@ -107,6 +109,7 @@ enum SceneRenderPayloadBuilder {
             sceneID: scene.manifest.id,
             baseScene: baseScene,
             textureBindings: textureBindings,
+            gameplayCameraConfiguration: gameplayCameraConfiguration,
             roomCount: scene.rooms.count,
             vertexCount: vertexCount,
             playerRenderAssets: playerRenderAssets?.assets
@@ -126,6 +129,36 @@ enum SceneRenderPayloadBuilder {
         return scene
     }
 
+    static func makeGameplayCameraConfiguration(
+        scene: LoadedScene,
+        playerState: PlayerState?
+    ) -> GameplayCameraConfiguration? {
+        if let playerState {
+            return GameplayCameraConfiguration(
+                playerPosition: SIMD3<Float>(
+                    playerState.position.x,
+                    playerState.position.y,
+                    playerState.position.z
+                ),
+                playerYaw: playerState.facingRadians,
+                collision: scene.collision
+            )
+        }
+
+        guard let spawn = scene.spawns?.spawns.first else {
+            return nil
+        }
+
+        return GameplayCameraConfiguration(
+            playerPosition: SIMD3<Float>(
+                Float(spawn.position.x),
+                Float(spawn.position.y),
+                Float(spawn.position.z)
+            ),
+            playerYaw: Float(spawn.rotation.y) * (.pi / 32_768.0),
+            collision: scene.collision
+        )
+    }
     @MainActor
     private static func makeTextureBindings(
         textureAssetURLs: [UInt32: URL]

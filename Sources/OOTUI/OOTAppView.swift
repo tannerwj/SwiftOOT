@@ -265,7 +265,13 @@ private struct GameplayShellView: View {
                             playerState: runtime.playerState
                         ),
                         textureBindings: renderPayload.textureBindings,
-                        inputHandler: inputManager
+                        inputHandler: inputManager,
+                        gameplayCameraConfiguration: runtime.loadedScene.flatMap {
+                            SceneRenderPayloadBuilder.makeGameplayCameraConfiguration(
+                                scene: $0,
+                                playerState: runtime.playerState
+                            )
+                        }
                     ) { stats in
                         frameStats = stats
                     }

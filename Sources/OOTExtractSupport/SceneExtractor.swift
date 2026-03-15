@@ -146,6 +146,14 @@ extension SceneExtractor {
                 to: metadataDirectory.appendingPathComponent("actors.json")
             )
             try Self.writeJSON(
+                try Self.parseSpawns(
+                    sceneName: scene.name,
+                    source: sceneSource,
+                    commands: sceneCommands
+                ),
+                to: metadataDirectory.appendingPathComponent("spawns.json")
+            )
+            try Self.writeJSON(
                 try Self.parseEnvironment(
                     sceneName: scene.name,
                     source: sceneSource,
@@ -205,6 +213,7 @@ extension SceneExtractor {
 
         for metadataDirectory in metadataDirectories {
             let _: SceneActorsFile = try Self.readJSON(from: metadataDirectory.appendingPathComponent("actors.json"))
+            let _: SceneSpawnsFile = try Self.readJSON(from: metadataDirectory.appendingPathComponent("spawns.json"))
             let _: SceneEnvironmentFile = try Self.readJSON(
                 from: metadataDirectory.appendingPathComponent("environment.json")
             )
@@ -224,6 +233,7 @@ struct CollisionSceneBinary: Equatable, Sendable {
     let vertices: [Vector3s]
     let polygons: [CollisionPolygonBinary]
     let surfaceTypes: [CollisionSurfaceTypeBinary]
+    let bgCameras: [CollisionBgCameraBinary]
     let waterBoxes: [CollisionWaterBoxBinary]
 }
 
@@ -239,6 +249,21 @@ struct CollisionPolygonBinary: Equatable, Sendable {
 struct CollisionSurfaceTypeBinary: Equatable, Sendable {
     let low: UInt32
     let high: UInt32
+}
+
+struct CollisionBgCameraBinary: Equatable, Sendable {
+    let setting: UInt16
+    let count: Int16
+    let cameraData: CollisionBgCameraDataBinary?
+    let crawlspacePoints: [Vector3s]
+}
+
+struct CollisionBgCameraDataBinary: Equatable, Sendable {
+    let position: Vector3s
+    let rotation: Vector3s
+    let fov: Int16
+    let parameter: Int16
+    let unknown: Int16
 }
 
 struct CollisionWaterBoxBinary: Equatable, Sendable {
@@ -316,10 +341,16 @@ extension CollisionExtractor {
     static func encode(_ collision: CollisionSceneBinary) -> Data {
         var data = Data()
         data.reserveCapacity(
-            20 +
+            22 +
                 (collision.vertices.count * 6) +
                 (collision.polygons.count * 16) +
                 (collision.surfaceTypes.count * 8) +
+                collision.bgCameras.reduce(0) { partial, bgCamera in
+                    partial +
+                        8 +
+                        (bgCamera.cameraData == nil ? 0 : 18) +
+                        (bgCamera.crawlspacePoints.count * 6)
+                } +
                 (collision.waterBoxes.count * 14)
         )
 
@@ -332,6 +363,7 @@ extension CollisionExtractor {
         data.append(bigEndian: UInt16(clamping: collision.vertices.count))
         data.append(bigEndian: UInt16(clamping: collision.polygons.count))
         data.append(bigEndian: UInt16(clamping: collision.surfaceTypes.count))
+        data.append(bigEndian: UInt16(clamping: collision.bgCameras.count))
         data.append(bigEndian: UInt16(clamping: collision.waterBoxes.count))
 
         for vertex in collision.vertices {
@@ -354,6 +386,31 @@ extension CollisionExtractor {
         for surfaceType in collision.surfaceTypes {
             data.append(bigEndian: surfaceType.low)
             data.append(bigEndian: surfaceType.high)
+        }
+
+        for bgCamera in collision.bgCameras {
+            data.append(bigEndian: bgCamera.setting)
+            data.append(bigEndian: UInt16(bitPattern: bgCamera.count))
+            data.append(bigEndian: bgCamera.cameraData == nil ? UInt16(0) : UInt16(1))
+            data.append(bigEndian: UInt16(clamping: bgCamera.crawlspacePoints.count))
+
+            if let cameraData = bgCamera.cameraData {
+                data.append(bigEndian: cameraData.position.x)
+                data.append(bigEndian: cameraData.position.y)
+                data.append(bigEndian: cameraData.position.z)
+                data.append(bigEndian: cameraData.rotation.x)
+                data.append(bigEndian: cameraData.rotation.y)
+                data.append(bigEndian: cameraData.rotation.z)
+                data.append(bigEndian: cameraData.fov)
+                data.append(bigEndian: cameraData.parameter)
+                data.append(bigEndian: cameraData.unknown)
+            }
+
+            for point in bgCamera.crawlspacePoints {
+                data.append(bigEndian: point.x)
+                data.append(bigEndian: point.y)
+                data.append(bigEndian: point.z)
+            }
         }
 
         for waterBox in collision.waterBoxes {
@@ -383,6 +440,7 @@ extension CollisionExtractor {
         let vertexCount = Int(try readInteger(from: data, offset: &offset, as: UInt16.self, path: path))
         let polygonCount = Int(try readInteger(from: data, offset: &offset, as: UInt16.self, path: path))
         let surfaceTypeCount = Int(try readInteger(from: data, offset: &offset, as: UInt16.self, path: path))
+        let bgCameraCount = Int(try readInteger(from: data, offset: &offset, as: UInt16.self, path: path))
         let waterBoxCount = Int(try readInteger(from: data, offset: &offset, as: UInt16.self, path: path))
 
         var vertices: [Vector3s] = []
@@ -423,6 +481,56 @@ extension CollisionExtractor {
                 try CollisionSurfaceTypeBinary(
                     low: readInteger(from: data, offset: &offset, as: UInt32.self, path: path),
                     high: readInteger(from: data, offset: &offset, as: UInt32.self, path: path)
+                )
+            )
+        }
+
+        var bgCameras: [CollisionBgCameraBinary] = []
+        bgCameras.reserveCapacity(bgCameraCount)
+        for _ in 0..<bgCameraCount {
+            let setting = try readInteger(from: data, offset: &offset, as: UInt16.self, path: path)
+            let count = try readInteger(from: data, offset: &offset, as: Int16.self, path: path)
+            let hasCameraData = try readInteger(from: data, offset: &offset, as: UInt16.self, path: path) != 0
+            let crawlspacePointCount = Int(try readInteger(from: data, offset: &offset, as: UInt16.self, path: path))
+
+            let cameraData: CollisionBgCameraDataBinary? = if hasCameraData {
+                try CollisionBgCameraDataBinary(
+                    position: Vector3s(
+                        x: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+                        y: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+                        z: readInteger(from: data, offset: &offset, as: Int16.self, path: path)
+                    ),
+                    rotation: Vector3s(
+                        x: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+                        y: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+                        z: readInteger(from: data, offset: &offset, as: Int16.self, path: path)
+                    ),
+                    fov: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+                    parameter: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+                    unknown: readInteger(from: data, offset: &offset, as: Int16.self, path: path)
+                )
+            } else {
+                nil
+            }
+
+            var crawlspacePoints: [Vector3s] = []
+            crawlspacePoints.reserveCapacity(crawlspacePointCount)
+            for _ in 0..<crawlspacePointCount {
+                crawlspacePoints.append(
+                    try Vector3s(
+                        x: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+                        y: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+                        z: readInteger(from: data, offset: &offset, as: Int16.self, path: path)
+                    )
+                )
+            }
+
+            bgCameras.append(
+                CollisionBgCameraBinary(
+                    setting: setting,
+                    count: count,
+                    cameraData: cameraData,
+                    crawlspacePoints: crawlspacePoints
                 )
             )
         }
@@ -472,6 +580,7 @@ extension CollisionExtractor {
             vertices: vertices,
             polygons: polygons,
             surfaceTypes: surfaceTypes,
+            bgCameras: bgCameras,
             waterBoxes: waterBoxes
         )
     }
@@ -537,7 +646,7 @@ extension SceneManifestExtractor {
                 )
             }
 
-            let metadataNames = ["actors.json", "environment.json", "paths.json", "exits.json"]
+            let metadataNames = ["actors.json", "spawns.json", "environment.json", "paths.json", "exits.json"]
             for metadataName in metadataNames {
                 let metadataURL = metadataDirectory.appendingPathComponent(metadataName)
                 guard fileManager.fileExists(atPath: metadataURL.path) else {
@@ -563,6 +672,10 @@ extension SceneManifestExtractor {
                 actorsPath: try Self.relativePath(
                     from: context.output,
                     to: metadataDirectory.appendingPathComponent("actors.json")
+                ),
+                spawnsPath: try Self.relativePath(
+                    from: context.output,
+                    to: metadataDirectory.appendingPathComponent("spawns.json")
                 ),
                 environmentPath: try Self.relativePath(
                     from: context.output,
@@ -739,6 +852,10 @@ private extension SceneManifestExtractor {
         if let actorsPath = manifest.actorsPath {
             let actorsURL = try referencedURL(path: actorsPath, contentRoot: contentRoot)
             let _: SceneActorsFile = try readJSON(from: actorsURL)
+        }
+        if let spawnsPath = manifest.spawnsPath {
+            let spawnsURL = try referencedURL(path: spawnsPath, contentRoot: contentRoot)
+            let _: SceneSpawnsFile = try readJSON(from: spawnsURL)
         }
         if let environmentPath = manifest.environmentPath {
             let environmentURL = try referencedURL(path: environmentPath, contentRoot: contentRoot)
@@ -1208,6 +1325,35 @@ private extension SceneExtractor {
             ),
             lightSettings: lightSettings
         )
+    }
+
+    static func parseSpawns(
+        sceneName: String,
+        source: String,
+        commands: [ParsedCommand]
+    ) throws -> SceneSpawnsFile {
+        guard let invocation = commands.first(where: { $0.name == "SCENE_CMD_SPAWN_LIST" }) else {
+            return SceneSpawnsFile(sceneName: sceneName, spawns: [])
+        }
+        try invocation.requireCount(2)
+
+        let arrayName = trimExpression(invocation.arguments[1])
+        let array = try array(named: arrayName, type: "ActorEntry", in: source)
+        let spawns = try topLevelBraceEntries(in: array.body).enumerated().map { index, entry in
+            let fields = splitTopLevel(entry)
+            guard fields.count == 4 else {
+                throw SceneExtractorError.invalidActorEntry(entry)
+            }
+
+            return try SceneSpawnPoint(
+                index: index,
+                position: parseVector3s(fields[1]),
+                rotation: parseVector3s(fields[2]),
+                params: parseSigned16Expression(fields[3])
+            )
+        }
+
+        return SceneSpawnsFile(sceneName: sceneName, spawns: spawns)
     }
 
     static func makeVertexAddressMap(vertexArrays: [ParsedVertexArray]) -> [UInt32: UInt32] {
@@ -2146,6 +2292,7 @@ private extension CollisionExtractor {
         let polygonCount: Int
         let polygonArrayName: String
         let surfaceTypeArrayName: String?
+        let bgCameraArrayName: String?
         let waterBoxCount: Int
         let waterBoxArrayName: String?
     }
@@ -2162,6 +2309,7 @@ private extension CollisionExtractor {
         let vertices = try parseVertices(named: header.vertexArrayName, in: source, expectedCount: header.vertexCount)
         let polygons = try parsePolygons(named: header.polygonArrayName, in: source, expectedCount: header.polygonCount)
         let surfaceTypes = try parseSurfaceTypes(named: header.surfaceTypeArrayName, in: source)
+        let bgCameras = try parseBgCameras(named: header.bgCameraArrayName, in: source)
         let waterBoxes = try parseWaterBoxes(
             named: header.waterBoxArrayName,
             in: source,
@@ -2174,6 +2322,7 @@ private extension CollisionExtractor {
             vertices: vertices,
             polygons: polygons,
             surfaceTypes: surfaceTypes,
+            bgCameras: bgCameras,
             waterBoxes: waterBoxes
         )
     }
@@ -2216,6 +2365,31 @@ private extension CollisionExtractor {
         return try entries.map(parseSurfaceType)
     }
 
+    static func parseBgCameras(named name: String?, in source: String) throws -> [CollisionBgCameraBinary] {
+        guard let name else {
+            return []
+        }
+
+        let array = try SceneExtractor.array(named: name, type: "BgCamInfo", in: source)
+        return try SceneExtractor.topLevelBraceEntries(in: array.body).map { entry in
+            let fields = SceneExtractor.splitTopLevel(entry)
+            guard fields.count == 3 else {
+                throw CollisionExtractorError.invalidEntry("BgCamInfo", entry)
+            }
+
+            let dataName = sanitizeReference(fields[2])
+            let cameraData = try? parseBgCameraData(named: dataName, in: source)
+            let crawlspacePoints = cameraData == nil ? (try parseBgCameraPoints(named: dataName, in: source)) : []
+
+            return try CollisionBgCameraBinary(
+                setting: parseUnsigned16Expression(fields[0]),
+                count: SceneExtractor.parseSigned16Expression(fields[1]),
+                cameraData: cameraData,
+                crawlspacePoints: crawlspacePoints
+            )
+        }
+    }
+
     static func parseWaterBoxes(named name: String?, in source: String, expectedCount: Int) throws -> [CollisionWaterBoxBinary] {
         guard let name else {
             guard expectedCount == 0 else {
@@ -2241,7 +2415,8 @@ private extension CollisionExtractor {
         let maximumBounds = try SceneExtractor.parseVector3s(fields[1])
         let vertexArrayName = sanitizeReference(fields[3])
         let polygonArrayName = sanitizeReference(fields[5])
-        let surfaceTypeIndex = fields.count == 10 ? 6 : 6
+        let surfaceTypeIndex = 6
+        let bgCameraArrayIndex = fields.count == 10 ? 7 : nil
         let waterBoxCountIndex = fields.count == 10 ? 8 : 7
         let waterBoxArrayIndex = fields.count == 10 ? 9 : 8
         let waterBoxArrayName = optionalReference(fields[waterBoxArrayIndex])
@@ -2266,6 +2441,7 @@ private extension CollisionExtractor {
             ),
             polygonArrayName: polygonArrayName,
             surfaceTypeArrayName: optionalReference(fields[surfaceTypeIndex]),
+            bgCameraArrayName: bgCameraArrayIndex.map { optionalReference(fields[$0]) } ?? nil,
             waterBoxCount: try parseCount(
                 fields[waterBoxCountIndex],
                 field: "numWaterBoxes",
@@ -2356,6 +2532,32 @@ private extension CollisionExtractor {
         default:
             throw CollisionExtractorError.invalidEntry("WaterBox", entry)
         }
+    }
+
+    static func parseBgCameraData(named name: String, in source: String) throws -> CollisionBgCameraDataBinary {
+        let body: String
+        if let array = try? SceneExtractor.array(named: name, type: "BgCamFuncData", in: source) {
+            body = array.body
+        } else {
+            body = try structBody(named: name, type: "BgCamFuncData", in: source)
+        }
+        let fields = SceneExtractor.splitTopLevel(body)
+        guard fields.count == 5 else {
+            throw CollisionExtractorError.invalidEntry("BgCamFuncData", body)
+        }
+
+        return try CollisionBgCameraDataBinary(
+            position: SceneExtractor.parseVector3s(fields[0]),
+            rotation: SceneExtractor.parseVector3s(fields[1]),
+            fov: SceneExtractor.parseSigned16Expression(fields[2]),
+            parameter: SceneExtractor.parseSigned16Expression(fields[3]),
+            unknown: SceneExtractor.parseSigned16Expression(fields[4])
+        )
+    }
+
+    static func parseBgCameraPoints(named name: String, in source: String) throws -> [Vector3s] {
+        let array = try SceneExtractor.array(named: name, type: "Vec3s", in: source)
+        return try SceneExtractor.topLevelBraceEntries(in: array.body).map(SceneExtractor.parseVector3s)
     }
 
     static func collisionBinaryFiles(in contentRoot: URL, fileManager: FileManager) throws -> [URL] {

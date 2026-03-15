@@ -64,6 +64,35 @@ public struct SceneActorsFile: Codable, Sendable, Equatable {
     }
 }
 
+public struct SceneSpawnPoint: Codable, Sendable, Equatable {
+    public var index: Int
+    public var position: Vector3s
+    public var rotation: Vector3s
+    public var params: Int16
+
+    public init(
+        index: Int,
+        position: Vector3s,
+        rotation: Vector3s,
+        params: Int16
+    ) {
+        self.index = index
+        self.position = position
+        self.rotation = rotation
+        self.params = params
+    }
+}
+
+public struct SceneSpawnsFile: Codable, Sendable, Equatable {
+    public var sceneName: String
+    public var spawns: [SceneSpawnPoint]
+
+    public init(sceneName: String, spawns: [SceneSpawnPoint]) {
+        self.sceneName = sceneName
+        self.spawns = spawns
+    }
+}
+
 public struct SceneTimeSettings: Codable, Sendable, Equatable {
     public var hour: Int
     public var minute: Int
