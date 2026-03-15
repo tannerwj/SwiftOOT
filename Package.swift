@@ -10,6 +10,10 @@ let package = Package(
             targets: ["OOTDataModel"]
         ),
         .library(
+            name: "OOTContent",
+            targets: ["OOTContent"]
+        ),
+        .library(
             name: "OOTExtractSupport",
             targets: ["OOTExtractSupport"]
         ),
@@ -30,6 +34,10 @@ let package = Package(
             name: "OOTDataModel"
         ),
         .target(
+            name: "OOTContent",
+            dependencies: ["OOTDataModel"]
+        ),
+        .target(
             name: "OOTExtractSupport",
             dependencies: ["OOTDataModel"]
         ),
@@ -48,6 +56,10 @@ let package = Package(
         .testTarget(
             name: "OOTDataModelTests",
             dependencies: ["OOTDataModel"]
+        ),
+        .testTarget(
+            name: "OOTContentTests",
+            dependencies: ["OOTContent", "OOTDataModel"]
         ),
         .testTarget(
             name: "OOTExtractCLITests",
