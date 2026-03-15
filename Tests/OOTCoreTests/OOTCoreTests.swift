@@ -392,7 +392,11 @@ final class OOTCoreTests: XCTestCase {
                     ]
                 )
             )
-            let runtime = GameRuntime(contentLoader: fixture.contentLoader, suspender: { _ in })
+            let runtime = GameRuntime(
+                contentLoader: fixture.contentLoader,
+                sceneLoader: MockSceneLoader(),
+                suspender: { _ in }
+            )
 
             try runtime.loadScene(id: 0x55)
             runtime.handlePrimaryGameplayInput()

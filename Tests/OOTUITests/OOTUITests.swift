@@ -10,7 +10,13 @@ import OOTDataModel
 final class OOTUITests: XCTestCase {
     func testAppViewCompiles() async {
         await MainActor.run {
-            _ = OOTAppView(runtime: GameRuntime(suspender: { _ in }))
+            _ = OOTAppView(
+                runtime: GameRuntime(
+                    contentLoader: StubContentLoader(),
+                    sceneLoader: StubSceneLoader(),
+                    suspender: { _ in }
+                )
+            )
             _ = DebugSidebar()
             _ = MessageView(
                 presentation: MessagePresentation(
@@ -183,4 +189,24 @@ private extension OOTUITests {
 
         return false
     }
+}
+
+private struct StubContentLoader: ContentLoading {
+    func loadInitialContent() async throws {}
+}
+
+private struct StubSceneLoader: SceneLoading {
+    func loadSceneTableEntries() throws -> [SceneTableEntry] { [] }
+    func resolveSceneDirectory(for sceneID: Int) throws -> URL {
+        URL(fileURLWithPath: "/tmp/scene-\(sceneID)", isDirectory: true)
+    }
+    func loadScene(id: Int) throws -> LoadedScene { throw SceneLoaderError.unknownSceneID(id) }
+    func loadScene(named name: String) throws -> LoadedScene { throw SceneLoaderError.missingFile(name) }
+    func loadTextureAssetURLs(for scene: LoadedScene) throws -> [UInt32: URL] { [:] }
+    func loadSceneManifest(id: Int) throws -> SceneManifest { throw SceneLoaderError.unknownSceneID(id) }
+    func loadSceneManifest(named name: String) throws -> SceneManifest { throw SceneLoaderError.missingFile(name) }
+    func loadActorTable() throws -> [ActorTableEntry] { [] }
+    func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh? { nil }
+    func loadRoomDisplayList(for room: RoomManifest) throws -> [F3DEX2Command] { [] }
+    func loadRoomVertexData(for room: RoomManifest) throws -> Data { Data() }
 }
