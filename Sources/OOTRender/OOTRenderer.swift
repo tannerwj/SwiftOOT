@@ -413,15 +413,25 @@ private extension OOTRenderer {
             )
         )
         renderCommandEncoder.setDepthStencilState(opaqueDepthStencilState)
+        let drawBatchResources = makeDrawBatchResources()
 
         for room in renderScene.visibleRooms {
             let interpreter = F3DEX2Interpreter(
                 segmentTable: makeSegmentTable(for: room),
                 projectionMatrix: frameUniforms.mvp,
-                drawBatchResources: makeDrawBatchResources()
+                drawBatchResources: drawBatchResources
             )
             try interpreter.interpret(room.displayList, encoder: renderCommandEncoder)
             try interpreter.flush(encoder: renderCommandEncoder)
+        }
+
+        let skelAnimeRenderer = SkelAnimeRenderer(drawBatchResources: drawBatchResources)
+        for skeleton in renderScene.skeletons {
+            try skelAnimeRenderer.render(
+                skeleton,
+                encoder: renderCommandEncoder,
+                projectionMatrix: frameUniforms.mvp
+            )
         }
 
         renderCommandEncoder.endEncoding()
