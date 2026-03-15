@@ -15,9 +15,17 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
         let files = try candidateFiles(in: context.source)
         let outputDirectory = context.output.appendingPathComponent("DisplayLists", isDirectory: true)
         var emittedCount = 0
+        var skippedMissingIncludeCount = 0
 
         for fileURL in files {
-            let displayLists = try parseDisplayLists(in: fileURL, sourceRoot: context.source)
+            let displayLists: [ParsedDisplayList]
+            do {
+                displayLists = try parseDisplayLists(in: fileURL, sourceRoot: context.source)
+            } catch let error as DisplayListParserError where error.isMissingIncludePreprocessorFailure {
+                skippedMissingIncludeCount += 1
+                print("[\(name)] skipped \(relativePath(for: fileURL, sourceRoot: context.source)): \(error.localizedDescription)")
+                continue
+            }
             guard !displayLists.isEmpty else {
                 continue
             }
@@ -40,6 +48,9 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
         }
 
         print("[\(name)] emitted \(emittedCount) display list JSON file(s)")
+        if skippedMissingIncludeCount > 0 {
+            print("[\(name)] skipped \(skippedMissingIncludeCount) source file(s) with missing include-backed assets")
+        }
     }
 
     func parseDisplayLists(in fileURL: URL, sourceRoot: URL) throws -> [ParsedDisplayList] {
@@ -67,6 +78,7 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
 
     private func candidateFiles(in sourceRoot: URL) throws -> [URL] {
         let fileManager = FileManager.default
+        let normalizedRootPath = sourceRoot.resolvingSymlinksInPath().path
         guard let enumerator = fileManager.enumerator(
             at: sourceRoot,
             includingPropertiesForKeys: [.isRegularFileKey],
@@ -88,6 +100,12 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
                 continue
             }
 
+            let normalizedPath = fileURL.resolvingSymlinksInPath().path
+            let relativePath = normalizedPath.replacingOccurrences(of: normalizedRootPath + "/", with: "")
+            guard relativePath.hasPrefix("assets/") || relativePath.contains("/assets/") else {
+                continue
+            }
+
             let contents = try String(contentsOf: fileURL, encoding: .utf8)
             guard contents.contains("Gfx"), contents.contains("gs") || contents.contains("#include") else {
                 continue
@@ -100,9 +118,17 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
     }
 
     private func relativeSourceDirectory(for fileURL: URL, sourceRoot: URL) -> String? {
-        let relative = fileURL.deletingLastPathComponent().path.replacingOccurrences(of: sourceRoot.path, with: "")
+        let rootPath = sourceRoot.resolvingSymlinksInPath().path
+        let fileDirectoryPath = fileURL.deletingLastPathComponent().resolvingSymlinksInPath().path
+        let relative = fileDirectoryPath.replacingOccurrences(of: rootPath, with: "")
         let trimmed = relative.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func relativePath(for fileURL: URL, sourceRoot: URL) -> String {
+        let rootPath = sourceRoot.resolvingSymlinksInPath().path
+        let filePath = fileURL.resolvingSymlinksInPath().path
+        return filePath.replacingOccurrences(of: rootPath + "/", with: "")
     }
 
     private func parseArrays(in source: String) throws -> [DisplayListArray] {
@@ -593,6 +619,14 @@ private enum DisplayListParserError: LocalizedError {
         case .integerOutOfRange(let expression):
             return "Integer result is out of range for expression: \(expression)"
         }
+    }
+
+    var isMissingIncludePreprocessorFailure: Bool {
+        guard case .preprocessorFailure(let message) = self else {
+            return false
+        }
+
+        return message.contains("file not found")
     }
 }
 

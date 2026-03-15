@@ -40,7 +40,8 @@ final class DisplayListParserTests: XCTestCase {
         #include "assets/objects/gSimpleDL.inc.c"
         };
         """
-        let sourceFile = fixtureRoot.appendingPathComponent("object.c")
+        let sourceFile = fixtureRoot.appendingPathComponent("assets/objects/object.c")
+        try FileManager.default.createDirectory(at: sourceFile.deletingLastPathComponent(), withIntermediateDirectories: true)
         try source.write(to: sourceFile, atomically: true, encoding: .utf8)
 
         let outputRoot = fixtureRoot.appendingPathComponent("Output", isDirectory: true)
@@ -73,6 +74,58 @@ final class DisplayListParserTests: XCTestCase {
                 .spEndDisplayList,
             ]
         )
+    }
+
+    func testExtractorSkipsSourceFileWhenIncludeBackedAssetIsMissing() throws {
+        let fixtureRoot = try makeFixtureRoot()
+        let assetsDirectory = fixtureRoot.appendingPathComponent("assets", isDirectory: true)
+        let objectDirectory = assetsDirectory.appendingPathComponent("objects", isDirectory: true)
+        try FileManager.default.createDirectory(at: objectDirectory, withIntermediateDirectories: true)
+
+        try """
+        gsSPVertex(sceneName_Vtx_0000, 4, 0),
+        gsSPEndDisplayList(),
+        """.write(
+            to: objectDirectory.appendingPathComponent("gSimpleDL.inc.c"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        try """
+        #include "gfx.h"
+
+        Gfx gSimpleDL[] = {
+        #include "assets/objects/gSimpleDL.inc.c"
+        };
+        """.write(
+            to: fixtureRoot.appendingPathComponent("assets/objects/valid.c"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        try """
+        Gfx gBrokenDL[] = {
+        #include "assets/objects/missing.inc.c"
+        };
+        """.write(
+            to: fixtureRoot.appendingPathComponent("assets/objects/broken.c"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let outputRoot = fixtureRoot.appendingPathComponent("Output", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true)
+
+        XCTAssertNoThrow(try DisplayListParser().extract(using: OOTExtractionContext(source: fixtureRoot, output: outputRoot)))
+
+        let outputFiles = FileManager.default.enumerator(
+            at: outputRoot.appendingPathComponent("DisplayLists", isDirectory: true),
+            includingPropertiesForKeys: nil
+        )?
+        .compactMap { ($0 as? URL)?.lastPathComponent } ?? []
+
+        XCTAssertTrue(outputFiles.contains("gSimpleDL.json"))
+        XCTAssertFalse(outputFiles.contains("gBrokenDL.json"))
     }
 
     private func makeFixtureRoot() throws -> URL {
