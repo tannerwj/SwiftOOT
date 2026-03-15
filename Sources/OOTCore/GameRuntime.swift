@@ -210,6 +210,11 @@ public struct PlayState: Codable, Equatable, @unchecked Sendable {
         actorRuntimeHooks?.requestDestroy(actor)
     }
 
+    @MainActor
+    public func requestMessage(_ messageID: Int) {
+        actorRuntimeHooks?.requestMessage(messageID)
+    }
+
     func withActorRuntime(
         scene: LoadedScene,
         actorTable: [Int: ActorTableEntry],
@@ -302,6 +307,7 @@ public final class GameRuntime {
     public var loadedScene: LoadedScene?
     public var textureAssetURLs: [UInt32: URL]
     public var errorMessage: String?
+    public var messageContext: MessageContext
 
     @ObservationIgnored
     public let contentLoader: any ContentLoading
@@ -345,6 +351,7 @@ public final class GameRuntime {
         loadedScene: LoadedScene? = nil,
         textureAssetURLs: [UInt32: URL] = [:],
         errorMessage: String? = nil,
+        messageContext: MessageContext = MessageContext(),
         contentLoader: any ContentLoading = ContentLoader(),
         sceneLoader: any SceneLoading = SceneLoader(),
         telemetryPublisher: any TelemetryPublishing = TelemetryPublisher(),
@@ -369,6 +376,7 @@ public final class GameRuntime {
         self.loadedScene = loadedScene
         self.textureAssetURLs = textureAssetURLs
         self.errorMessage = errorMessage
+        self.messageContext = messageContext
         self.contentLoader = contentLoader
         self.sceneLoader = sceneLoader
         self.telemetryPublisher = telemetryPublisher
@@ -386,6 +394,20 @@ public final class GameRuntime {
         actorContext?.allActors ?? []
     }
 
+    public var activeMessagePresentation: MessagePresentation? {
+        messageContext.activePresentation
+    }
+
+    public var gameplayActionLabel: String? {
+        if messageContext.canRequestChoiceSelection {
+            return "Choose"
+        }
+        if messageContext.isPresenting {
+            return "Next"
+        }
+        return activeTalkActor?.talkPrompt
+    }
+
     public func start() async {
         guard !hasStarted else {
             return
@@ -401,6 +423,8 @@ public final class GameRuntime {
             statusMessage = "Initial content load failed. Continuing with placeholder content."
             telemetryPublisher.publish("gameRuntime.contentLoadFailed")
         }
+
+        loadMessageCatalogIfAvailable()
 
         await suspender(bootDuration)
         transition(to: .consoleLogo)
@@ -567,6 +591,7 @@ public final class GameRuntime {
         id sceneID: Int,
         activeRoomIDs: Set<Int>? = nil
     ) throws {
+        loadMessageCatalogIfAvailable()
         let loadedScene = try contentLoader.loadScene(id: sceneID)
         let actorTableEntries = try contentLoader.loadActorTable()
         let actorTable = Dictionary(uniqueKeysWithValues: actorTableEntries.map { ($0.id, $0) })
@@ -576,9 +601,14 @@ public final class GameRuntime {
             registry: registry,
             telemetryPublisher: telemetryPublisher
         )
-        let hooks = ActorRuntimeHooks { actor in
-            actorContext.requestDestroy(actor)
-        }
+        let hooks = ActorRuntimeHooks(
+            destroyHandler: { actor in
+                actorContext.requestDestroy(actor)
+            },
+            messageHandler: { [weak self] messageID in
+                self?.enqueueMessage(id: messageID)
+            }
+        )
         let basePlayState = playState ?? PlayState(
             activeSaveSlot: 0,
             entryMode: .newGame,
@@ -629,6 +659,54 @@ public final class GameRuntime {
         }
 
         actorContext.updateAll(playState: playState)
+    }
+
+    public func advanceGameplayFrame() {
+        guard currentState == .gameplay else {
+            return
+        }
+
+        gameTime.advance()
+        updateFrame()
+        messageContext.tick(playerName: playState?.playerName ?? "Link")
+    }
+
+    public func handlePrimaryGameplayInput() {
+        guard currentState == .gameplay else {
+            return
+        }
+
+        let playerName = playState?.playerName ?? "Link"
+
+        if messageContext.isPresenting {
+            messageContext.advanceOrConfirm(playerName: playerName)
+            inputState.record(
+                .confirm,
+                selectionIndex: messageContext.activePresentation?.choiceState?.selectedIndex ?? 0
+            )
+            return
+        }
+
+        guard let playState, let talkActor = activeTalkActor else {
+            return
+        }
+
+        if talkActor.talkRequested(playState: playState) {
+            inputState.record(.confirm, selectionIndex: 0)
+            messageContext.tick(playerName: playerName)
+        }
+    }
+
+    public func handleGameplaySelectionInput(delta: Int) {
+        guard currentState == .gameplay, messageContext.canRequestChoiceSelection else {
+            return
+        }
+
+        messageContext.moveSelection(delta: delta)
+        inputState.record(
+            .moveSelection,
+            selectionIndex: messageContext.activePresentation?.choiceState?.selectedIndex ?? 0
+        )
     }
 
     public func drawActors(in pass: ActorDrawPass) {
@@ -730,6 +808,27 @@ public final class GameRuntime {
             return 0x55
         default:
             return nil
+        }
+    }
+
+    private var activeTalkActor: (any TalkRequestingActor)? {
+        actors.first { $0 is any TalkRequestingActor } as? (any TalkRequestingActor)
+    }
+
+    private func enqueueMessage(id messageID: Int) {
+        messageContext.enqueue(
+            messageID: messageID,
+            playerName: playState?.playerName ?? "Link"
+        )
+    }
+
+    private func loadMessageCatalogIfAvailable() {
+        guard messageContext.catalog.messages.isEmpty else {
+            return
+        }
+
+        if let messageCatalog = try? contentLoader.loadMessageCatalog() {
+            messageContext.setCatalog(messageCatalog)
         }
     }
 }

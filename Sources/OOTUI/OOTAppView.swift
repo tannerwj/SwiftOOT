@@ -17,7 +17,7 @@ public struct OOTAppView: View {
         self.runtime = runtime
     }
 
-    static func rootViewState(for state: GameState) -> OOTRootViewState {
+    nonisolated static func rootViewState(for state: GameState) -> OOTRootViewState {
         switch state {
         case .boot:
             return .boot
@@ -258,7 +258,13 @@ private struct GameplayShellView: View {
                     MetalView(
                         sceneIdentity: renderPayload.sceneID,
                         scene: renderPayload.renderScene,
-                        textureBindings: renderPayload.textureBindings
+                        textureBindings: renderPayload.textureBindings,
+                        frameTickHandler: {
+                            runtime.advanceGameplayFrame()
+                        },
+                        inputHandler: { input in
+                            handleGameplayInput(input)
+                        }
                     ) { stats in
                         frameStats = stats
                     }
@@ -289,6 +295,20 @@ private struct GameplayShellView: View {
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .padding(16)
                 }
+
+                VStack(spacing: 16) {
+                    Spacer()
+
+                    if let presentation = runtime.activeMessagePresentation {
+                        MessageView(presentation: presentation)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    } else if let actionLabel = runtime.gameplayActionLabel {
+                        ActionPromptView(label: actionLabel)
+                            .transition(.opacity)
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 28)
             }
         }
         .task {
@@ -344,6 +364,23 @@ private extension GameplayShellView {
             renderPayload = nil
             frameStats = SceneFrameStats()
             renderErrorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    func handleGameplayInput(_ input: MetalViewInput) -> Bool {
+        switch input {
+        case .confirm:
+            runtime.handlePrimaryGameplayInput()
+            return true
+        case .moveSelection(let delta):
+            guard runtime.activeMessagePresentation?.choiceState != nil else {
+                return false
+            }
+            runtime.handleGameplaySelectionInput(delta: delta)
+            return true
+        case .cancel:
+            return false
         }
     }
 }

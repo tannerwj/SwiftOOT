@@ -8,9 +8,30 @@ import OOTDataModel
 
 @MainActor
 final class OOTUITests: XCTestCase {
-    func testAppViewCompiles() {
-        _ = OOTAppView(runtime: GameRuntime(suspender: { _ in }))
-        _ = DebugSidebar()
+    func testAppViewCompiles() async {
+        await MainActor.run {
+            _ = OOTAppView(runtime: GameRuntime(suspender: { _ in }))
+            _ = DebugSidebar()
+            _ = MessageView(
+                presentation: MessagePresentation(
+                    messageID: 0x1000,
+                    variant: .blue,
+                    phase: .displaying,
+                    textRuns: [
+                        MessageTextRun(text: "Hello ", color: .white),
+                        MessageTextRun(text: "Link", color: .yellow),
+                    ],
+                    icon: MessageIcon(rawValue: "fairy"),
+                    choiceState: MessageChoiceState(
+                        options: [
+                            MessageChoiceOption(title: "Yes"),
+                            MessageChoiceOption(title: "No"),
+                        ]
+                    )
+                )
+            )
+            _ = ActionPromptView(label: "Talk")
+        }
     }
 
     func testRootViewStateMatchesRuntimeState() {
