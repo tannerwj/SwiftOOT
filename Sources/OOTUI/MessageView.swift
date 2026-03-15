@@ -16,7 +16,7 @@ struct MessageView: View {
                 }
             }
 
-            composedText
+            Text(attributedText)
                 .font(.system(size: 20, weight: .medium, design: .rounded))
                 .multilineTextAlignment(.leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -64,9 +64,11 @@ struct MessageView: View {
 }
 
 private extension MessageView {
-    var composedText: Text {
-        presentation.textRuns.reduce(Text("")) { partial, run in
-            partial + Text(run.text).foregroundStyle(color(for: run.color))
+    var attributedText: AttributedString {
+        presentation.textRuns.reduce(into: AttributedString()) { partial, run in
+            var fragment = AttributedString(run.text)
+            fragment.foregroundColor = color(for: run.color)
+            partial.append(fragment)
         }
     }
 
