@@ -26,6 +26,14 @@ let package = Package(
             name: "OOTRender",
             targets: ["OOTRender"]
         ),
+        .library(
+            name: "OOTTelemetry",
+            targets: ["OOTTelemetry"]
+        ),
+        .library(
+            name: "OOTCore",
+            targets: ["OOTCore"]
+        ),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
@@ -37,14 +45,6 @@ let package = Package(
         .target(
             name: "OOTContent",
             dependencies: ["OOTDataModel"]
-        ),
-        .target(
-            name: "OOTTelemetry",
-            dependencies: ["OOTDataModel"]
-        ),
-        .target(
-            name: "OOTCore",
-            dependencies: ["OOTContent", "OOTDataModel", "OOTTelemetry"]
         ),
         .target(
             name: "OOTExtractSupport",
@@ -61,6 +61,14 @@ let package = Package(
             name: "OOTRender",
             dependencies: ["OOTDataModel"],
             exclude: ["OOTShaders.metal"]
+        ),
+        .target(
+            name: "OOTTelemetry",
+            dependencies: ["OOTDataModel"]
+        ),
+        .target(
+            name: "OOTCore",
+            dependencies: ["OOTContent", "OOTDataModel", "OOTTelemetry"]
         ),
         .testTarget(
             name: "OOTDataModelTests",

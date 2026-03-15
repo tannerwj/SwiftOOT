@@ -161,7 +161,7 @@ public struct SaveContext: Codable, Sendable, Equatable {
     }
 }
 
-public struct PlayState: Codable, Sendable, Equatable {
+public struct PlayState: Codable, Equatable, @unchecked Sendable {
     public enum EntryMode: String, Codable, Sendable, Equatable {
         case newGame
         case continueGame
@@ -172,16 +172,108 @@ public struct PlayState: Codable, Sendable, Equatable {
     public var currentSceneName: String
     public var playerName: String
 
+    public var scene: LoadedScene?
+    public var actorTable: [Int: ActorTableEntry]
+    public var activeRoomIDs: Set<Int>
+    public var currentDrawPass: ActorDrawPass?
+
+    @MainActor
+    var actorRuntimeHooks: ActorRuntimeHooks?
+
     public init(
         activeSaveSlot: Int,
         entryMode: EntryMode,
         currentSceneName: String,
-        playerName: String
+        playerName: String,
+        scene: LoadedScene? = nil,
+        actorTable: [Int: ActorTableEntry] = [:],
+        activeRoomIDs: Set<Int> = [],
+        currentDrawPass: ActorDrawPass? = nil
     ) {
         self.activeSaveSlot = activeSaveSlot
         self.entryMode = entryMode
         self.currentSceneName = currentSceneName
         self.playerName = playerName
+        self.scene = scene
+        self.actorTable = actorTable
+        self.activeRoomIDs = activeRoomIDs
+        self.currentDrawPass = currentDrawPass
+        actorRuntimeHooks = nil
+    }
+
+    public var activeRooms: [LoadedSceneRoom] {
+        scene?.rooms.filter { activeRoomIDs.contains($0.manifest.id) } ?? []
+    }
+
+    @MainActor
+    public func requestDestroy(_ actor: any Actor) {
+        actorRuntimeHooks?.requestDestroy(actor)
+    }
+
+    func withActorRuntime(
+        scene: LoadedScene,
+        actorTable: [Int: ActorTableEntry],
+        activeRoomIDs: Set<Int>,
+        actorRuntimeHooks: ActorRuntimeHooks
+    ) -> PlayState {
+        var copy = self
+        copy.scene = scene
+        copy.actorTable = actorTable
+        copy.activeRoomIDs = activeRoomIDs
+        copy.currentDrawPass = nil
+        copy.actorRuntimeHooks = actorRuntimeHooks
+        return copy
+    }
+
+    func withActiveRooms(_ roomIDs: Set<Int>) -> PlayState {
+        var copy = self
+        copy.activeRoomIDs = roomIDs
+        return copy
+    }
+
+    func withCurrentDrawPass(_ drawPass: ActorDrawPass?) -> PlayState {
+        var copy = self
+        copy.currentDrawPass = drawPass
+        return copy
+    }
+
+    public static func == (lhs: PlayState, rhs: PlayState) -> Bool {
+        lhs.activeSaveSlot == rhs.activeSaveSlot &&
+            lhs.entryMode == rhs.entryMode &&
+            lhs.currentSceneName == rhs.currentSceneName &&
+            lhs.playerName == rhs.playerName &&
+            lhs.scene == rhs.scene &&
+            lhs.actorTable == rhs.actorTable &&
+            lhs.activeRoomIDs == rhs.activeRoomIDs &&
+            lhs.currentDrawPass == rhs.currentDrawPass
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case activeSaveSlot
+        case entryMode
+        case currentSceneName
+        case playerName
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        activeSaveSlot = try container.decode(Int.self, forKey: .activeSaveSlot)
+        entryMode = try container.decode(EntryMode.self, forKey: .entryMode)
+        currentSceneName = try container.decode(String.self, forKey: .currentSceneName)
+        playerName = try container.decode(String.self, forKey: .playerName)
+        scene = nil
+        actorTable = [:]
+        activeRoomIDs = []
+        currentDrawPass = nil
+        actorRuntimeHooks = nil
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(activeSaveSlot, forKey: .activeSaveSlot)
+        try container.encode(entryMode, forKey: .entryMode)
+        try container.encode(currentSceneName, forKey: .currentSceneName)
+        try container.encode(playerName, forKey: .playerName)
     }
 }
 
@@ -232,6 +324,12 @@ public final class GameRuntime {
     @ObservationIgnored
     private var hasStarted = false
 
+    @ObservationIgnored
+    private let actorRegistryOverride: ActorRegistry?
+
+    @ObservationIgnored
+    private var actorContext: ActorContext?
+
     public init(
         currentState: GameState = .boot,
         playState: PlayState? = nil,
@@ -250,6 +348,7 @@ public final class GameRuntime {
         contentLoader: any ContentLoading = ContentLoader(),
         sceneLoader: any SceneLoading = SceneLoader(),
         telemetryPublisher: any TelemetryPublishing = TelemetryPublisher(),
+        actorRegistry: ActorRegistry? = nil,
         bootDuration: Duration = .milliseconds(250),
         consoleLogoDuration: Duration = .seconds(1),
         suspender: @escaping RuntimeSuspender = { duration in
@@ -273,6 +372,7 @@ public final class GameRuntime {
         self.contentLoader = contentLoader
         self.sceneLoader = sceneLoader
         self.telemetryPublisher = telemetryPublisher
+        actorRegistryOverride = actorRegistry
         self.bootDuration = bootDuration
         self.consoleLogoDuration = consoleLogoDuration
         self.suspender = suspender
@@ -280,6 +380,10 @@ public final class GameRuntime {
 
     public var canContinue: Bool {
         saveContext.hasExistingSave
+    }
+
+    public var actors: [any Actor] {
+        actorContext?.allActors ?? []
     }
 
     public func start() async {
@@ -433,6 +537,7 @@ public final class GameRuntime {
         )
         fileSelectMode = nil
         statusMessage = nil
+        activateSceneContentIfAvailable()
         transition(to: .gameplay)
     }
 
@@ -454,7 +559,84 @@ public final class GameRuntime {
         )
         fileSelectMode = nil
         statusMessage = nil
+        activateSceneContentIfAvailable()
         transition(to: .gameplay)
+    }
+
+    public func loadScene(
+        id sceneID: Int,
+        activeRoomIDs: Set<Int>? = nil
+    ) throws {
+        let loadedScene = try contentLoader.loadScene(id: sceneID)
+        let actorTableEntries = try contentLoader.loadActorTable()
+        let actorTable = Dictionary(uniqueKeysWithValues: actorTableEntries.map { ($0.id, $0) })
+        let selectedRooms = activeRoomIDs ?? Set(loadedScene.manifest.rooms.prefix(1).map(\.id))
+        let registry = actorRegistryOverride ?? ActorRegistry.default(actorTable: actorTableEntries)
+        let actorContext = ActorContext(
+            registry: registry,
+            telemetryPublisher: telemetryPublisher
+        )
+        let hooks = ActorRuntimeHooks { actor in
+            actorContext.requestDestroy(actor)
+        }
+        let basePlayState = playState ?? PlayState(
+            activeSaveSlot: 0,
+            entryMode: .newGame,
+            currentSceneName: loadedScene.manifest.title ?? loadedScene.manifest.name,
+            playerName: "Link"
+        )
+        let playState = basePlayState.withActorRuntime(
+            scene: loadedScene,
+            actorTable: actorTable,
+            activeRoomIDs: selectedRooms,
+            actorRuntimeHooks: hooks
+        )
+
+        actorContext.spawnActors(
+            for: selectedRooms,
+            in: loadedScene,
+            actorTable: actorTable,
+            playState: playState
+        )
+
+        self.playState = playState
+        self.actorContext = actorContext
+        currentState = .gameplay
+    }
+
+    public func setActiveRooms(_ roomIDs: Set<Int>) {
+        guard
+            let actorContext,
+            var playState,
+            let scene = playState.scene
+        else {
+            return
+        }
+
+        playState = playState.withActiveRooms(roomIDs)
+        actorContext.syncActiveRooms(
+            roomIDs,
+            in: scene,
+            actorTable: playState.actorTable,
+            playState: playState
+        )
+        self.playState = playState
+    }
+
+    public func updateFrame() {
+        guard let actorContext, let playState else {
+            return
+        }
+
+        actorContext.updateAll(playState: playState)
+    }
+
+    public func drawActors(in pass: ActorDrawPass) {
+        guard let actorContext, let playState else {
+            return
+        }
+
+        actorContext.drawActors(in: pass, playState: playState)
     }
 
     private func transition(to nextState: GameState) {
@@ -520,5 +702,34 @@ public final class GameRuntime {
             return String(entry.segmentName.dropLast("_scene".count))
         }
         return entry.segmentName
+    }
+
+    private func activateSceneContentIfAvailable() {
+        guard let playState else {
+            actorContext = nil
+            return
+        }
+
+        guard let sceneID = sceneID(for: playState.currentSceneName) else {
+            actorContext = nil
+            return
+        }
+
+        do {
+            try loadScene(id: sceneID)
+        } catch {
+            actorContext = nil
+            statusMessage = "Gameplay scene content failed to load. Continuing with placeholder gameplay."
+            telemetryPublisher.publish("gameRuntime.sceneLoadFailed")
+        }
+    }
+
+    private func sceneID(for sceneName: String) -> Int? {
+        switch sceneName {
+        case "Kokiri Forest":
+            return 0x55
+        default:
+            return nil
+        }
     }
 }

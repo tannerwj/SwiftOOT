@@ -9,6 +9,7 @@ public protocol SceneLoading: Sendable {
     func loadTextureAssetURLs(for scene: LoadedScene) throws -> [UInt32: URL]
     func loadSceneManifest(id: Int) throws -> SceneManifest
     func loadSceneManifest(named name: String) throws -> SceneManifest
+    func loadActorTable() throws -> [ActorTableEntry]
     func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh?
     func loadRoomDisplayList(for room: RoomManifest) throws -> [F3DEX2Command]
     func loadRoomVertexData(for room: RoomManifest) throws -> Data
@@ -128,6 +129,9 @@ public struct SceneLoader: SceneLoading {
         return textureURLsByAssetID
     }
 
+    public func loadActorTable() throws -> [ActorTableEntry] {
+        try loadJSON([ActorTableEntry].self, from: actorTableURL)
+    }
     public func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh? {
         guard let collisionPath = manifest.collisionPath, collisionPath.isEmpty == false else {
             return nil
@@ -248,6 +252,13 @@ private extension SceneLoader {
             .appendingPathComponent("Manifests", isDirectory: true)
             .appendingPathComponent("tables", isDirectory: true)
             .appendingPathComponent("scene-table.json")
+    }
+
+    var actorTableURL: URL {
+        contentRoot
+            .appendingPathComponent("Manifests", isDirectory: true)
+            .appendingPathComponent("tables", isDirectory: true)
+            .appendingPathComponent("actor-table.json")
     }
 
     func loadScene(from directory: URL) throws -> LoadedScene {
