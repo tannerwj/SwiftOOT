@@ -13,6 +13,25 @@ public enum OOTRendererError: Error {
     case depthTextureAllocationFailed(width: Int, height: Int)
 }
 
+public struct SceneFrameStats: Sendable, Equatable {
+    public var roomCount: Int
+    public var vertexCount: Int
+    public var triangleCount: Int
+    public var drawCallCount: Int
+
+    public init(
+        roomCount: Int = 0,
+        vertexCount: Int = 0,
+        triangleCount: Int = 0,
+        drawCallCount: Int = 0
+    ) {
+        self.roomCount = roomCount
+        self.vertexCount = vertexCount
+        self.triangleCount = triangleCount
+        self.drawCallCount = drawCallCount
+    }
+}
+
 public final class OOTRenderer: NSObject, MTKViewDelegate {
     public static let preferredFramesPerSecond = 60
     public static let depthPixelFormat: MTLPixelFormat = .depth32Float
@@ -40,6 +59,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     let orbitCameraController: OrbitCameraController
 
     private let renderScene: OOTRenderScene
+    private let textureBindings: [UInt32: MTLTexture]
     private let fallbackTexture: MTLTexture
     private let opaqueDepthStencilState: MTLDepthStencilState
     private let translucentDepthStencilState: MTLDepthStencilState
@@ -49,11 +69,14 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     private var frameUniformBuffers: [MTLBuffer]
     private var frameUniformBufferIndex = 0
     private var renderPipelineCache: [RenderStateKey: MTLRenderPipelineState]
+    private var frameStatsHandler: (SceneFrameStats) -> Void
 
     public init(
         bundle: Bundle = resourceBundle,
         sceneVertices: [N64Vertex]? = nil,
-        scene: OOTRenderScene? = nil
+        scene: OOTRenderScene? = nil,
+        textureBindings: [UInt32: MTLTexture] = [:],
+        frameStatsHandler: @escaping (SceneFrameStats) -> Void = { _ in }
     ) throws {
         let sceneVertices = sceneVertices ?? OOTRenderer.defaultTriangleVertices
         let renderScene = scene ?? OOTRenderScene.syntheticScene(vertices: sceneVertices)
@@ -103,6 +126,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         self.device = device
         self.commandQueue = commandQueue
         self.renderScene = renderScene
+        self.textureBindings = textureBindings
         self.sceneVertices = sceneVertices
         self.sceneBounds = sceneBounds
         self.vertexDescriptor = vertexDescriptor
@@ -112,6 +136,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         self.translucentDepthStencilState = translucentDepthStencilState
         self.frameUniformBuffers = frameUniformBuffers
         self.renderPipelineCache = [:]
+        self.frameStatsHandler = frameStatsHandler
         self.renderPipelineState = try device.makeRenderPipelineState(
             descriptor: pipelineDescriptor
         )
@@ -134,6 +159,10 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
 
     public func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         orbitCameraController.updateViewportSize(size)
+    }
+
+    public func setFrameStatsHandler(_ handler: @escaping (SceneFrameStats) -> Void) {
+        frameStatsHandler = handler
     }
 
     public func draw(in view: MTKView) {
@@ -414,17 +443,26 @@ private extension OOTRenderer {
         )
         renderCommandEncoder.setDepthStencilState(opaqueDepthStencilState)
 
+        var frameStats = SceneFrameStats(roomCount: renderScene.visibleRooms.count)
+
         for room in renderScene.visibleRooms {
             let interpreter = F3DEX2Interpreter(
                 segmentTable: makeSegmentTable(for: room),
                 projectionMatrix: frameUniforms.mvp,
-                drawBatchResources: makeDrawBatchResources()
+                drawBatchResources: makeDrawBatchResources(),
+                textureResolver: { [textureBindings] assetID in
+                    textureBindings[assetID]
+                }
             )
             try interpreter.interpret(room.displayList, encoder: renderCommandEncoder)
             try interpreter.flush(encoder: renderCommandEncoder)
+            frameStats.vertexCount += room.vertexCount
+            frameStats.triangleCount += interpreter.drawBatch.totalTriangleCount
+            frameStats.drawCallCount += interpreter.drawBatch.drawCallCount
         }
 
         renderCommandEncoder.endEncoding()
+        frameStatsHandler(frameStats)
     }
 
     func encodeRawVertexFrame(

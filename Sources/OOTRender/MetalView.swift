@@ -3,7 +3,22 @@ import AppKit
 import MetalKit
 
 public struct MetalView: NSViewRepresentable {
-    public init() {}
+    private let sceneIdentity: Int
+    private let scene: OOTRenderScene
+    private let textureBindings: [UInt32: MTLTexture]
+    private let frameStatsHandler: (SceneFrameStats) -> Void
+
+    public init(
+        sceneIdentity: Int,
+        scene: OOTRenderScene,
+        textureBindings: [UInt32: MTLTexture] = [:],
+        frameStatsHandler: @escaping (SceneFrameStats) -> Void = { _ in }
+    ) {
+        self.sceneIdentity = sceneIdentity
+        self.scene = scene
+        self.textureBindings = textureBindings
+        self.frameStatsHandler = frameStatsHandler
+    }
 
     public func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -13,7 +28,11 @@ public struct MetalView: NSViewRepresentable {
         let renderer: OOTRenderer
 
         do {
-            renderer = try OOTRenderer()
+            renderer = try OOTRenderer(
+                scene: scene,
+                textureBindings: textureBindings,
+                frameStatsHandler: frameStatsHandler
+            )
         } catch {
             fatalError("Failed to initialize OOTRenderer: \(error)")
         }
@@ -25,7 +44,9 @@ public struct MetalView: NSViewRepresentable {
         return view
     }
 
-    public func updateNSView(_ nsView: MTKView, context: Context) {}
+    public func updateNSView(_ nsView: MTKView, context: Context) {
+        context.coordinator.renderer?.setFrameStatsHandler(frameStatsHandler)
+    }
 
     public final class Coordinator {
         fileprivate var renderer: OOTRenderer?

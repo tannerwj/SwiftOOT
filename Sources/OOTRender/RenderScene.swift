@@ -32,6 +32,10 @@ public struct OOTRenderRoom: Sendable, Equatable {
         return segments
     }
 
+    public var vertexCount: Int {
+        vertexData.count / MemoryLayout<N64Vertex>.stride
+    }
+
     public var vertices: [N64Vertex] {
         Self.decodeVertices(from: vertexData)
     }
