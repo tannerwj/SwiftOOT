@@ -446,6 +446,16 @@ private extension TextureExtractor {
             }
         }
 
+        for searchRoot in searchRoots where fileManager.fileExists(atPath: searchRoot.path) {
+            if let match = try firstSourceContainingRequiredTextureSymbols(
+                for: sourceGroup,
+                in: searchRoot,
+                fileManager: fileManager
+            ) {
+                return match
+            }
+        }
+
         throw TextureExtractorError.missingSourceFile(sourceGroup.sourceName, sourceGroup.xmlURL.path)
     }
 
@@ -691,6 +701,91 @@ private extension TextureExtractor {
                 return lhs.path < rhs.path
             }
             return lhsPriority < rhsPriority
+        }
+    }
+
+    static func firstSourceContainingRequiredTextureSymbols(
+        for sourceGroup: TextureSourceGroup,
+        in root: URL,
+        fileManager: FileManager
+    ) throws -> URL? {
+        let requiredSymbols = Set(sourceGroup.textures.map(\.name) + sourceGroup.tlutByOffset.values.map(\.name))
+        guard requiredSymbols.isEmpty == false else {
+            return nil
+        }
+
+        let preferredFilenames = [
+            "\(sourceGroup.sourceName).c",
+            "\(sourceGroup.sourceName).inc.c",
+            "\(sourceGroup.sourceName).h",
+        ]
+        let preferredHeaderPath = "\(sourceGroup.assetDirectory)/\(sourceGroup.sourceName).h"
+
+        guard let enumerator = fileManager.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return nil
+        }
+
+        let matches = try enumerator.compactMap { item -> (score: Int, url: URL)? in
+            guard let fileURL = item as? URL else {
+                return nil
+            }
+
+            let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
+            guard values.isRegularFile == true else {
+                return nil
+            }
+
+            guard isCandidateTextureSourceFile(fileURL) else {
+                return nil
+            }
+
+            guard let contents = try? String(contentsOf: fileURL, encoding: .utf8) else {
+                return nil
+            }
+
+            guard requiredSymbols.allSatisfy(contents.contains) else {
+                return nil
+            }
+
+            var score = 0
+            if preferredFilenames.contains(fileURL.lastPathComponent) {
+                score += 4
+            }
+            if contents.contains(preferredHeaderPath) {
+                score += 3
+            }
+            if contents.contains(sourceGroup.sourceName) {
+                score += 2
+            }
+            if fileURL.path.contains("/src/") {
+                score += 1
+            }
+
+            return (score, fileURL)
+        }
+
+        return matches.max { lhs, rhs in
+            if lhs.score == rhs.score {
+                return lhs.url.path > rhs.url.path
+            }
+            return lhs.score < rhs.score
+        }?.url
+    }
+
+    static func isCandidateTextureSourceFile(_ fileURL: URL) -> Bool {
+        if fileURL.lastPathComponent.hasSuffix(".inc.c") {
+            return true
+        }
+
+        switch fileURL.pathExtension {
+        case "c", "h":
+            return true
+        default:
+            return false
         }
     }
 
