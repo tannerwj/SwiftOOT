@@ -10,6 +10,8 @@ public protocol SceneLoading: Sendable {
     func loadSceneManifest(id: Int) throws -> SceneManifest
     func loadSceneManifest(named name: String) throws -> SceneManifest
     func loadActorTable() throws -> [ActorTableEntry]
+    func loadObjectTable() throws -> [ObjectTableEntry]
+    func loadObject(named name: String) throws -> LoadedObject
     func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh?
     func loadRoomDisplayList(for room: RoomManifest) throws -> [F3DEX2Command]
     func loadRoomVertexData(for room: RoomManifest) throws -> Data
@@ -207,8 +209,19 @@ private extension SceneLoader {
     static let contentRootEnvironmentVariable = "SWIFTOOT_CONTENT_ROOT"
 
     static func defaultContentRoot() -> URL {
+        cachedDefaultContentRoot
+    }
+
+    static let cachedDefaultContentRoot: URL = {
         let fileManager = FileManager.default
         let environment = ProcessInfo.processInfo.environment
+        let sourceRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let fallbackRoot = sourceRoot
+            .appendingPathComponent("Content", isDirectory: true)
+            .appendingPathComponent("OOT", isDirectory: true)
 
         if let configuredRoot = environment[contentRootEnvironmentVariable] {
             let configuredURL = URL(fileURLWithPath: configuredRoot, isDirectory: true)
@@ -217,18 +230,22 @@ private extension SceneLoader {
             }
         }
 
-        let sourceRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let candidateBases = [
+        if environment["XCTestConfigurationFilePath"] != nil {
+            return fallbackRoot
+        }
+
+        let primaryCandidateBases = [
             URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true),
             sourceRoot,
-            Bundle.main.resourceURL,
-            Bundle.main.bundleURL,
         ]
 
-        for baseURL in candidateBases {
+        for baseURL in primaryCandidateBases {
+            if let resolved = resolveContentRoot(from: baseURL, fileManager: fileManager) {
+                return resolved
+            }
+        }
+
+        for baseURL in [Bundle.main.resourceURL, Bundle.main.bundleURL] {
             guard let baseURL else {
                 continue
             }
@@ -238,10 +255,8 @@ private extension SceneLoader {
             }
         }
 
-        return sourceRoot
-            .appendingPathComponent("Content", isDirectory: true)
-            .appendingPathComponent("OOT", isDirectory: true)
-    }
+        return fallbackRoot
+    }()
 
     var scenesRoot: URL {
         contentRoot.appendingPathComponent("Scenes", isDirectory: true)
@@ -259,6 +274,17 @@ private extension SceneLoader {
             .appendingPathComponent("Manifests", isDirectory: true)
             .appendingPathComponent("tables", isDirectory: true)
             .appendingPathComponent("actor-table.json")
+    }
+
+    var objectTableURL: URL {
+        contentRoot
+            .appendingPathComponent("Manifests", isDirectory: true)
+            .appendingPathComponent("tables", isDirectory: true)
+            .appendingPathComponent("object-table.json")
+    }
+
+    var objectsRoot: URL {
+        contentRoot.appendingPathComponent("Objects", isDirectory: true)
     }
 
     func loadScene(from directory: URL) throws -> LoadedScene {
