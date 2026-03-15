@@ -11,6 +11,7 @@ public protocol GameplayInputHandling: AnyObject {
 public struct MetalView: NSViewRepresentable {
     private let sceneIdentity: Int
     private let scene: OOTRenderScene
+    private let timeOfDay: Double
     private let textureBindings: [UInt32: MTLTexture]
     private let inputHandler: (any GameplayInputHandling)?
     private let gameplayCameraConfiguration: GameplayCameraConfiguration?
@@ -19,6 +20,7 @@ public struct MetalView: NSViewRepresentable {
     public init(
         sceneIdentity: Int,
         scene: OOTRenderScene,
+        timeOfDay: Double,
         textureBindings: [UInt32: MTLTexture] = [:],
         inputHandler: (any GameplayInputHandling)? = nil,
         gameplayCameraConfiguration: GameplayCameraConfiguration? = nil,
@@ -26,6 +28,7 @@ public struct MetalView: NSViewRepresentable {
     ) {
         self.sceneIdentity = sceneIdentity
         self.scene = scene
+        self.timeOfDay = timeOfDay
         self.textureBindings = textureBindings
         self.inputHandler = inputHandler
         self.gameplayCameraConfiguration = gameplayCameraConfiguration
@@ -53,6 +56,7 @@ public struct MetalView: NSViewRepresentable {
         let view = OrbitInputMTKView(frame: .zero, device: renderer.device)
         view.inputRenderer = renderer
         view.gameplayInputHandler = inputHandler
+        renderer.setTimeOfDay(timeOfDay)
         renderer.configure(view)
         context.coordinator.renderer = renderer
         return view
@@ -62,6 +66,8 @@ public struct MetalView: NSViewRepresentable {
         context.coordinator.renderer?.setFrameStatsHandler(frameStatsHandler)
         context.coordinator.renderer?.updateScene(scene, textureBindings: textureBindings)
         context.coordinator.renderer?.updateGameplayCameraConfiguration(gameplayCameraConfiguration)
+        context.coordinator.renderer?.setTimeOfDay(timeOfDay)
+        nsView.clearColor = context.coordinator.renderer?.clearColorForCurrentEnvironment() ?? nsView.clearColor
         if let nsView = nsView as? OrbitInputMTKView {
             nsView.gameplayInputHandler = inputHandler
         }

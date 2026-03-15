@@ -88,7 +88,9 @@ enum SceneRenderPayloadBuilder {
                     displayList: room.displayList,
                     vertexData: room.vertexData
                 )
-            }
+            },
+            environment: scene.environment,
+            skyColor: EnvironmentRenderer(environment: scene.environment).currentState(timeOfDay: 6.0).skyColor
         )
 
         var mergedTextureAssetURLs = textureAssetURLs

@@ -334,6 +334,12 @@ public final class GameRuntime {
     private var hasStarted = false
 
     @ObservationIgnored
+    private let timeSystem: TimeSystem
+
+    @ObservationIgnored
+    private var timeTask: Task<Void, Never>?
+
+    @ObservationIgnored
     private let actorRegistryOverride: ActorRegistry?
 
     @ObservationIgnored
@@ -369,6 +375,7 @@ public final class GameRuntime {
         contentLoader: (any ContentLoading)? = nil,
         sceneLoader: (any SceneLoading)? = nil,
         telemetryPublisher: (any TelemetryPublishing)? = nil,
+        timeSystem: TimeSystem = TimeSystem(),
         actorRegistry: ActorRegistry? = nil,
         movementConfiguration: PlayerMovementConfiguration = PlayerMovementConfiguration(),
         bootDuration: Duration = .milliseconds(250),
@@ -398,11 +405,16 @@ public final class GameRuntime {
         self.sceneLoader = resolvedSceneLoader
         self.contentLoader = contentLoader ?? ContentLoader(sceneLoader: resolvedSceneLoader)
         self.telemetryPublisher = telemetryPublisher ?? TelemetryPublisher()
+        self.timeSystem = timeSystem
         actorRegistryOverride = actorRegistry
         self.movementConfiguration = movementConfiguration
         self.bootDuration = bootDuration
         self.consoleLogoDuration = consoleLogoDuration
         self.suspender = suspender
+    }
+
+    deinit {
+        timeTask?.cancel()
     }
 
     public var canContinue: Bool {
@@ -675,7 +687,9 @@ public final class GameRuntime {
         collisionSystem = CollisionSystem(scene: loadedScene)
         sceneViewerState = .running
         errorMessage = nil
+        synchronizeGameTime(with: loadedScene)
         currentState = .gameplay
+        startTimeLoop()
     }
 
     public func setActiveRooms(_ roomIDs: Set<Int>) {
@@ -767,6 +781,10 @@ public final class GameRuntime {
         )
     }
 
+    func advanceGameTime(byRealSeconds realSeconds: Double) {
+        gameTime = timeSystem.advance(gameTime, byRealSeconds: realSeconds)
+    }
+
     public func drawActors(in pass: ActorDrawPass) {
         guard let actorContext, let playState else {
             return
@@ -778,6 +796,11 @@ public final class GameRuntime {
     private func transition(to nextState: GameState) {
         currentState = nextState
         gameTime.advance()
+        if nextState == .gameplay {
+            startTimeLoop()
+        } else {
+            stopTimeLoop()
+        }
         telemetryPublisher.publish("gameRuntime.state.\(nextState.rawValue)")
     }
 
@@ -840,6 +863,7 @@ public final class GameRuntime {
         selectedSceneID = snapshot.selectedSceneID
         loadedScene = snapshot.loadedScene
         textureAssetURLs = snapshot.textureAssetURLs
+        synchronizeGameTime(with: snapshot.loadedScene)
     }
 
     private func loadSceneViewerSnapshot(defaultSceneID: Int?) async throws -> SceneViewerSnapshot {
@@ -1005,5 +1029,41 @@ public final class GameRuntime {
         if let messageCatalog = try? contentLoader.loadMessageCatalog() {
             messageContext.setCatalog(messageCatalog)
         }
+    }
+
+    private func synchronizeGameTime(with scene: LoadedScene?) {
+        guard let timeOfDay = timeSystem.initialTimeOfDay(for: scene?.environment) else {
+            return
+        }
+
+        gameTime.timeOfDay = timeOfDay
+    }
+
+    private func startTimeLoop() {
+        guard timeTask == nil else {
+            return
+        }
+
+        timeTask = Task { [weak self] in
+            var previousUpdate = ContinuousClock.now
+
+            while Task.isCancelled == false {
+                try? await Task.sleep(for: TimeSystem.updateInterval)
+                let now = ContinuousClock.now
+                let elapsed = previousUpdate.duration(to: now).timeInterval
+                previousUpdate = now
+
+                guard let self else {
+                    return
+                }
+
+                advanceGameTime(byRealSeconds: elapsed)
+            }
+        }
+    }
+
+    private func stopTimeLoop() {
+        timeTask?.cancel()
+        timeTask = nil
     }
 }

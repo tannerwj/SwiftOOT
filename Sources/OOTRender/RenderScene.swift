@@ -44,11 +44,13 @@ public struct OOTRenderRoom: Sendable, Equatable {
 public struct OOTRenderScene: Sendable, Equatable {
     public var rooms: [OOTRenderRoom]
     public var skeletons: [OOTRenderSkeleton]
+    public var environment: SceneEnvironmentFile?
     public var skyColor: SIMD4<Float>
 
     public init(
         rooms: [OOTRenderRoom],
         skeletons: [OOTRenderSkeleton] = [],
+        environment: SceneEnvironmentFile? = nil,
         skyColor: SIMD4<Float> = SIMD4<Float>(
             45.0 / 255.0,
             155.0 / 255.0,
@@ -58,6 +60,7 @@ public struct OOTRenderScene: Sendable, Equatable {
     ) {
         self.rooms = rooms
         self.skeletons = skeletons
+        self.environment = environment
         self.skyColor = skyColor
     }
 
@@ -73,6 +76,7 @@ public struct OOTRenderScene: Sendable, Equatable {
     public static func syntheticScene(
         name: String = "DebugRoom",
         vertices: [N64Vertex],
+        environment: SceneEnvironmentFile? = nil,
         skyColor: SIMD4<Float> = SIMD4<Float>(
             45.0 / 255.0,
             155.0 / 255.0,
@@ -89,6 +93,7 @@ public struct OOTRenderScene: Sendable, Equatable {
                 )
             ],
             skeletons: [],
+            environment: environment,
             skyColor: skyColor
         )
     }

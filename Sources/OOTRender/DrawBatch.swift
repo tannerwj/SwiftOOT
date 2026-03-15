@@ -194,6 +194,11 @@ public struct DrawBatch {
             index: OOTRenderBufferIndex.vertices.rawValue
         )
         var combinerUniforms = self.combinerUniforms
+        encoder.setVertexBytes(
+            &combinerUniforms,
+            length: MemoryLayout<CombinerUniforms>.stride,
+            index: OOTRenderBufferIndex.combinerUniforms.rawValue
+        )
         encoder.setFragmentBytes(
             &combinerUniforms,
             length: MemoryLayout<CombinerUniforms>.stride,
@@ -238,13 +243,11 @@ struct DrawBatchVertex: Equatable {
     var clipPosition: SIMD4<Float>
     var color: SIMD4<Float>
     var textureCoordinates: SIMD2<Float>
-    var fog: Float
 
     init(_ transformedVertex: TransformedVertex) {
         clipPosition = transformedVertex.clipPosition
         color = transformedVertex.color
         textureCoordinates = transformedVertex.textureCoordinates
-        fog = 1.0
     }
 }
 
@@ -304,10 +307,6 @@ private func makeDrawBatchVertexDescriptor() -> MTLVertexDescriptor {
     descriptor.attributes[2].format = .float2
     descriptor.attributes[2].offset = 32
     descriptor.attributes[2].bufferIndex = OOTRenderBufferIndex.vertices.rawValue
-
-    descriptor.attributes[3].format = .float
-    descriptor.attributes[3].offset = 40
-    descriptor.attributes[3].bufferIndex = OOTRenderBufferIndex.vertices.rawValue
 
     descriptor.layouts[OOTRenderBufferIndex.vertices.rawValue].stride = MemoryLayout<DrawBatchVertex>.stride
     descriptor.layouts[OOTRenderBufferIndex.vertices.rawValue].stepFunction = .perVertex

@@ -19,6 +19,10 @@ struct VertexOut {
 struct FrameUniforms {
     float4x4 mvp;
     float4 fogParameters;
+    float4 ambientColor;
+    float4 directionalLightColor;
+    float4 directionalLightDirection;
+    float4 fogColor;
 };
 
 struct CombinerUniforms {
@@ -40,15 +44,54 @@ struct CombinerUniforms {
 struct N64VertexIn {
     short3 position [[attribute(0)]];
     short2 texCoord [[attribute(1)]];
-    float4 color [[attribute(2)]];
+    uchar4 shadeData [[attribute(2)]];
 };
 
 struct DrawBatchVertexIn {
     float4 clipPosition [[attribute(0)]];
-    float4 color [[attribute(1)]];
+    float4 shadeData [[attribute(1)]];
     float2 texCoord [[attribute(2)]];
-    float fog [[attribute(3)]];
 };
+
+constant uint kGeometryModeFog = 0x00010000;
+constant uint kGeometryModeLighting = 0x00020000;
+
+float computeFogFactor(float4 clipPosition, float4 fogParameters) {
+    float fogStart = fogParameters.x;
+    float fogEnd = max(fogParameters.y, fogStart + 0.0001);
+    float viewDistance = length(clipPosition.xyz / max(clipPosition.w, 0.0001));
+    return clamp((fogEnd - viewDistance) / (fogEnd - fogStart), 0.0, 1.0);
+}
+
+float3 decodeRawNormal(uchar4 shadeData) {
+    int3 signedComponents = int3(shadeData.xyz);
+    signedComponents -= select(int3(0), int3(256), signedComponents > 127);
+    float3 normal = float3(signedComponents) / 127.0;
+    if (length_squared(normal) < 0.0001) {
+        return float3(0.0, 1.0, 0.0);
+    }
+    return normalize(normal);
+}
+
+float4 evaluateShadeColor(
+    float4 shadeData,
+    constant FrameUniforms& frameUniforms,
+    uint geometryMode
+) {
+    if ((geometryMode & kGeometryModeLighting) == 0u) {
+        return shadeData;
+    }
+
+    float3 normal = normalize(shadeData.xyz);
+    float3 lightDirection = normalize(-frameUniforms.directionalLightDirection.xyz);
+    float diffuse = max(dot(normal, lightDirection), 0.0);
+    float3 litColor = clamp(
+        frameUniforms.ambientColor.rgb + (frameUniforms.directionalLightColor.rgb * diffuse),
+        0.0,
+        1.0
+    );
+    return float4(litColor, shadeData.w);
+}
 
 vertex VertexOut oot_passthrough_vertex(
     N64VertexIn rawVertex [[stage_in]],
@@ -58,30 +101,44 @@ vertex VertexOut oot_passthrough_vertex(
     VertexIn vertexIn;
     vertexIn.position = float3(rawVertex.position);
     vertexIn.texCoord = float2(rawVertex.texCoord);
-    vertexIn.color = rawVertex.color;
+    vertexIn.color = float4(rawVertex.shadeData) / 255.0;
     vertexIn.normal = float3(0.0);
 
     float4 clipPosition = frameUniforms.mvp * float4(vertexIn.position, 1.0);
-    float fogStart = frameUniforms.fogParameters.x;
-    float fogEnd = max(frameUniforms.fogParameters.y, fogStart + 0.0001);
-    float viewDistance = length(clipPosition.xyz / max(clipPosition.w, 0.0001));
+    float4 shadeData = vertexIn.color;
+    if ((combinerUniforms.geometryMode & kGeometryModeLighting) != 0u) {
+        shadeData = float4(
+            decodeRawNormal(rawVertex.shadeData),
+            float(rawVertex.shadeData.w) / 255.0
+        );
+    }
 
     VertexOut out;
     out.position = clipPosition;
     out.texCoord = vertexIn.texCoord * combinerUniforms.textureScale;
-    out.color = vertexIn.color;
-    out.fog = clamp((fogEnd - viewDistance) / (fogEnd - fogStart), 0.0, 1.0);
+    out.color = evaluateShadeColor(
+        shadeData,
+        frameUniforms,
+        combinerUniforms.geometryMode
+    );
+    out.fog = computeFogFactor(clipPosition, frameUniforms.fogParameters);
     return out;
 }
 
 vertex VertexOut oot_draw_batch_vertex(
-    DrawBatchVertexIn vertexIn [[stage_in]]
+    DrawBatchVertexIn vertexIn [[stage_in]],
+    constant FrameUniforms& frameUniforms [[buffer(1)]],
+    constant CombinerUniforms& combinerUniforms [[buffer(2)]]
 ) {
     VertexOut out;
     out.position = vertexIn.clipPosition;
     out.texCoord = vertexIn.texCoord;
-    out.color = vertexIn.color;
-    out.fog = vertexIn.fog;
+    out.color = evaluateShadeColor(
+        vertexIn.shadeData,
+        frameUniforms,
+        combinerUniforms.geometryMode
+    );
+    out.fog = computeFogFactor(vertexIn.clipPosition, frameUniforms.fogParameters);
     return out;
 }
 
@@ -99,8 +156,6 @@ constant uint kCombinerOne = 6;
 constant uint kCombinerNoise = 7;
 constant uint kCombinerZero = 31;
 constant uint kAlphaCompareThreshold = 1;
-constant uint kGeometryModeFog = 0x00010000;
-
 float combinerNoise(float2 samplePoint) {
     return fract(sin(dot(samplePoint, float2(12.9898, 78.233))) * 43758.5453);
 }
@@ -281,6 +336,7 @@ float evaluateAlphaCycle(
 
 fragment float4 oot_combiner_fragment(
     VertexOut in [[stage_in]],
+    constant FrameUniforms& frameUniforms [[buffer(1)]],
     constant CombinerUniforms& combinerUniforms [[buffer(2)]],
     texture2d<half> texel0Texture [[texture(0)]],
     texture2d<half> texel1Texture [[texture(1)]]

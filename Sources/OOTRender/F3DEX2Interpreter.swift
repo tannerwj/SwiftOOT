@@ -22,6 +22,7 @@ public final class F3DEX2Interpreter {
     public private(set) var lastLoadTile: LoadTileCommand?
 
     private let drawBatchResources: DrawBatchResources?
+    private let environmentFogColor: SIMD4<Float>?
     private let displayListResolver: (UInt32) -> [F3DEX2Command]?
     private let textureResolver: (UInt32) -> MTLTexture?
     private let warningSink: (String) -> Void
@@ -34,6 +35,7 @@ public final class F3DEX2Interpreter {
         segmentTable: SegmentTable = SegmentTable(),
         projectionMatrix: simd_float4x4 = matrix_identity_float4x4,
         drawBatchResources: DrawBatchResources? = nil,
+        environmentFogColor: SIMD4<Float>? = nil,
         displayListResolver: @escaping (UInt32) -> [F3DEX2Command]? = { _ in nil },
         textureResolver: @escaping (UInt32) -> MTLTexture? = { _ in nil },
         warningSink: @escaping (String) -> Void = { _ in }
@@ -48,6 +50,7 @@ public final class F3DEX2Interpreter {
         self.lastLoadBlock = nil
         self.lastLoadTile = nil
         self.drawBatchResources = drawBatchResources
+        self.environmentFogColor = environmentFogColor
         self.displayListResolver = displayListResolver
         self.textureResolver = textureResolver
         self.warningSink = warningSink
@@ -194,23 +197,57 @@ private extension F3DEX2Interpreter {
             1.0
         )
 
+        let color = if rspState.geometryMode.contains(.lighting) {
+            transformedNormal(from: vertex)
+        } else {
+            normalizedColor(from: vertex.colorOrNormal)
+        }
+
         return TransformedVertex(
             clipPosition: simd_mul(currentTransformMatrix, position),
             textureCoordinates: SIMD2<Float>(
                 Float(vertex.textureCoordinate.x) / 32.0,
                 Float(vertex.textureCoordinate.y) / 32.0
             ),
-            color: SIMD4<Float>(
-                Float(vertex.colorOrNormal.red) / 255.0,
-                Float(vertex.colorOrNormal.green) / 255.0,
-                Float(vertex.colorOrNormal.blue) / 255.0,
-                Float(vertex.colorOrNormal.alpha) / 255.0
-            )
+            color: color
         )
     }
 
     var currentTransformMatrix: simd_float4x4 {
         simd_mul(projectionMatrix, rspState.currentMatrix)
+    }
+
+    func normalizedColor(from rgba: RGBA8) -> SIMD4<Float> {
+        SIMD4<Float>(
+            Float(rgba.red) / 255.0,
+            Float(rgba.green) / 255.0,
+            Float(rgba.blue) / 255.0,
+            Float(rgba.alpha) / 255.0
+        )
+    }
+
+    func transformedNormal(from vertex: N64Vertex) -> SIMD4<Float> {
+        let normal = SIMD3<Float>(
+            signedNormalized(vertex.colorOrNormal.red),
+            signedNormalized(vertex.colorOrNormal.green),
+            signedNormalized(vertex.colorOrNormal.blue)
+        )
+        let normalMatrix = simd_float3x3(
+            SIMD3<Float>(rspState.currentMatrix.columns.0.x, rspState.currentMatrix.columns.0.y, rspState.currentMatrix.columns.0.z),
+            SIMD3<Float>(rspState.currentMatrix.columns.1.x, rspState.currentMatrix.columns.1.y, rspState.currentMatrix.columns.1.z),
+            SIMD3<Float>(rspState.currentMatrix.columns.2.x, rspState.currentMatrix.columns.2.y, rspState.currentMatrix.columns.2.z)
+        )
+        let transformed = simd_normalize(simd_mul(normalMatrix, normal))
+        return SIMD4<Float>(
+            transformed.x,
+            transformed.y,
+            transformed.z,
+            Float(vertex.colorOrNormal.alpha) / 255.0
+        )
+    }
+
+    func signedNormalized(_ value: UInt8) -> Float {
+        Float(Int8(bitPattern: value)) / 127.0
     }
 
     func applyMatrixCommand(_ command: MatrixCommand) throws {
@@ -364,6 +401,9 @@ private extension F3DEX2Interpreter {
                 geometryMode: rspState.geometryMode,
                 textureScale: Self.textureScale(for: rspState.textureState)
             )
+            if let environmentFogColor {
+                drawBatch.combinerUniforms.fogColor = environmentFogColor
+            }
         } else {
             drawBatch.combinerUniforms = CombinerUniforms()
         }
