@@ -71,7 +71,8 @@ Symphony is the execution layer for issue work. Linear is the queue.
 - `Todo`: ready for Symphony pickup
 - `In Progress`: worker is active
 - `Human Review`: branch/PR is ready for review
-- `Rework`: reviewer found issues; Symphony should restart from current `master`
+- `Rework`: reviewer found issues; Symphony should continue from the current
+  branch/workspace unless a restart is explicitly required
 - `Merging`: approved and ready to land
 - `Done`: merged
 
@@ -221,12 +222,17 @@ If the branch is not acceptable:
 
 When an issue moves to `Rework`, the next Symphony worker should:
 
-- start from fresh `master`
+- preserve the existing workspace, branch, and PR by default
 - address only the review findings
-- reopen with a clean branch/PR state
+- keep the one-issue-per-branch model, but patch the current branch unless it
+  is unusable
 
-Do not stack rework on top of stale implementation branches unless there is a
-specific reason to preserve them.
+Create a fresh branch from `master` only when one of these is true:
+
+- the existing PR is closed or merged
+- the branch cannot be pushed or published cleanly
+- the workspace is corrupted or no longer matches the issue
+- the reviewer explicitly requested a restart
 
 If the same issue returns to `Rework` more than twice for the same underlying
 failure mode, stop treating it as a normal review loop. Tighten the issue's

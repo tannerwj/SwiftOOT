@@ -88,7 +88,8 @@ for what Symphony should pick up next.
 - `Todo`: ready for Symphony pickup
 - `In Progress`: Symphony worker is actively implementing the issue
 - `Human Review`: implementation is complete and ready for branch/PR review
-- `Rework`: review found issues; Symphony should start fresh from `master` and address them
+- `Rework`: review found issues; Symphony should continue from the current
+  branch/workspace by default and address the requested changes there
 - `Merging`: approved and ready for Symphony to land
 - `Done`: merged and complete
 
