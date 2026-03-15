@@ -29,10 +29,18 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     public let device: MTLDevice
     public let commandQueue: MTLCommandQueue
     public let renderPipelineState: MTLRenderPipelineState
+    public let sceneBounds: SceneBounds
     private let fallbackTexture: MTLTexture
     let vertexDescriptor: MTLVertexDescriptor
+    let orbitCameraController: OrbitCameraController
+    private let sceneVertices: [N64Vertex]
 
-    public init(bundle: Bundle = resourceBundle) throws {
+    public init(
+        bundle: Bundle = resourceBundle,
+        sceneVertices: [N64Vertex]? = nil
+    ) throws {
+        let sceneVertices = sceneVertices ?? OOTRenderer.defaultTriangleVertices
+
         guard let device = MTLCreateSystemDefaultDevice() else {
             throw OOTRendererError.metalUnavailable
         }
@@ -60,6 +68,11 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
 
         self.device = device
         self.commandQueue = commandQueue
+        self.sceneVertices = sceneVertices
+        self.sceneBounds = SceneBounds(vertices: sceneVertices)
+        self.orbitCameraController = OrbitCameraController(
+            sceneBounds: self.sceneBounds
+        )
         self.fallbackTexture = try Self.makeFallbackTexture(device: device)
         self.vertexDescriptor = vertexDescriptor
         self.renderPipelineState = try device.makeRenderPipelineState(
@@ -78,9 +91,12 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         view.isPaused = false
         view.framebufferOnly = true
         view.delegate = self
+        orbitCameraController.updateViewportSize(view.drawableSize)
     }
 
-    public func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
+    public func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        orbitCameraController.updateViewportSize(size)
+    }
 
     public func draw(in view: MTKView) {
         guard
@@ -94,8 +110,8 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         encodeFrame(
             with: commandBuffer,
             renderPassDescriptor: renderPassDescriptor,
-            vertices: Self.defaultTriangleVertices,
-            frameUniforms: Self.defaultFrameUniforms,
+            vertices: sceneVertices,
+            frameUniforms: orbitCameraController.frameUniforms(),
             combinerUniforms: CombinerUniforms()
         )
         commandBuffer.present(drawable)
@@ -105,7 +121,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     func renderToTexture(_ texture: MTLTexture) {
         renderToTexture(
             texture,
-            vertices: Self.defaultTriangleVertices,
+            vertices: sceneVertices,
             frameUniforms: Self.defaultFrameUniforms
         )
     }
@@ -117,7 +133,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     ) {
         renderToTexture(
             texture,
-            vertices: Self.defaultTriangleVertices,
+            vertices: sceneVertices,
             frameUniforms: frameUniforms,
             combinerUniforms: combinerUniforms
         )
