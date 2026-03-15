@@ -8,12 +8,14 @@ public protocol SceneLoading: Sendable {
     func loadSceneManifest(id: Int) throws -> SceneManifest
     func loadSceneManifest(named name: String) throws -> SceneManifest
     func loadActorTable() throws -> [ActorTableEntry]
+    func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh?
     func loadRoomDisplayList(for room: RoomManifest) throws -> [F3DEX2Command]
     func loadRoomVertexData(for room: RoomManifest) throws -> Data
 }
 
 public struct LoadedScene: Sendable, Equatable {
     public var manifest: SceneManifest
+    public var collision: CollisionMesh?
     public var actors: SceneActorsFile?
     public var environment: SceneEnvironmentFile?
     public var paths: ScenePathsFile?
@@ -21,12 +23,14 @@ public struct LoadedScene: Sendable, Equatable {
 
     public init(
         manifest: SceneManifest,
+        collision: CollisionMesh? = nil,
         actors: SceneActorsFile? = nil,
         environment: SceneEnvironmentFile? = nil,
         paths: ScenePathsFile? = nil,
         rooms: [LoadedSceneRoom]
     ) {
         self.manifest = manifest
+        self.collision = collision
         self.actors = actors
         self.environment = environment
         self.paths = paths
@@ -101,6 +105,23 @@ public struct SceneLoader: SceneLoading {
         try loadJSON([ActorTableEntry].self, from: actorTableURL)
     }
 
+    public func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh? {
+        guard let collisionPath = manifest.collisionPath, collisionPath.isEmpty == false else {
+            return nil
+        }
+
+        let collisionURL = try referencedURL(for: collisionPath)
+
+        do {
+            return try CollisionMeshDecoder.decode(
+                readData(from: collisionURL),
+                path: collisionURL.path
+            )
+        } catch let error as CollisionMeshDecoder.DecodingError {
+            throw SceneLoaderError.invalidCollisionBinary(collisionURL.path, error.localizedDescription)
+        }
+    }
+
     public func loadRoomDisplayList(for room: RoomManifest) throws -> [F3DEX2Command] {
         try loadJSON(
             [F3DEX2Command].self,
@@ -132,6 +153,7 @@ public enum SceneLoaderError: Error, LocalizedError, Equatable, Sendable {
     case invalidReferencedPath(String)
     case unreadableFile(String, String)
     case invalidJSON(String, String)
+    case invalidCollisionBinary(String, String)
 
     public var errorDescription: String? {
         switch self {
@@ -147,6 +169,8 @@ public enum SceneLoaderError: Error, LocalizedError, Equatable, Sendable {
             "Unable to read scene content file at \(path): \(message)"
         case .invalidJSON(let path, let message):
             "Invalid JSON at \(path): \(message)"
+        case .invalidCollisionBinary(let path, let message):
+            "Invalid collision binary at \(path): \(message)"
         }
     }
 }
@@ -184,6 +208,7 @@ private extension SceneLoader {
 
         return try LoadedScene(
             manifest: manifest,
+            collision: loadCollisionMesh(for: manifest),
             actors: loadActors(for: manifest),
             environment: loadEnvironment(for: manifest),
             paths: loadPaths(for: manifest),
