@@ -29,17 +29,24 @@ checkout after the upstream `gmake setup` flow has completed.
 git submodule update --init
 ```
 
-2. Install the macOS build prerequisites described in
+2. Apply the repo-local compatibility patches required by the pinned
+   `Vendor/oot` checkout on current macOS clang:
+
+```bash
+./scripts/apply_vendor_oot_patches.sh
+```
+
+3. Install the macOS build prerequisites described in
    [`Vendor/oot/docs/BUILDING_MACOS.md`](Vendor/oot/docs/BUILDING_MACOS.md).
 
-3. Run the upstream asset setup flow:
+4. Run the upstream asset setup flow:
 
 ```bash
 cd Vendor/oot && gmake setup   # extracts assets via ZAPD
 cd ../..
 ```
 
-4. Generate the Xcode workspace:
+5. Generate the Xcode workspace:
 
 ```bash
 mise install tuist             # optional, but matches CI's pinned Tuist setup
