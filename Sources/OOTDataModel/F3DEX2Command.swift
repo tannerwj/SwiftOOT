@@ -261,9 +261,9 @@ public struct LoadUCodeExCommand: Codable, Sendable, Equatable {
 public struct BranchLessZCommand: Codable, Sendable, Equatable {
     public var branchAddress: UInt32
     public var vertexIndex: UInt16
-    public var zValue: UInt16
+    public var zValue: UInt32
 
-    public init(branchAddress: UInt32, vertexIndex: UInt16, zValue: UInt16) {
+    public init(branchAddress: UInt32, vertexIndex: UInt16, zValue: UInt32) {
         self.branchAddress = branchAddress
         self.vertexIndex = vertexIndex
         self.zValue = zValue
