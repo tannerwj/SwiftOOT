@@ -2,32 +2,29 @@ import SwiftUI
 import AppKit
 import MetalKit
 
-public enum MetalViewInput: Sendable, Equatable {
-    case confirm
-    case cancel
-    case moveSelection(Int)
+@MainActor
+public protocol GameplayInputHandling: AnyObject {
+    func handleKeyDown(_ event: NSEvent) -> Bool
+    func handleKeyUp(_ event: NSEvent) -> Bool
 }
 
 public struct MetalView: NSViewRepresentable {
     private let sceneIdentity: Int
     private let scene: OOTRenderScene
     private let textureBindings: [UInt32: MTLTexture]
+    private let inputHandler: (any GameplayInputHandling)?
     private let frameStatsHandler: (SceneFrameStats) -> Void
-    private let frameTickHandler: @MainActor () -> Void
-    private let inputHandler: @MainActor (MetalViewInput) -> Bool
 
     public init(
         sceneIdentity: Int,
         scene: OOTRenderScene,
         textureBindings: [UInt32: MTLTexture] = [:],
-        frameTickHandler: @escaping @MainActor () -> Void = {},
-        inputHandler: @escaping @MainActor (MetalViewInput) -> Bool = { _ in false },
+        inputHandler: (any GameplayInputHandling)? = nil,
         frameStatsHandler: @escaping (SceneFrameStats) -> Void = { _ in }
     ) {
         self.sceneIdentity = sceneIdentity
         self.scene = scene
         self.textureBindings = textureBindings
-        self.frameTickHandler = frameTickHandler
         self.inputHandler = inputHandler
         self.frameStatsHandler = frameStatsHandler
     }
@@ -43,8 +40,7 @@ public struct MetalView: NSViewRepresentable {
             renderer = try OOTRenderer(
                 scene: scene,
                 textureBindings: textureBindings,
-                frameStatsHandler: frameStatsHandler,
-                frameTickHandler: frameTickHandler
+                frameStatsHandler: frameStatsHandler
             )
         } catch {
             fatalError("Failed to initialize OOTRenderer: \(error)")
@@ -52,7 +48,7 @@ public struct MetalView: NSViewRepresentable {
 
         let view = OrbitInputMTKView(frame: .zero, device: renderer.device)
         view.inputRenderer = renderer
-        view.inputHandler = inputHandler
+        view.gameplayInputHandler = inputHandler
         renderer.configure(view)
         context.coordinator.renderer = renderer
         return view
@@ -60,8 +56,10 @@ public struct MetalView: NSViewRepresentable {
 
     public func updateNSView(_ nsView: MTKView, context: Context) {
         context.coordinator.renderer?.setFrameStatsHandler(frameStatsHandler)
-        context.coordinator.renderer?.setFrameTickHandler(frameTickHandler)
-        (nsView as? OrbitInputMTKView)?.inputHandler = inputHandler
+        context.coordinator.renderer?.updateScene(scene, textureBindings: textureBindings)
+        if let nsView = nsView as? OrbitInputMTKView {
+            nsView.gameplayInputHandler = inputHandler
+        }
     }
 
     public final class Coordinator {
@@ -73,7 +71,7 @@ public struct MetalView: NSViewRepresentable {
 
 final class OrbitInputMTKView: MTKView {
     weak var inputRenderer: OOTRenderer?
-    var inputHandler: @MainActor (MetalViewInput) -> Bool = { _ in false }
+    weak var gameplayInputHandler: (any GameplayInputHandling)?
 
     override var acceptsFirstResponder: Bool {
         true
@@ -113,62 +111,18 @@ final class OrbitInputMTKView: MTKView {
     }
 
     override func keyDown(with event: NSEvent) {
-        guard handleKeyEvent(event) == false else {
+        guard gameplayInputHandler?.handleKeyDown(event) != true else {
             return
         }
 
         super.keyDown(with: event)
     }
 
-    private func handleKeyEvent(_ event: NSEvent) -> Bool {
-        switch event.keyCode {
-        case 123, 126:
-            if MainActor.assumeIsolated({ inputHandler(.moveSelection(-1)) }) {
-                return true
-            }
-        case 124, 125:
-            if MainActor.assumeIsolated({ inputHandler(.moveSelection(1)) }) {
-                return true
-            }
-        case 36, 49:
-            if MainActor.assumeIsolated({ inputHandler(.confirm) }) {
-                return true
-            }
-        case 53:
-            if MainActor.assumeIsolated({ inputHandler(.cancel) }) {
-                return true
-            }
-        default:
-            break
+    override func keyUp(with event: NSEvent) {
+        guard gameplayInputHandler?.handleKeyUp(event) != true else {
+            return
         }
 
-        guard let characters = event.charactersIgnoringModifiers?.lowercased() else {
-            return false
-        }
-
-        var handled = false
-        for character in characters {
-            switch character {
-            case "a":
-                if MainActor.assumeIsolated({ inputHandler(.confirm) }) {
-                    return true
-                }
-                inputRenderer?.orbitCameraController.pan(direction: .left)
-                handled = true
-            case "w":
-                inputRenderer?.orbitCameraController.pan(direction: .up)
-                handled = true
-            case "s":
-                inputRenderer?.orbitCameraController.pan(direction: .down)
-                handled = true
-            case "d":
-                inputRenderer?.orbitCameraController.pan(direction: .right)
-                handled = true
-            default:
-                continue
-            }
-        }
-
-        return handled
+        super.keyUp(with: event)
     }
 }

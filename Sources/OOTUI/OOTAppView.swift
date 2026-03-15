@@ -233,6 +233,9 @@ private struct GameplayShellView: View {
     @State
     private var renderErrorMessage: String?
 
+    @State
+    private var inputManager: InputManager?
+
     var body: some View {
         NavigationSplitView {
             DebugSidebar(
@@ -257,14 +260,12 @@ private struct GameplayShellView: View {
                 if let renderPayload {
                     MetalView(
                         sceneIdentity: renderPayload.sceneID,
-                        scene: renderPayload.renderScene,
+                        scene: SceneRenderPayloadBuilder.renderScene(
+                            from: renderPayload,
+                            playerState: runtime.playerState
+                        ),
                         textureBindings: renderPayload.textureBindings,
-                        frameTickHandler: {
-                            runtime.advanceGameplayFrame()
-                        },
-                        inputHandler: { input in
-                            handleGameplayInput(input)
-                        }
+                        inputHandler: inputManager
                     ) { stats in
                         frameStats = stats
                     }
@@ -285,11 +286,24 @@ private struct GameplayShellView: View {
 
                 if let playState = runtime.playState {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("Gameplay Placeholder")
+                        Text("Gameplay Runtime")
                             .font(.headline.weight(.bold))
                         Text("\(playState.playerName) in \(playState.currentSceneName)")
                         Text("Save Slot \(playState.activeSaveSlot + 1)")
                             .foregroundStyle(.secondary)
+                        if let playerState = runtime.playerState {
+                            Text("Locomotion: \(playerState.locomotionState.rawValue)")
+                            Text(
+                                String(
+                                    format: "Position: %.1f %.1f %.1f",
+                                    playerState.position.x,
+                                    playerState.position.y,
+                                    playerState.position.z
+                                )
+                            )
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        }
                     }
                     .padding(16)
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -314,6 +328,17 @@ private struct GameplayShellView: View {
         .task {
             await runtime.bootstrapSceneViewer()
         }
+        .task {
+            if inputManager == nil {
+                inputManager = InputManager(runtime: runtime)
+            }
+
+            while !Task.isCancelled && runtime.currentState == .gameplay {
+                inputManager?.sync()
+                runtime.updateFrame()
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+        }
         .task(id: renderTaskID) {
             await refreshRenderPayload()
         }
@@ -337,7 +362,8 @@ private extension GameplayShellView {
 
     var renderTaskID: String {
         let sceneID = runtime.loadedScene?.manifest.id ?? -1
-        return "\(sceneID)-\(runtime.textureAssetURLs.count)"
+        let playerStateMarker = runtime.playerState == nil ? "no-player" : "player"
+        return "\(sceneID)-\(runtime.textureAssetURLs.count)-\(playerStateMarker)"
     }
 
     @MainActor
@@ -352,7 +378,8 @@ private extension GameplayShellView {
         do {
             let payload = try SceneRenderPayloadBuilder.makePayload(
                 scene: loadedScene,
-                textureAssetURLs: runtime.textureAssetURLs
+                textureAssetURLs: runtime.textureAssetURLs,
+                contentLoader: runtime.contentLoader
             )
             renderPayload = payload
             frameStats = SceneFrameStats(
@@ -367,20 +394,4 @@ private extension GameplayShellView {
         }
     }
 
-    @MainActor
-    func handleGameplayInput(_ input: MetalViewInput) -> Bool {
-        switch input {
-        case .confirm:
-            runtime.handlePrimaryGameplayInput()
-            return true
-        case .moveSelection(let delta):
-            guard runtime.activeMessagePresentation?.choiceState != nil else {
-                return false
-            }
-            runtime.handleGameplaySelectionInput(delta: delta)
-            return true
-        case .cancel:
-            return false
-        }
-    }
 }

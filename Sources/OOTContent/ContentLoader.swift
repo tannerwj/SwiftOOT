@@ -6,6 +6,8 @@ public protocol ContentLoading: Sendable {
     func loadScene(id: Int) throws -> LoadedScene
     func loadActorTable() throws -> [ActorTableEntry]
     func loadMessageCatalog() throws -> MessageCatalog
+    func loadObjectTable() throws -> [ObjectTableEntry]
+    func loadObject(named name: String) throws -> LoadedObject
 }
 
 public enum ContentLoaderError: Error, LocalizedError, Sendable, Equatable {
@@ -34,6 +36,14 @@ public extension ContentLoading {
     func loadMessageCatalog() throws -> MessageCatalog {
         throw ContentLoaderError.messageLoadingUnavailable
     }
+
+    func loadObjectTable() throws -> [ObjectTableEntry] {
+        throw ContentLoaderError.sceneLoadingUnavailable
+    }
+
+    func loadObject(named name: String) throws -> LoadedObject {
+        throw ContentLoaderError.sceneLoadingUnavailable
+    }
 }
 
 public struct ContentLoader: ContentLoading {
@@ -61,5 +71,13 @@ public struct ContentLoader: ContentLoading {
 
     public func loadMessageCatalog() throws -> MessageCatalog {
         try messageLoader.loadMessageCatalog()
+    }
+
+    public func loadObjectTable() throws -> [ObjectTableEntry] {
+        try sceneLoader.loadObjectTable()
+    }
+
+    public func loadObject(named name: String) throws -> LoadedObject {
+        try sceneLoader.loadObject(named: name)
     }
 }

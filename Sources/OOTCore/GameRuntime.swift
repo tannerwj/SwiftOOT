@@ -3,6 +3,7 @@ import Observation
 import OOTContent
 import OOTDataModel
 import OOTTelemetry
+import simd
 
 public enum GameState: String, Codable, Sendable, Equatable {
     case boot
@@ -295,9 +296,11 @@ public final class GameRuntime {
 
     public var currentState: GameState
     public var playState: PlayState?
+    public var playerState: PlayerState?
     public var gameTime: GameTime
     public var saveContext: SaveContext
     public var inputState: InputState
+    public var controllerInputState: ControllerInputState
     public var selectedTitleOption: TitleMenuOption
     public var fileSelectMode: FileSelectMode?
     public var statusMessage: String?
@@ -336,12 +339,23 @@ public final class GameRuntime {
     @ObservationIgnored
     private var actorContext: ActorContext?
 
+    @ObservationIgnored
+    private var collisionSystem: CollisionSystem?
+
+    @ObservationIgnored
+    private let movementConfiguration: PlayerMovementConfiguration
+
+    @ObservationIgnored
+    private var previousControllerInputState = ControllerInputState()
+
     public init(
         currentState: GameState = .boot,
         playState: PlayState? = nil,
+        playerState: PlayerState? = nil,
         gameTime: GameTime = GameTime(),
         saveContext: SaveContext = SaveContext(),
         inputState: InputState = InputState(),
+        controllerInputState: ControllerInputState = ControllerInputState(),
         selectedTitleOption: TitleMenuOption = .newGame,
         fileSelectMode: FileSelectMode? = nil,
         statusMessage: String? = nil,
@@ -352,10 +366,11 @@ public final class GameRuntime {
         textureAssetURLs: [UInt32: URL] = [:],
         errorMessage: String? = nil,
         messageContext: MessageContext = MessageContext(),
-        contentLoader: any ContentLoading = ContentLoader(),
-        sceneLoader: any SceneLoading = SceneLoader(),
-        telemetryPublisher: any TelemetryPublishing = TelemetryPublisher(),
+        contentLoader: (any ContentLoading)? = nil,
+        sceneLoader: (any SceneLoading)? = nil,
+        telemetryPublisher: (any TelemetryPublishing)? = nil,
         actorRegistry: ActorRegistry? = nil,
+        movementConfiguration: PlayerMovementConfiguration = PlayerMovementConfiguration(),
         bootDuration: Duration = .milliseconds(250),
         consoleLogoDuration: Duration = .seconds(1),
         suspender: @escaping RuntimeSuspender = { duration in
@@ -364,9 +379,11 @@ public final class GameRuntime {
     ) {
         self.currentState = currentState
         self.playState = playState
+        self.playerState = playerState
         self.gameTime = gameTime
         self.saveContext = saveContext
         self.inputState = inputState
+        self.controllerInputState = controllerInputState
         self.selectedTitleOption = selectedTitleOption
         self.fileSelectMode = fileSelectMode
         self.statusMessage = statusMessage
@@ -377,10 +394,12 @@ public final class GameRuntime {
         self.textureAssetURLs = textureAssetURLs
         self.errorMessage = errorMessage
         self.messageContext = messageContext
-        self.contentLoader = contentLoader
-        self.sceneLoader = sceneLoader
-        self.telemetryPublisher = telemetryPublisher
+        let resolvedSceneLoader = sceneLoader ?? SceneLoader()
+        self.sceneLoader = resolvedSceneLoader
+        self.contentLoader = contentLoader ?? ContentLoader(sceneLoader: resolvedSceneLoader)
+        self.telemetryPublisher = telemetryPublisher ?? TelemetryPublisher()
         actorRegistryOverride = actorRegistry
+        self.movementConfiguration = movementConfiguration
         self.bootDuration = bootDuration
         self.consoleLogoDuration = consoleLogoDuration
         self.suspender = suspender
@@ -463,6 +482,15 @@ public final class GameRuntime {
             return
         }
 
+        if playState != nil {
+            do {
+                try loadScene(id: id)
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            return
+        }
+
         let previousScene = loadedScene
         let previousTextureAssetURLs = textureAssetURLs
         let previousSelectedSceneID = selectedSceneID
@@ -539,6 +567,10 @@ public final class GameRuntime {
         transition(to: .titleScreen)
     }
 
+    public func setControllerInput(_ input: ControllerInputState) {
+        controllerInputState = input
+    }
+
     private func openFileSelect(
         mode: FileSelectMode,
         preferredSlot: Int
@@ -596,6 +628,7 @@ public final class GameRuntime {
         let actorTableEntries = try contentLoader.loadActorTable()
         let actorTable = Dictionary(uniqueKeysWithValues: actorTableEntries.map { ($0.id, $0) })
         let selectedRooms = activeRoomIDs ?? Set(loadedScene.manifest.rooms.prefix(1).map(\.id))
+        let textureAssetURLs = try sceneLoader.loadTextureAssetURLs(for: loadedScene)
         let registry = actorRegistryOverride ?? ActorRegistry.default(actorTable: actorTableEntries)
         let actorContext = ActorContext(
             registry: registry,
@@ -629,8 +662,19 @@ public final class GameRuntime {
             playState: playState
         )
 
+        availableScenes = try loadAvailableScenes()
+        selectedSceneID = sceneID
+        self.loadedScene = loadedScene
+        self.textureAssetURLs = textureAssetURLs
         self.playState = playState
+        self.playerState = makeInitialPlayerState(
+            for: loadedScene,
+            actorTable: actorTable
+        )
         self.actorContext = actorContext
+        collisionSystem = CollisionSystem(scene: loadedScene)
+        sceneViewerState = .running
+        errorMessage = nil
         currentState = .gameplay
     }
 
@@ -654,21 +698,35 @@ public final class GameRuntime {
     }
 
     public func updateFrame() {
-        guard let actorContext, let playState else {
-            return
-        }
-
-        actorContext.updateAll(playState: playState)
-    }
-
-    public func advanceGameplayFrame() {
         guard currentState == .gameplay else {
             return
         }
 
         gameTime.advance()
+
+        let playerInput = messageContext.isPresenting ? ControllerInputState() : controllerInputState
+
+        if let playerState {
+            self.playerState = playerState.updating(
+                input: playerInput,
+                collisionSystem: collisionSystem,
+                configuration: movementConfiguration
+            )
+        }
+
+        applyGameplayControllerInput()
+
+        guard let actorContext, let playState else {
+            messageContext.tick(playerName: self.playState?.playerName ?? "Link")
+            return
+        }
+
+        actorContext.updateAll(playState: playState)
+        messageContext.tick(playerName: playState.playerName)
+    }
+
+    public func advanceGameplayFrame() {
         updateFrame()
-        messageContext.tick(playerName: playState?.playerName ?? "Link")
     }
 
     public func handlePrimaryGameplayInput() {
@@ -727,6 +785,49 @@ public final class GameRuntime {
         min(max(0, index), saveContext.slots.count - 1)
     }
 
+    private func applyGameplayControllerInput() {
+        let currentInput = controllerInputState
+        let previousInput = previousControllerInputState
+        defer {
+            previousControllerInputState = currentInput
+        }
+
+        if currentInput.aPressed, previousInput.aPressed == false {
+            handlePrimaryGameplayInput()
+        }
+
+        let choiceDelta = choiceSelectionDelta(
+            previousStick: previousInput.stick,
+            currentStick: currentInput.stick
+        )
+        if choiceDelta != 0 {
+            handleGameplaySelectionInput(delta: choiceDelta)
+        }
+    }
+
+    private func choiceSelectionDelta(
+        previousStick: StickInput,
+        currentStick: StickInput
+    ) -> Int {
+        guard messageContext.canRequestChoiceSelection else {
+            return 0
+        }
+
+        let threshold: Float = 0.6
+        let wasNeutral = previousStick.magnitude < threshold
+        let isNeutral = currentStick.magnitude < threshold
+
+        guard wasNeutral, isNeutral == false else {
+            return 0
+        }
+
+        if abs(currentStick.x) > abs(currentStick.y) {
+            return currentStick.x < 0 ? -1 : 1
+        }
+
+        return currentStick.y > 0 ? -1 : 1
+    }
+
     private struct SceneViewerSnapshot: Sendable {
         let availableScenes: [SceneTableEntry]
         let selectedSceneID: Int?
@@ -744,10 +845,7 @@ public final class GameRuntime {
     private func loadSceneViewerSnapshot(defaultSceneID: Int?) async throws -> SceneViewerSnapshot {
         let sceneLoader = self.sceneLoader
         return try await Task.detached(priority: .userInitiated) {
-            let sceneTableEntries = try sceneLoader.loadSceneTableEntries()
-            let availableScenes = sceneTableEntries.filter { entry in
-                (try? sceneLoader.resolveSceneDirectory(for: entry.index)) != nil
-            }
+            let availableScenes = try Self.loadAvailableScenes(using: sceneLoader)
 
             let selectedSceneID =
                 defaultSceneID ??
@@ -785,11 +883,15 @@ public final class GameRuntime {
     private func activateSceneContentIfAvailable() {
         guard let playState else {
             actorContext = nil
+            playerState = nil
+            collisionSystem = nil
             return
         }
 
         guard let sceneID = sceneID(for: playState.currentSceneName) else {
             actorContext = nil
+            playerState = nil
+            collisionSystem = nil
             return
         }
 
@@ -797,9 +899,82 @@ public final class GameRuntime {
             try loadScene(id: sceneID)
         } catch {
             actorContext = nil
+            playerState = nil
+            collisionSystem = nil
             statusMessage = "Gameplay scene content failed to load. Continuing with placeholder gameplay."
             telemetryPublisher.publish("gameRuntime.sceneLoadFailed")
         }
+    }
+
+    private func loadAvailableScenes() throws -> [SceneTableEntry] {
+        try Self.loadAvailableScenes(using: sceneLoader)
+    }
+
+    nonisolated private static func loadAvailableScenes(using sceneLoader: any SceneLoading) throws -> [SceneTableEntry] {
+        let sceneTableEntries = try sceneLoader.loadSceneTableEntries()
+        return sceneTableEntries.filter { entry in
+            (try? sceneLoader.resolveSceneDirectory(for: entry.index)) != nil
+        }
+    }
+
+    private func makeInitialPlayerState(
+        for scene: LoadedScene,
+        actorTable: [Int: ActorTableEntry]
+    ) -> PlayerState {
+        let fallbackPosition = defaultPlayerSpawn(in: scene)
+        let playerSpawn = scene.actors?.rooms
+            .flatMap(\.actors)
+            .first { spawn in
+                guard let entry = actorTable[spawn.actorID] else {
+                    return spawn.actorName.localizedCaseInsensitiveContains("player")
+                }
+
+                return ActorCategory(rawValue: entry.profile.category) == .player ||
+                    spawn.actorName.localizedCaseInsensitiveContains("player")
+            }
+
+        let collisionSystem = CollisionSystem(scene: scene)
+        let rawPosition = playerSpawn.map { Vec3f($0.position).simd } ?? fallbackPosition
+        let probePosition = rawPosition + SIMD3<Float>(0, movementConfiguration.floorProbeHeight, 0)
+        let floorHit = collisionSystem.findFloor(at: probePosition)
+        let resolvedPosition = SIMD3<Float>(
+            rawPosition.x,
+            floorHit?.floorY ?? rawPosition.y,
+            rawPosition.z
+        )
+
+        let facingRadians: Float
+        if let playerSpawn {
+            facingRadians = rawRotationToRadians(Float(playerSpawn.rotation.y))
+        } else {
+            facingRadians = 0
+        }
+
+        return PlayerState(
+            position: Vec3f(resolvedPosition),
+            velocity: Vec3f(x: 0, y: 0, z: 0),
+            facingRadians: facingRadians,
+            isGrounded: floorHit != nil,
+            locomotionState: floorHit == nil ? .falling : .idle,
+            animationState: PlayerAnimationState(),
+            floorHeight: floorHit?.floorY
+        )
+    }
+
+    private func defaultPlayerSpawn(in scene: LoadedScene) -> SIMD3<Float> {
+        guard let collision = scene.collision else {
+            return .zero
+        }
+
+        return SIMD3<Float>(
+            (Float(collision.minimumBounds.x) + Float(collision.maximumBounds.x)) / 2,
+            Float(collision.maximumBounds.y),
+            (Float(collision.minimumBounds.z) + Float(collision.maximumBounds.z)) / 2
+        )
+    }
+
+    private func rawRotationToRadians(_ rawValue: Float) -> Float {
+        rawValue * (.pi / 32_768)
     }
 
     private func sceneID(for sceneName: String) -> Int? {

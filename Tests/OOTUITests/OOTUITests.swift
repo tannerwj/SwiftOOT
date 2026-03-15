@@ -8,36 +8,34 @@ import OOTDataModel
 
 @MainActor
 final class OOTUITests: XCTestCase {
-    func testAppViewCompiles() async {
-        await MainActor.run {
-            _ = OOTAppView(
-                runtime: GameRuntime(
-                    contentLoader: StubContentLoader(),
-                    sceneLoader: StubSceneLoader(),
-                    suspender: { _ in }
+    func testAppViewCompiles() {
+        _ = OOTAppView(
+            runtime: GameRuntime(
+                contentLoader: StubContentLoader(),
+                sceneLoader: UITestSceneLoader(),
+                suspender: { _ in }
+            )
+        )
+        _ = DebugSidebar()
+        _ = MessageView(
+            presentation: MessagePresentation(
+                messageID: 0x1000,
+                variant: .blue,
+                phase: .displaying,
+                textRuns: [
+                    MessageTextRun(text: "Hello ", color: .white),
+                    MessageTextRun(text: "Link", color: .yellow),
+                ],
+                icon: MessageIcon(rawValue: "fairy"),
+                choiceState: MessageChoiceState(
+                    options: [
+                        MessageChoiceOption(title: "Yes"),
+                        MessageChoiceOption(title: "No"),
+                    ]
                 )
             )
-            _ = DebugSidebar()
-            _ = MessageView(
-                presentation: MessagePresentation(
-                    messageID: 0x1000,
-                    variant: .blue,
-                    phase: .displaying,
-                    textRuns: [
-                        MessageTextRun(text: "Hello ", color: .white),
-                        MessageTextRun(text: "Link", color: .yellow),
-                    ],
-                    icon: MessageIcon(rawValue: "fairy"),
-                    choiceState: MessageChoiceState(
-                        options: [
-                            MessageChoiceOption(title: "Yes"),
-                            MessageChoiceOption(title: "No"),
-                        ]
-                    )
-                )
-            )
-            _ = ActionPromptView(label: "Talk")
-        }
+        )
+        _ = ActionPromptView(label: "Talk")
     }
 
     func testRootViewStateMatchesRuntimeState() {
@@ -46,6 +44,36 @@ final class OOTUITests: XCTestCase {
         XCTAssertEqual(OOTAppView.rootViewState(for: .titleScreen), .titleScreen)
         XCTAssertEqual(OOTAppView.rootViewState(for: .fileSelect), .fileSelect)
         XCTAssertEqual(OOTAppView.rootViewState(for: .gameplay), .gameplay)
+    }
+
+    func testInputManagerMapsKeyboardEventsIntoControllerState() throws {
+        let runtime = GameRuntime(
+            sceneLoader: UITestSceneLoader(),
+            suspender: { _ in }
+        )
+        let inputManager = InputManager(runtime: runtime)
+
+        XCTAssertTrue(inputManager.handleKeyDown(try makeKeyEvent(type: .keyDown, character: "w", keyCode: 13)))
+        XCTAssertEqual(runtime.controllerInputState.stick, StickInput(x: 0, y: 1))
+
+        XCTAssertTrue(inputManager.handleKeyDown(try makeKeyEvent(type: .keyDown, character: " ", keyCode: 49)))
+        XCTAssertTrue(runtime.controllerInputState.aPressed)
+
+        XCTAssertTrue(inputManager.handleKeyDown(try makeKeyEvent(type: .keyDown, character: "\t", keyCode: 48)))
+        XCTAssertTrue(runtime.controllerInputState.zPressed)
+
+        XCTAssertTrue(inputManager.handleKeyDown(try makeKeyEvent(type: .keyDown, character: "", keyCode: 56)))
+        XCTAssertTrue(runtime.controllerInputState.bPressed)
+
+        XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "w", keyCode: 13)))
+        XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: " ", keyCode: 49)))
+        XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "\t", keyCode: 48)))
+        XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "", keyCode: 56)))
+
+        XCTAssertEqual(runtime.controllerInputState.stick, .zero)
+        XCTAssertFalse(runtime.controllerInputState.aPressed)
+        XCTAssertFalse(runtime.controllerInputState.bPressed)
+        XCTAssertFalse(runtime.controllerInputState.zPressed)
     }
 
     func testAppRuntimeLoadsRealExtractedSceneViewerContentWhenConfigured() async throws {
@@ -76,7 +104,8 @@ final class OOTUITests: XCTestCase {
 
         let initialPayload = try SceneRenderPayloadBuilder.makePayload(
             scene: try XCTUnwrap(runtime.loadedScene),
-            textureAssetURLs: runtime.textureAssetURLs
+            textureAssetURLs: runtime.textureAssetURLs,
+            contentLoader: runtime.contentLoader
         )
         XCTAssertEqual(initialPayload.roomCount, runtime.loadedScene?.rooms.count)
         XCTAssertGreaterThan(initialPayload.vertexCount, 0)
@@ -100,7 +129,8 @@ final class OOTUITests: XCTestCase {
 
         let alternatePayload = try SceneRenderPayloadBuilder.makePayload(
             scene: try XCTUnwrap(runtime.loadedScene),
-            textureAssetURLs: runtime.textureAssetURLs
+            textureAssetURLs: runtime.textureAssetURLs,
+            contentLoader: runtime.contentLoader
         )
         XCTAssertGreaterThan(alternatePayload.roomCount, 0)
         XCTAssertGreaterThan(alternatePayload.vertexCount, 0)
@@ -131,7 +161,7 @@ private extension OOTUITests {
 
         var reportedStats = SceneFrameStats()
         let renderer = try OOTRenderer(
-            scene: payload.renderScene,
+            scene: SceneRenderPayloadBuilder.renderScene(from: payload, playerState: nil),
             textureBindings: payload.textureBindings
         ) { stats in
             reportedStats = stats
@@ -189,24 +219,41 @@ private extension OOTUITests {
 
         return false
     }
+
+    func makeKeyEvent(type: NSEvent.EventType, character: String, keyCode: UInt16) throws -> NSEvent {
+        try XCTUnwrap(
+            NSEvent.keyEvent(
+                with: type,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: 0,
+                context: nil,
+                characters: character,
+                charactersIgnoringModifiers: character,
+                isARepeat: false,
+                keyCode: keyCode
+            )
+        )
+    }
+}
+
+private struct UITestSceneLoader: SceneLoading {
+    func loadSceneTableEntries() throws -> [SceneTableEntry] { [] }
+    func resolveSceneDirectory(for sceneID: Int) throws -> URL { URL(fileURLWithPath: "/tmp", isDirectory: true) }
+    func loadScene(id: Int) throws -> LoadedScene { throw ContentLoaderError.sceneLoadingUnavailable }
+    func loadScene(named name: String) throws -> LoadedScene { throw ContentLoaderError.sceneLoadingUnavailable }
+    func loadTextureAssetURLs(for scene: LoadedScene) throws -> [UInt32 : URL] { [:] }
+    func loadSceneManifest(id: Int) throws -> SceneManifest { throw ContentLoaderError.sceneLoadingUnavailable }
+    func loadSceneManifest(named name: String) throws -> SceneManifest { throw ContentLoaderError.sceneLoadingUnavailable }
+    func loadActorTable() throws -> [ActorTableEntry] { [] }
+    func loadObjectTable() throws -> [ObjectTableEntry] { [] }
+    func loadObject(named name: String) throws -> LoadedObject { throw ContentLoaderError.sceneLoadingUnavailable }
+    func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh? { nil }
+    func loadRoomDisplayList(for room: RoomManifest) throws -> [F3DEX2Command] { [] }
+    func loadRoomVertexData(for room: RoomManifest) throws -> Data { Data() }
 }
 
 private struct StubContentLoader: ContentLoading {
     func loadInitialContent() async throws {}
-}
-
-private struct StubSceneLoader: SceneLoading {
-    func loadSceneTableEntries() throws -> [SceneTableEntry] { [] }
-    func resolveSceneDirectory(for sceneID: Int) throws -> URL {
-        URL(fileURLWithPath: "/tmp/scene-\(sceneID)", isDirectory: true)
-    }
-    func loadScene(id: Int) throws -> LoadedScene { throw SceneLoaderError.unknownSceneID(id) }
-    func loadScene(named name: String) throws -> LoadedScene { throw SceneLoaderError.missingFile(name) }
-    func loadTextureAssetURLs(for scene: LoadedScene) throws -> [UInt32: URL] { [:] }
-    func loadSceneManifest(id: Int) throws -> SceneManifest { throw SceneLoaderError.unknownSceneID(id) }
-    func loadSceneManifest(named name: String) throws -> SceneManifest { throw SceneLoaderError.missingFile(name) }
-    func loadActorTable() throws -> [ActorTableEntry] { [] }
-    func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh? { nil }
-    func loadRoomDisplayList(for room: RoomManifest) throws -> [F3DEX2Command] { [] }
-    func loadRoomVertexData(for room: RoomManifest) throws -> Data { Data() }
 }
