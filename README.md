@@ -37,10 +37,17 @@ brew install make mipsel-linux-gnu-binutils
 git submodule update --init
 ```
 
-3. Install the remaining macOS build prerequisites described in
+3. Apply the repo-local compatibility patches required by the pinned
+   `Vendor/oot` checkout on current macOS clang:
+
+```bash
+./scripts/apply_vendor_oot_patches.sh
+```
+
+4. Install the remaining macOS build prerequisites described in
    [`Vendor/oot/docs/BUILDING_MACOS.md`](Vendor/oot/docs/BUILDING_MACOS.md).
 
-4. Put your ROM in the matching upstream baserom folder.
+5. Put your ROM in the matching upstream baserom folder.
 
 Validated local flow:
 
@@ -56,7 +63,7 @@ Vendor/oot/baseroms/<version>/baserom.n64
 Vendor/oot/baseroms/<version>/baserom.v64
 ```
 
-5. Run the upstream asset setup flow.
+6. Run the upstream asset setup flow.
 
 ```bash
 cd Vendor/oot
@@ -64,17 +71,7 @@ MIPS_BINUTILS_PREFIX=mipsel-linux-gnu- gmake setup VERSION=ntsc-1.2
 cd ../..
 ```
 
-If current macOS clang fails while building `tools/assets/build_from_png`, use
-this temporary local workaround until [TAN-79](https://linear.app/tannerwj/issue/TAN-79/make-vendoroot-gmake-setup-portable-on-current-macos-clang)
-lands:
-
-```bash
-cd Vendor/oot
-MIPS_BINUTILS_PREFIX=mipsel-linux-gnu- gmake setup VERSION=ntsc-1.2 CFLAGS='-Wno-error=gnu-folding-constant'
-cd ../..
-```
-
-6. Resolve packages and generate the Xcode workspace:
+7. Resolve packages and generate the Xcode workspace:
 
 ```bash
 tuist install
