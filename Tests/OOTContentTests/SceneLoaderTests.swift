@@ -47,6 +47,24 @@ final class SceneLoaderTests: XCTestCase {
         XCTAssertEqual(manifest.id, 0x55)
         XCTAssertEqual(manifest.rooms.count, 2)
     }
+
+    func testSceneLoaderResolvesTextureAssetURLsByStableID() throws {
+        let fixture = try SceneLoaderFixture()
+        defer { fixture.cleanup() }
+
+        let loader = SceneLoader(contentRoot: fixture.contentRoot)
+        let scene = try loader.loadScene(id: 0x55)
+        let textureURLs = try loader.loadTextureAssetURLs(for: scene)
+
+        XCTAssertEqual(
+            textureURLs[OOTAssetID.stableID(for: "gSpot04MainTex")]?.lastPathComponent,
+            "gSpot04MainTex.tex.bin"
+        )
+        XCTAssertEqual(
+            textureURLs[OOTAssetID.stableID(for: "gSpot04Room0Tex")]?.lastPathComponent,
+            "gSpot04Room0Tex.tex.bin"
+        )
+    }
 }
 
 private struct SceneLoaderFixture {
@@ -128,6 +146,7 @@ private struct SceneLoaderFixture {
         try seedSceneTable()
         try seedSceneManifest(filename: manifestFilename)
         try seedSceneMetadata()
+        try seedTextureAssets()
         try seedCollision()
         try seedRoom(
             id: 0,
@@ -207,7 +226,8 @@ private struct SceneLoaderFixture {
                     RoomManifest(
                         id: 0,
                         name: "spot04_room_0",
-                        directory: "Scenes/spot04/rooms/room_0"
+                        directory: "Scenes/spot04/rooms/room_0",
+                        textureDirectories: ["Textures/spot04_room_0"]
                     ),
                     RoomManifest(
                         id: 1,
@@ -218,7 +238,8 @@ private struct SceneLoaderFixture {
                 collisionPath: "Scenes/spot04/collision.bin",
                 actorsPath: "Manifests/scenes/overworld/spot04/actors.json",
                 environmentPath: "Manifests/scenes/overworld/spot04/environment.json",
-                pathsPath: "Manifests/scenes/overworld/spot04/paths.json"
+                pathsPath: "Manifests/scenes/overworld/spot04/paths.json",
+                textureDirectories: ["Textures/spot04_scene"]
             ),
             to: sceneDirectory.appendingPathComponent(filename)
         )
@@ -234,6 +255,17 @@ private struct SceneLoaderFixture {
         try writeJSON(actors, to: metadataRoot.appendingPathComponent("actors.json"))
         try writeJSON(environment, to: metadataRoot.appendingPathComponent("environment.json"))
         try writeJSON(paths, to: metadataRoot.appendingPathComponent("paths.json"))
+    }
+
+    private func seedTextureAssets() throws {
+        try seedTexture(
+            relativeDirectory: "Textures/spot04_scene",
+            name: "gSpot04MainTex"
+        )
+        try seedTexture(
+            relativeDirectory: "Textures/spot04_room_0",
+            name: "gSpot04Room0Tex"
+        )
     }
 
     private func seedCollision() throws {
@@ -278,7 +310,6 @@ private struct SceneLoaderFixture {
             options: .atomic
         )
     }
-
     private func seedRoom(
         id: Int,
         vertices: [N64Vertex],
@@ -294,6 +325,22 @@ private struct SceneLoaderFixture {
             options: .atomic
         )
         try writeJSON(commands, to: roomDirectory.appendingPathComponent("dl.json"))
+    }
+
+    private func seedTexture(
+        relativeDirectory: String,
+        name: String
+    ) throws {
+        let directory = contentRoot.appendingPathComponent(relativeDirectory, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data([0, 0, 0, 255]).write(
+            to: directory.appendingPathComponent("\(name).tex.bin"),
+            options: .atomic
+        )
+        try writeJSON(
+            TextureAssetMetadata(format: .rgba16, width: 1, height: 1, hasTLUT: false),
+            to: directory.appendingPathComponent("\(name).tex.json")
+        )
     }
 
     private func writeJSON<T: Encodable>(_ value: T, to url: URL) throws {

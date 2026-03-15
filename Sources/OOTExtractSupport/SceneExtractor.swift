@@ -85,7 +85,11 @@ extension SceneExtractor {
                 try fileManager.createDirectory(at: roomDirectory, withIntermediateDirectories: true)
 
                 let vertices = vertexArrays.flatMap(\.vertices)
-                let commands = displayLists.flatMap(\.commands)
+                let vertexAddressMap = Self.makeVertexAddressMap(vertexArrays: vertexArrays)
+                let commands = Self.rewriteVertexAddresses(
+                    in: displayLists.flatMap(\.commands),
+                    vertexAddressMap: vertexAddressMap
+                )
 
                 try VertexParser.encode(vertices).write(
                     to: roomDirectory.appendingPathComponent("vtx.bin"),
@@ -1204,6 +1208,54 @@ private extension SceneExtractor {
             ),
             lightSettings: lightSettings
         )
+    }
+
+    static func makeVertexAddressMap(vertexArrays: [ParsedVertexArray]) -> [UInt32: UInt32] {
+        let stride = MemoryLayout<N64Vertex>.size
+        var nextOffset = 0
+        var addressMap: [UInt32: UInt32] = [:]
+
+        for array in vertexArrays {
+            let baseOffset = nextOffset
+            addressMap[DisplayListParser.stableID(for: array.name)] = segmentedRoomVertexAddress(offset: baseOffset)
+
+            for index in array.vertices.indices {
+                let indexedName = "\(array.name)[\(index)]"
+                let indexedOffset = baseOffset + (index * stride)
+                addressMap[DisplayListParser.stableID(for: indexedName)] = segmentedRoomVertexAddress(offset: indexedOffset)
+            }
+
+            nextOffset += array.vertices.count * stride
+        }
+
+        return addressMap
+    }
+
+    static func rewriteVertexAddresses(
+        in commands: [F3DEX2Command],
+        vertexAddressMap: [UInt32: UInt32]
+    ) -> [F3DEX2Command] {
+        commands.map { command in
+            guard case .spVertex(let vertexCommand) = command else {
+                return command
+            }
+
+            guard let rewrittenAddress = vertexAddressMap[vertexCommand.address] else {
+                return command
+            }
+
+            return .spVertex(
+                VertexCommand(
+                    address: rewrittenAddress,
+                    count: vertexCommand.count,
+                    destinationIndex: vertexCommand.destinationIndex
+                )
+            )
+        }
+    }
+
+    static func segmentedRoomVertexAddress(offset: Int) -> UInt32 {
+        (UInt32(0x03) << 24) | UInt32(offset)
     }
 
     static func parsePaths(

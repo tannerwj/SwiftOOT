@@ -282,6 +282,12 @@ public struct PlayState: Codable, Equatable, @unchecked Sendable {
 public final class GameRuntime {
     public typealias RuntimeSuspender = @Sendable (Duration) async -> Void
 
+    public enum SceneViewerState: Sendable, Equatable {
+        case idle
+        case loadingContent
+        case running
+    }
+
     public var currentState: GameState
     public var playState: PlayState?
     public var gameTime: GameTime
@@ -290,9 +296,18 @@ public final class GameRuntime {
     public var selectedTitleOption: TitleMenuOption
     public var fileSelectMode: FileSelectMode?
     public var statusMessage: String?
+    public var sceneViewerState: SceneViewerState
+    public var availableScenes: [SceneTableEntry]
+    public var selectedSceneID: Int?
+    public var loadedScene: LoadedScene?
+    public var textureAssetURLs: [UInt32: URL]
+    public var errorMessage: String?
 
     @ObservationIgnored
     public let contentLoader: any ContentLoading
+
+    @ObservationIgnored
+    public let sceneLoader: any SceneLoading
 
     @ObservationIgnored
     public let telemetryPublisher: any TelemetryPublishing
@@ -324,7 +339,14 @@ public final class GameRuntime {
         selectedTitleOption: TitleMenuOption = .newGame,
         fileSelectMode: FileSelectMode? = nil,
         statusMessage: String? = nil,
+        sceneViewerState: SceneViewerState = .idle,
+        availableScenes: [SceneTableEntry] = [],
+        selectedSceneID: Int? = nil,
+        loadedScene: LoadedScene? = nil,
+        textureAssetURLs: [UInt32: URL] = [:],
+        errorMessage: String? = nil,
         contentLoader: any ContentLoading = ContentLoader(),
+        sceneLoader: any SceneLoading = SceneLoader(),
         telemetryPublisher: any TelemetryPublishing = TelemetryPublisher(),
         actorRegistry: ActorRegistry? = nil,
         bootDuration: Duration = .milliseconds(250),
@@ -341,7 +363,14 @@ public final class GameRuntime {
         self.selectedTitleOption = selectedTitleOption
         self.fileSelectMode = fileSelectMode
         self.statusMessage = statusMessage
+        self.sceneViewerState = sceneViewerState
+        self.availableScenes = availableScenes
+        self.selectedSceneID = selectedSceneID
+        self.loadedScene = loadedScene
+        self.textureAssetURLs = textureAssetURLs
+        self.errorMessage = errorMessage
         self.contentLoader = contentLoader
+        self.sceneLoader = sceneLoader
         self.telemetryPublisher = telemetryPublisher
         actorRegistryOverride = actorRegistry
         self.bootDuration = bootDuration
@@ -377,6 +406,61 @@ public final class GameRuntime {
         transition(to: .consoleLogo)
         await suspender(consoleLogoDuration)
         transition(to: .titleScreen)
+    }
+
+    public func bootstrapSceneViewer() async {
+        guard availableScenes.isEmpty || loadedScene == nil else {
+            return
+        }
+
+        let previousScene = loadedScene
+        sceneViewerState = .loadingContent
+        errorMessage = nil
+
+        do {
+            let snapshot = try await loadSceneViewerSnapshot(defaultSceneID: nil)
+            apply(snapshot)
+            sceneViewerState = loadedScene == nil ? .idle : .running
+
+            if loadedScene == nil {
+                errorMessage = "No extracted scenes were found under the configured content root."
+            } else if playState != nil {
+                playState?.currentSceneName = loadedScene?.manifest.name ?? playState?.currentSceneName ?? "Unknown"
+            }
+        } catch {
+            loadedScene = previousScene
+            sceneViewerState = previousScene == nil ? .idle : .running
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    public func selectScene(id: Int) async {
+        guard selectedSceneID != id || loadedScene?.manifest.id != id else {
+            return
+        }
+
+        let previousScene = loadedScene
+        let previousTextureAssetURLs = textureAssetURLs
+        let previousSelectedSceneID = selectedSceneID
+
+        sceneViewerState = .loadingContent
+        errorMessage = nil
+
+        do {
+            let snapshot = try await loadSceneViewerSnapshot(defaultSceneID: id)
+            apply(snapshot)
+            sceneViewerState = loadedScene == nil ? .idle : .running
+
+            if playState != nil {
+                playState?.currentSceneName = loadedScene?.manifest.name ?? playState?.currentSceneName ?? "Unknown"
+            }
+        } catch {
+            loadedScene = previousScene
+            textureAssetURLs = previousTextureAssetURLs
+            selectedSceneID = previousSelectedSceneID
+            sceneViewerState = previousScene == nil ? .idle : .running
+            errorMessage = error.localizedDescription
+        }
     }
 
     public func chooseTitleOption(_ option: TitleMenuOption) {
@@ -563,6 +647,61 @@ public final class GameRuntime {
 
     private func normalizedSlotIndex(_ index: Int) -> Int {
         min(max(0, index), saveContext.slots.count - 1)
+    }
+
+    private struct SceneViewerSnapshot: Sendable {
+        let availableScenes: [SceneTableEntry]
+        let selectedSceneID: Int?
+        let loadedScene: LoadedScene?
+        let textureAssetURLs: [UInt32: URL]
+    }
+
+    private func apply(_ snapshot: SceneViewerSnapshot) {
+        availableScenes = snapshot.availableScenes
+        selectedSceneID = snapshot.selectedSceneID
+        loadedScene = snapshot.loadedScene
+        textureAssetURLs = snapshot.textureAssetURLs
+    }
+
+    private func loadSceneViewerSnapshot(defaultSceneID: Int?) async throws -> SceneViewerSnapshot {
+        let sceneLoader = self.sceneLoader
+        return try await Task.detached(priority: .userInitiated) {
+            let sceneTableEntries = try sceneLoader.loadSceneTableEntries()
+            let availableScenes = sceneTableEntries.filter { entry in
+                (try? sceneLoader.resolveSceneDirectory(for: entry.index)) != nil
+            }
+
+            let selectedSceneID =
+                defaultSceneID ??
+                availableScenes.first(where: { Self.sceneName(for: $0) == "spot04" })?.index ??
+                availableScenes.first?.index
+
+            guard let selectedSceneID else {
+                return SceneViewerSnapshot(
+                    availableScenes: availableScenes,
+                    selectedSceneID: nil,
+                    loadedScene: nil,
+                    textureAssetURLs: [:]
+                )
+            }
+
+            let loadedScene = try sceneLoader.loadScene(id: selectedSceneID)
+            let textureAssetURLs = try sceneLoader.loadTextureAssetURLs(for: loadedScene)
+
+            return SceneViewerSnapshot(
+                availableScenes: availableScenes,
+                selectedSceneID: selectedSceneID,
+                loadedScene: loadedScene,
+                textureAssetURLs: textureAssetURLs
+            )
+        }.value
+    }
+
+    nonisolated static func sceneName(for entry: SceneTableEntry) -> String {
+        if entry.segmentName.hasSuffix("_scene") {
+            return String(entry.segmentName.dropLast("_scene".count))
+        }
+        return entry.segmentName
     }
 
     private func activateSceneContentIfAvailable() {

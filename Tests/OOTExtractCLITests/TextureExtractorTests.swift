@@ -171,6 +171,126 @@ final class TextureExtractorTests: XCTestCase {
         )
     }
 
+    func testExtractFallsBackToRealSceneSourceShapeWhenXMLOmitsTextureDeclarations() throws {
+        let harness = try TextureHarness()
+        defer { harness.cleanup() }
+
+        try harness.writeXML(
+            at: "assets/xml/scenes/overworld/spot04.xml",
+            contents: """
+            <Root>
+                <File Name="spot04_scene" Segment="2">
+                    <Scene Name="spot04_scene" Offset="0x0"/>
+                </File>
+                <File Name="spot04_room_0" Segment="3">
+                    <Room Name="spot04_room_0" Offset="0x0"/>
+                </File>
+            </Root>
+            """
+        )
+        try harness.writeSource(
+            at: "extracted/ntsc-1.2/assets/scenes/overworld/spot04/spot04_scene.h",
+            contents: """
+            extern u64 spot04_scene_0000E010_TLUT[];
+            #define spot04_scene_0000FA18_CITex_WIDTH 16
+            #define spot04_scene_0000FA18_CITex_HEIGHT 1
+            extern u64 spot04_scene_0000FA18_CITex[];
+            """
+        )
+        try harness.writeSource(
+            at: "extracted/ntsc-1.2/assets/scenes/overworld/spot04/spot04_scene.c",
+            contents: """
+            #include "spot04_scene.h"
+
+            u64 spot04_scene_0000E010_TLUT[] = {
+            #include "assets/scenes/overworld/spot04/spot04_scene_0000E010_TLUT.tlut.rgba16.inc.c"
+            };
+
+            u64 spot04_scene_0000FA18_CITex[] = {
+            #include "assets/scenes/overworld/spot04/spot04_scene_0000FA18_CITex.ci4.tlut_spot04_scene_0000E010_TLUT.inc.c"
+            };
+            """
+        )
+        try harness.writeSource(
+            at: "extracted/ntsc-1.2/assets/scenes/overworld/spot04/spot04_scene_0000E010_TLUT.tlut.rgba16.inc.c",
+            contents: """
+            0x7C1F07C1003FFFFF,
+            0x0001000100010001,
+            0x0001000100010001,
+            0x0001000100010001,
+            """
+        )
+        try harness.writeSource(
+            at: "extracted/ntsc-1.2/assets/scenes/overworld/spot04/spot04_scene_0000FA18_CITex.ci4.tlut_spot04_scene_0000E010_TLUT.inc.c",
+            contents: """
+            0x0102000000000000,
+            """
+        )
+        try harness.writeSource(
+            at: "extracted/ntsc-1.2/assets/scenes/overworld/spot04/spot04_room_0.h",
+            contents: """
+            #define spot04_room_0_0000BF08_Tex_WIDTH 2
+            #define spot04_room_0_0000BF08_Tex_HEIGHT 2
+            extern u64 spot04_room_0_0000BF08_Tex[];
+            """
+        )
+        try harness.writeSource(
+            at: "extracted/ntsc-1.2/assets/scenes/overworld/spot04/spot04_room_0.c",
+            contents: """
+            #include "spot04_room_0.h"
+
+            u64 spot04_room_0_0000BF08_Tex[] = {
+            #include "assets/scenes/overworld/spot04/spot04_room_0_0000BF08_Tex.rgba16.inc.c"
+            };
+            """
+        )
+        try harness.writeSource(
+            at: "extracted/ntsc-1.2/assets/scenes/overworld/spot04/spot04_room_0_0000BF08_Tex.rgba16.inc.c",
+            contents: """
+            0x07C1000000000000,
+            """
+        )
+
+        try TextureExtractor().extract(using: harness.extractionContext(sceneName: "spot04"))
+
+        let sceneDirectory = harness.outputRoot
+            .appendingPathComponent("Textures", isDirectory: true)
+            .appendingPathComponent("spot04_scene", isDirectory: true)
+        let roomDirectory = harness.outputRoot
+            .appendingPathComponent("Textures", isDirectory: true)
+            .appendingPathComponent("spot04_room_0", isDirectory: true)
+
+        let sceneMetadata = try JSONDecoder().decode(
+            TextureAssetMetadata.self,
+            from: Data(contentsOf: sceneDirectory.appendingPathComponent("spot04_scene_0000FA18_CITex.tex.json"))
+        )
+        let roomMetadata = try JSONDecoder().decode(
+            TextureAssetMetadata.self,
+            from: Data(contentsOf: roomDirectory.appendingPathComponent("spot04_room_0_0000BF08_Tex.tex.json"))
+        )
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: sceneDirectory.appendingPathComponent("spot04_scene_0000FA18_CITex.tex.bin").path
+            )
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: roomDirectory.appendingPathComponent("spot04_room_0_0000BF08_Tex.tex.bin").path
+            )
+        )
+        XCTAssertEqual(
+            sceneMetadata,
+            TextureAssetMetadata(format: .ci4, width: 16, height: 1, hasTLUT: true)
+        )
+        XCTAssertEqual(
+            roomMetadata,
+            TextureAssetMetadata(format: .rgba16, width: 2, height: 2, hasTLUT: false)
+        )
+
+        try TextureExtractor().verify(using: harness.verificationContext)
+    }
+
     func testExtractFallsBackToOwningSceneSourceWhenWrapperIsMissing() throws {
         let harness = try TextureHarness()
         defer { harness.cleanup() }

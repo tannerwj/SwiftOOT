@@ -224,17 +224,58 @@ private struct FileSelectView: View {
 private struct GameplayShellView: View {
     let runtime: GameRuntime
 
+    @State
+    private var renderPayload: SceneRenderPayload?
+
+    @State
+    private var frameStats = SceneFrameStats()
+
+    @State
+    private var renderErrorMessage: String?
+
     var body: some View {
         NavigationSplitView {
-            DebugSidebar()
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260)
+            DebugSidebar(
+                availableScenes: runtime.availableScenes,
+                selectedSceneID: runtime.selectedSceneID,
+                loadedScene: runtime.loadedScene,
+                isLoading: runtime.sceneViewerState == .loadingContent,
+                errorMessage: activeErrorMessage,
+                drawCallCount: frameStats.drawCallCount,
+                onSelectScene: { sceneID in
+                    Task {
+                        await runtime.selectScene(id: sceneID)
+                    }
+                }
+            )
+            .navigationSplitViewColumnWidth(min: 220, ideal: 260)
         } detail: {
             ZStack(alignment: .topLeading) {
                 Color.black.opacity(0.9)
                     .ignoresSafeArea()
 
-                MetalView()
+                if let renderPayload {
+                    MetalView(
+                        sceneIdentity: renderPayload.sceneID,
+                        scene: renderPayload.renderScene,
+                        textureBindings: renderPayload.textureBindings
+                    ) { stats in
+                        frameStats = stats
+                    }
+                    .id(renderPayload.sceneID)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    VStack(spacing: 12) {
+                        Text("Scene Viewer")
+                            .font(.title2.weight(.semibold))
+                            .foregroundStyle(.white)
+
+                        Text(detailPlaceholderText)
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(.white.opacity(0.75))
+                    }
+                    .padding(24)
+                }
 
                 if let playState = runtime.playState {
                     VStack(alignment: .leading, spacing: 6) {
@@ -249,6 +290,60 @@ private struct GameplayShellView: View {
                     .padding(16)
                 }
             }
+        }
+        .task {
+            await runtime.bootstrapSceneViewer()
+        }
+        .task(id: renderTaskID) {
+            await refreshRenderPayload()
+        }
+    }
+}
+
+private extension GameplayShellView {
+    var activeErrorMessage: String? {
+        renderErrorMessage ?? runtime.errorMessage
+    }
+
+    var detailPlaceholderText: String {
+        if let errorMessage = activeErrorMessage, errorMessage.isEmpty == false {
+            return errorMessage
+        }
+        if runtime.sceneViewerState == .loadingContent {
+            return "Loading Kokiri Forest..."
+        }
+        return "Select an extracted scene to begin rendering."
+    }
+
+    var renderTaskID: String {
+        let sceneID = runtime.loadedScene?.manifest.id ?? -1
+        return "\(sceneID)-\(runtime.textureAssetURLs.count)"
+    }
+
+    @MainActor
+    func refreshRenderPayload() async {
+        guard let loadedScene = runtime.loadedScene else {
+            renderPayload = nil
+            frameStats = SceneFrameStats()
+            renderErrorMessage = nil
+            return
+        }
+
+        do {
+            let payload = try SceneRenderPayloadBuilder.makePayload(
+                scene: loadedScene,
+                textureAssetURLs: runtime.textureAssetURLs
+            )
+            renderPayload = payload
+            frameStats = SceneFrameStats(
+                roomCount: payload.roomCount,
+                vertexCount: payload.vertexCount
+            )
+            renderErrorMessage = nil
+        } catch {
+            renderPayload = nil
+            frameStats = SceneFrameStats()
+            renderErrorMessage = error.localizedDescription
         }
     }
 }

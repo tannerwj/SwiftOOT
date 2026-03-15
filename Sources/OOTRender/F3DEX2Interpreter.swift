@@ -22,8 +22,9 @@ public final class F3DEX2Interpreter {
     public private(set) var lastLoadTile: LoadTileCommand?
 
     private let drawBatchResources: DrawBatchResources?
-    private let displayListResolver: @Sendable (UInt32) -> [F3DEX2Command]?
-    private let warningSink: @Sendable (String) -> Void
+    private let displayListResolver: (UInt32) -> [F3DEX2Command]?
+    private let textureResolver: (UInt32) -> MTLTexture?
+    private let warningSink: (String) -> Void
     private var rawCombineMode: CombineMode
     private var hasExplicitCombineMode: Bool
 
@@ -33,8 +34,9 @@ public final class F3DEX2Interpreter {
         segmentTable: SegmentTable = SegmentTable(),
         projectionMatrix: simd_float4x4 = matrix_identity_float4x4,
         drawBatchResources: DrawBatchResources? = nil,
-        displayListResolver: @escaping @Sendable (UInt32) -> [F3DEX2Command]? = { _ in nil },
-        warningSink: @escaping @Sendable (String) -> Void = { _ in }
+        displayListResolver: @escaping (UInt32) -> [F3DEX2Command]? = { _ in nil },
+        textureResolver: @escaping (UInt32) -> MTLTexture? = { _ in nil },
+        warningSink: @escaping (String) -> Void = { _ in }
     ) {
         self.rspState = rspState
         self.rdpState = rdpState
@@ -47,6 +49,7 @@ public final class F3DEX2Interpreter {
         self.lastLoadTile = nil
         self.drawBatchResources = drawBatchResources
         self.displayListResolver = displayListResolver
+        self.textureResolver = textureResolver
         self.warningSink = warningSink
         self.rawCombineMode = CombineMode(colorMux: 0, alphaMux: 0)
         self.hasExplicitCombineMode = false
@@ -112,12 +115,18 @@ public final class F3DEX2Interpreter {
                     level: textureState.level,
                     tile: textureState.tile
                 )
+                if textureState.enabled == false {
+                    drawBatch.texel0Texture = nil
+                    drawBatch.texel1Texture = nil
+                }
             case .dpSetTextureImage(let descriptor):
                 textureImage = descriptor
             case .dpLoadBlock(let command):
                 lastLoadBlock = command
+                synchronizeTextures()
             case .dpLoadTile(let command):
                 lastLoadTile = command
+                synchronizeTextures()
             case .dpSetTile(let descriptor):
                 try rdpState.setTileDescriptor(descriptor)
             case .dpSetTileSize(let command):
@@ -358,6 +367,17 @@ private extension F3DEX2Interpreter {
         } else {
             drawBatch.combinerUniforms = CombinerUniforms()
         }
+    }
+
+    func synchronizeTextures() {
+        guard rspState.textureState.enabled, let textureImage else {
+            drawBatch.texel0Texture = nil
+            drawBatch.texel1Texture = nil
+            return
+        }
+
+        drawBatch.texel0Texture = textureResolver(textureImage.address)
+        drawBatch.texel1Texture = nil
     }
 
     func flushPendingTriangles(encoder: MTLRenderCommandEncoder) throws {

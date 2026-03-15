@@ -2,9 +2,11 @@ import Foundation
 import OOTDataModel
 
 public protocol SceneLoading: Sendable {
+    func loadSceneTableEntries() throws -> [SceneTableEntry]
     func resolveSceneDirectory(for sceneID: Int) throws -> URL
     func loadScene(id: Int) throws -> LoadedScene
     func loadScene(named name: String) throws -> LoadedScene
+    func loadTextureAssetURLs(for scene: LoadedScene) throws -> [UInt32: URL]
     func loadSceneManifest(id: Int) throws -> SceneManifest
     func loadSceneManifest(named name: String) throws -> SceneManifest
     func loadActorTable() throws -> [ActorTableEntry]
@@ -61,8 +63,12 @@ public struct SceneLoader: SceneLoading {
         self.contentRoot = (contentRoot ?? Self.defaultContentRoot()).standardizedFileURL
     }
 
+    public func loadSceneTableEntries() throws -> [SceneTableEntry] {
+        try readSceneTable()
+    }
+
     public func resolveSceneDirectory(for sceneID: Int) throws -> URL {
-        let table = try loadSceneTable()
+        let table = try readSceneTable()
         guard let entry = table.first(where: { $0.index == sceneID }) else {
             throw SceneLoaderError.unknownSceneID(sceneID)
         }
@@ -101,10 +107,31 @@ public struct SceneLoader: SceneLoading {
         return try loadSceneManifest(from: directory)
     }
 
+    public func loadTextureAssetURLs(for scene: LoadedScene) throws -> [UInt32: URL] {
+        var textureURLsByAssetID: [UInt32: URL] = [:]
+        let directories = textureDirectories(for: scene)
+
+        for relativeDirectory in directories {
+            let directory = try referencedURL(for: relativeDirectory)
+            guard FileManager.default.fileExists(atPath: directory.path) else {
+                throw SceneLoaderError.missingFile(directory.path)
+            }
+
+            for textureURL in try textureBinaryURLs(in: directory) {
+                let assetName = textureURL
+                    .deletingPathExtension()
+                    .deletingPathExtension()
+                    .lastPathComponent
+                textureURLsByAssetID[OOTAssetID.stableID(for: assetName)] = textureURL
+            }
+        }
+
+        return textureURLsByAssetID
+    }
+
     public func loadActorTable() throws -> [ActorTableEntry] {
         try loadJSON([ActorTableEntry].self, from: actorTableURL)
     }
-
     public func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh? {
         guard let collisionPath = manifest.collisionPath, collisionPath.isEmpty == false else {
             return nil
@@ -121,7 +148,6 @@ public struct SceneLoader: SceneLoading {
             throw SceneLoaderError.invalidCollisionBinary(collisionURL.path, error.localizedDescription)
         }
     }
-
     public func loadRoomDisplayList(for room: RoomManifest) throws -> [F3DEX2Command] {
         try loadJSON(
             [F3DEX2Command].self,
@@ -178,9 +204,41 @@ public enum SceneLoaderError: Error, LocalizedError, Equatable, Sendable {
 private extension SceneLoader {
     static let legacyManifestFilename = "scene_manifest.json"
     static let manifestFilename = "SceneManifest.json"
+    static let contentRootEnvironmentVariable = "SWIFTOOT_CONTENT_ROOT"
 
     static func defaultContentRoot() -> URL {
-        URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let fileManager = FileManager.default
+        let environment = ProcessInfo.processInfo.environment
+
+        if let configuredRoot = environment[contentRootEnvironmentVariable] {
+            let configuredURL = URL(fileURLWithPath: configuredRoot, isDirectory: true)
+            if let resolved = resolveContentRoot(from: configuredURL, fileManager: fileManager) {
+                return resolved
+            }
+        }
+
+        let sourceRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let candidateBases = [
+            URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true),
+            sourceRoot,
+            Bundle.main.resourceURL,
+            Bundle.main.bundleURL,
+        ]
+
+        for baseURL in candidateBases {
+            guard let baseURL else {
+                continue
+            }
+
+            if let resolved = resolveContentRoot(from: baseURL, fileManager: fileManager) {
+                return resolved
+            }
+        }
+
+        return sourceRoot
             .appendingPathComponent("Content", isDirectory: true)
             .appendingPathComponent("OOT", isDirectory: true)
     }
@@ -275,8 +333,51 @@ private extension SceneLoader {
         return nil
     }
 
-    func loadSceneTable() throws -> [SceneTableEntry] {
+    func readSceneTable() throws -> [SceneTableEntry] {
         try loadJSON([SceneTableEntry].self, from: sceneTableURL)
+    }
+
+    static func resolveContentRoot(
+        from baseURL: URL,
+        fileManager: FileManager
+    ) -> URL? {
+        let normalizedBaseURL = baseURL.resolvingSymlinksInPath().standardizedFileURL
+        let directCandidates = [
+            normalizedBaseURL,
+            normalizedBaseURL
+                .appendingPathComponent("Content", isDirectory: true)
+                .appendingPathComponent("OOT", isDirectory: true),
+        ]
+
+        for candidate in directCandidates where hasSceneTable(at: candidate, fileManager: fileManager) {
+            return candidate
+        }
+
+        var currentURL = normalizedBaseURL
+        while currentURL.path.isEmpty == false {
+            let candidate = currentURL
+                .appendingPathComponent("Content", isDirectory: true)
+                .appendingPathComponent("OOT", isDirectory: true)
+            if hasSceneTable(at: candidate, fileManager: fileManager) {
+                return candidate
+            }
+
+            let parentURL = currentURL.deletingLastPathComponent()
+            if parentURL.path == currentURL.path {
+                break
+            }
+            currentURL = parentURL
+        }
+
+        return nil
+    }
+
+    static func hasSceneTable(at contentRoot: URL, fileManager: FileManager) -> Bool {
+        let sceneTableURL = contentRoot
+            .appendingPathComponent("Manifests", isDirectory: true)
+            .appendingPathComponent("tables", isDirectory: true)
+            .appendingPathComponent("scene-table.json")
+        return fileManager.fileExists(atPath: sceneTableURL.path)
     }
 
     func loadOptionalJSON<T: Decodable>(_ type: T.Type, fromRelativePath relativePath: String?) throws -> T? {
@@ -349,5 +450,23 @@ private extension SceneLoader {
         }
 
         return candidates
+    }
+
+    func textureDirectories(for scene: LoadedScene) -> [String] {
+        let roomDirectories = scene.rooms.flatMap(\.manifest.textureDirectories)
+        return Array(Set(scene.manifest.textureDirectories + roomDirectories)).sorted()
+    }
+
+    func textureBinaryURLs(in directory: URL) throws -> [URL] {
+        let entries = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        return try entries.filter { url in
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey])
+            return values.isRegularFile == true && url.lastPathComponent.hasSuffix(".tex.bin")
+        }.sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 }

@@ -235,6 +235,31 @@ final class OOTRenderTests: XCTestCase {
         assertPixel(in: texture, x: 32, y: 32, equals: [52, 155, 45, 255])
     }
 
+    func testRendererReportsSceneFrameStats() throws {
+        guard MTLCreateSystemDefaultDevice() != nil else {
+            throw XCTSkip("Metal is unavailable on this host")
+        }
+
+        var reportedStats = SceneFrameStats()
+        let renderer = try OOTRenderer(
+            scene: OOTRenderScene.syntheticScene(
+                vertices: makeTriangleVertices(
+                    color: RGBA8(red: 255, green: 0, blue: 0, alpha: 255)
+                )
+            )
+        ) { stats in
+            reportedStats = stats
+        }
+        let texture = try makeRenderTargetTexture(renderer: renderer)
+
+        try renderer.renderCurrentSceneToTexture(texture)
+
+        XCTAssertEqual(reportedStats.roomCount, 1)
+        XCTAssertEqual(reportedStats.vertexCount, 3)
+        XCTAssertEqual(reportedStats.triangleCount, 1)
+        XCTAssertEqual(reportedStats.drawCallCount, 1)
+    }
+
     private func makeRenderTargetTexture(
         renderer: OOTRenderer,
         width: Int = 64,

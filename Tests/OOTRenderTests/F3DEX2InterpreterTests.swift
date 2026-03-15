@@ -167,6 +167,47 @@ final class F3DEX2InterpreterTests: XCTestCase {
         XCTAssertEqual(interpreter.warnings.count, 1)
         XCTAssertTrue(interpreter.warnings[0].contains("spModifyVertex"))
     }
+
+    func testTextureLoadBlockBindsResolvedTextureForDraws() throws {
+        let context = try makeRenderContext()
+        var segmentTable = SegmentTable()
+        try segmentTable.setSegment(0x01, data: encodeVertices(makeTriangleVertices()))
+        let assetID = OOTAssetID.stableID(for: "gSpot04MainTex")
+        let expectedTexture = try makeSourceTexture(device: context.resources.device)
+        let interpreter = F3DEX2Interpreter(
+            segmentTable: segmentTable,
+            drawBatchResources: context.resources,
+            textureResolver: { resolvedAssetID in
+                resolvedAssetID == assetID ? expectedTexture : nil
+            }
+        )
+
+        try interpreter.interpret(
+            [
+                .spTexture(TextureState(scaleS: 0xFFFF, scaleT: 0xFFFF, level: 0, tile: 0, enabled: true)),
+                .dpSetTextureImage(
+                    ImageDescriptor(
+                        format: .rgba16,
+                        texelSize: .bits16,
+                        width: 32,
+                        address: assetID
+                    )
+                ),
+                .dpLoadBlock(LoadBlockCommand(tile: 7, upperLeftS: 0, upperLeftT: 0, texelCount: 255, dxt: 16)),
+                .spVertex(VertexCommand(address: 0x0100_0000, count: 3, destinationIndex: 0)),
+                .sp1Triangle(TriangleCommand(vertex0: 0, vertex1: 1, vertex2: 2)),
+                .spEndDisplayList,
+            ],
+            encoder: context.encoder
+        )
+
+        context.encoder.endEncoding()
+        context.commandBuffer.commit()
+        context.commandBuffer.waitUntilCompleted()
+
+        XCTAssertTrue(interpreter.drawBatch.texel0Texture === expectedTexture)
+        XCTAssertEqual(interpreter.drawBatch.drawCallCount, 1)
+    }
 }
 
 private extension F3DEX2InterpreterTests {

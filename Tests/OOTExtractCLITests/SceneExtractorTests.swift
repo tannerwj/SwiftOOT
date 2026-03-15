@@ -86,7 +86,7 @@ final class SceneExtractorTests: XCTestCase {
             [
                 .spVertex(
                     VertexCommand(
-                        address: DisplayListParser.stableID(for: "spot04_room_0Vtx_000000"),
+                        address: 0x03000000,
                         count: 3,
                         destinationIndex: 0
                     )
@@ -333,6 +333,63 @@ final class SceneExtractorTests: XCTestCase {
             from: Data(contentsOf: roomDirectory.appendingPathComponent("dl.json"))
         )
         XCTAssertEqual(commands.count, 3)
+    }
+
+    func testExtractRewritesIndexedVertexReferencesIntoRoomSegmentOffsets() throws {
+        let harness = try SceneHarness()
+        defer { harness.cleanup() }
+
+        try harness.writeSceneXML(
+            at: "assets/xml/scenes/overworld/spot04.xml",
+            contents: """
+            <Root>
+                <File Name="spot04_room_0" Segment="3">
+                    <Room Name="spot04_room_0" Offset="0x0"/>
+                </File>
+            </Root>
+            """
+        )
+
+        try harness.writeExtractedRoomSource(
+            extractedRoot: "extracted/ntsc-1.2",
+            sceneDirectory: "assets/scenes/overworld/spot04",
+            roomName: "spot04_room_0",
+            vertexArrayName: "spot04_room_0_03000580_RoomShapeCullable_0300058C_CullableEntries_03002A10_DL_03001270_Vtx_fused_",
+            vertices: """
+            VTX(-1, 2, 3, 0, 4, 5, 6, 7, 8),
+            VTX(10, 11, 12, 0, 13, 14, 15, 16, 17),
+            VTX(19, 20, 21, 0, 22, 23, 24, 25, 26),
+            """,
+            displayList: """
+            gsSPVertex(&spot04_room_0_03000580_RoomShapeCullable_0300058C_CullableEntries_03002A10_DL_03001270_Vtx_fused_[1], 2, 0),
+            gsSP1Triangle(0, 1, 1, 0),
+            gsSPEndDisplayList(),
+            """
+        )
+
+        try SceneExtractor().extract(using: harness.extractionContext(sceneName: "spot04"))
+
+        let roomDirectory = harness.outputRoot
+            .appendingPathComponent("Scenes", isDirectory: true)
+            .appendingPathComponent("spot04", isDirectory: true)
+            .appendingPathComponent("rooms", isDirectory: true)
+            .appendingPathComponent("room_0", isDirectory: true)
+
+        let commands = try JSONDecoder().decode(
+            [F3DEX2Command].self,
+            from: Data(contentsOf: roomDirectory.appendingPathComponent("dl.json"))
+        )
+
+        XCTAssertEqual(
+            commands.first,
+            .spVertex(
+                VertexCommand(
+                    address: 0x03000010,
+                    count: 2,
+                    destinationIndex: 0
+                )
+            )
+        )
     }
 
     func testExtractWritesSpot04SceneMetadataFromFixtureSource() throws {
