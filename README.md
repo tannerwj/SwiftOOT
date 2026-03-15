@@ -73,7 +73,9 @@ This project is intended for mostly serial, issue-by-issue agent execution:
 - The next agent starts from the updated main branch after review or merge
 
 See [AGENTS.md](AGENTS.md) for the issue readiness rules, definition of done,
-and handoff format.
+handoff format, and the short checklist used to gate `agent-ready` and review.
+Use [docs/linear-issue-template.md](docs/linear-issue-template.md) when writing
+new Linear issues.
 
 ## Symphony Workflow
 

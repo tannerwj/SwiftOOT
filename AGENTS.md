@@ -75,6 +75,101 @@ Symphony is the execution layer for issue work. Linear is the queue.
 - `Merging`: approved and ready to land
 - `Done`: merged
 
+### Agent Issue Checklist
+
+Apply this short checklist to every issue before adding `agent-ready` and again
+before moving the work to review:
+
+- [ ] The problem, in-scope change, and out-of-scope boundary are explicit.
+- [ ] The issue is small enough for one focused branch/PR; if not, split it
+  first.
+- [ ] Validation is explicit: exact commands, expected proof, and any required
+  real-source acceptance path are written in the issue.
+- [ ] Required inputs are available now: repo files, fixtures, generated
+  content, tools, and permissions.
+- [ ] The implemented change stays within scope and updates tests or fixtures
+  when behavior changed.
+- [ ] Docs are updated when behavior, setup, architecture, workflows, or
+  reproducible validation changed.
+- [ ] Verification notes record what ran, what passed, and any follow-up work is
+  filed as a separate issue instead of being silently skipped.
+
+### `agent-ready` Definition
+
+An issue may carry `agent-ready` only when all of these are true:
+
+- the title names one concrete outcome
+- scope and non-goals are explicit enough to reject adjacent work
+- dependencies and prerequisites are already available in the repo or issue text
+- exact validation commands are written, not implied
+- parser/extractor tickets include the real-source command and expected output
+  files when fixture coverage is not enough
+- the issue is still single-branch sized; if it naturally becomes multiple
+  independently reviewable changes, split it first
+
+Remove `agent-ready` or keep the issue in `Backlog` when any of those conditions
+is false.
+
+### Definition Of Done
+
+An issue is done for agent handoff only when all of these are true:
+
+- the scoped change is implemented without expanding into neighboring tickets
+- relevant tests, fixtures, or regression coverage were added or updated
+- required validation commands were run on the final branch state
+- docs were updated when the change altered behavior, setup, architecture,
+  workflows, or the reproducible validation path
+- any discovered out-of-scope work was captured as follow-up issues
+- handoff notes include the required verification record below
+
+### Verification Notes Format
+
+Use this format in the workpad or final handoff notes:
+
+```md
+Validation
+- `<command>` -> pass/fail, with one-line proof
+- `<command>` -> pass/fail, with one-line proof
+
+Docs
+- updated: `<path>` because `<reason>`
+  or
+- not needed: `<reason>`
+
+Follow-ups
+- none
+  or
+- `<issue id>`: `<gap or deferred work>`
+```
+
+Keep the notes brief, but always include the exact commands that were actually
+run.
+
+### When Docs Updates Are Required
+
+Update docs when a change modifies any of these:
+
+- user-visible behavior or developer workflow
+- setup, bootstrap, build, test, or release steps
+- architecture or module responsibilities
+- required validation commands, fixtures, or expected output files
+- issue execution rules that future workers or reviewers rely on
+
+### When To Split An Issue
+
+Split the issue before `agent-ready` when any of these are true:
+
+- the work spans multiple modules with different validation strategies
+- the issue bundles unrelated outcomes that could be reviewed independently
+- the acceptance criteria require "and also" work better expressed as separate
+  tickets
+- there is no single validation command set that proves the whole change
+- the worker would need to make major product or architecture decisions that are
+  not already captured in the issue
+
+When splitting, keep the current issue as the smallest independently shippable
+slice and create follow-up issues for the rest.
+
 ### Worker Contract
 
 For a normal implementation pass, Symphony should:
