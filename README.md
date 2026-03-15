@@ -4,19 +4,6 @@ Native macOS app reimplementing Zelda: Ocarina of Time in Swift/Metal, using dat
 
 Inspired by [Dimillian/PokeSwift](https://github.com/Dimillian/PokeSwift).
 
-## Legal
-
-SwiftOOT is an unofficial fan project. It is not affiliated with or endorsed by
-Nintendo.
-
-- This repository does not include any Nintendo ROMs, textures, audio, text, or
-  other game assets.
-- To use the extraction pipeline, you must supply your own legally obtained copy
-  of Ocarina of Time.
-- The `Vendor/oot` checkout is a separate upstream submodule. SwiftOOT's MIT
-  license applies to the original code in this repository, not to third-party
-  dependencies or to any content generated from a game ROM.
-
 ## Architecture
 
 A build-time CLI extracts game data from the OoT decompilation (C source + XML assets) into JSON manifests and binary assets. The runtime app is pure Swift/Metal — it never touches C or assembly.
@@ -119,7 +106,7 @@ open SwiftOOT.xcworkspace
 
 ## Verification
 
-CI now runs the following verification flow on every pull request.
+Run this local verification flow after setup:
 
 ```bash
 tuist install
@@ -141,96 +128,20 @@ swift run OOTExtractCLI extract --source Vendor/oot --output /tmp/swiftoot-spot0
 swift run OOTExtractCLI verify --content /tmp/swiftoot-spot04
 ```
 
-## Generated vs Committed
+For project-specific contributor workflow, review rules, and automation
+guidance, see [AGENTS.md](AGENTS.md).
 
-Committed:
+## Legal
 
-- Swift source, tests, project definitions, docs
-- the `Vendor/oot` submodule pointer
+SwiftOOT is an unofficial fan project. It is not affiliated with or endorsed by
+Nintendo.
 
-Generated or supplied locally and not committed to this repository:
-
-- `Vendor/oot/baseroms/`
-- `Vendor/oot/extracted/`
-- `Vendor/oot/build/`
-- `Content/OOT/`
-- Xcode/Tuist build artifacts like `Derived/`, `DerivedData/`, and `.build/`
-
-## Agent Workflow
-
-This project is intended for mostly serial, issue-by-issue agent execution:
-
-- One agent takes one Linear issue
-- The issue should be in `Todo` and labeled `agent-ready`
-- The agent implements only that issue, runs verification, updates docs if needed, leaves a short handoff, and stops
-- The next agent starts from the updated main branch after review or merge
-
-See [AGENTS.md](AGENTS.md) for the issue readiness rules, definition of done,
-handoff format, and the short checklist used to gate `agent-ready` and review.
-
-## Symphony Workflow
-
-Symphony is the worker orchestrator for this repo. Linear is the source of truth
-for what Symphony should pick up next.
-
-### Issue States
-
-- `Backlog`: not ready for implementation
-- `Todo`: ready for Symphony pickup
-- `In Progress`: Symphony worker is actively implementing the issue
-- `Human Review`: implementation is complete and ready for branch/PR review
-- `Rework`: review found issues; Symphony should continue on the existing branch, workspace, and PR by default
-- `Merging`: approved and ready for Symphony to land
-- `Done`: merged and complete
-
-### Expected Flow
-
-1. Move a small, unblocked, well-scoped issue to `Todo`.
-2. Symphony picks it up, creates a branch/PR, implements the change, verifies it, and moves the issue to `Human Review`.
-3. Human review checks the actual PR branch, not just the Linear summary.
-4. If changes are needed:
-   - move the issue to `Rework`
-   - leave concrete review feedback on the PR or Linear issue
-   - keep the same branch and PR unless the reviewer explicitly requests a restart
-5. If approved:
-   - move the issue to `Merging`
-   - Symphony lands the PR and moves the issue to `Done`
-
-### Review Standard
-
-Human review should verify branch-level reality:
-
-- read the PR diff
-- inspect the actual branch contents
-- run the relevant local build/test commands when practical
-- confirm the branch satisfies the Linear issue contract
-
-Passing CI is necessary but not sufficient. If the branch introduces merge risk,
-runner-only breakage, incorrect packaging, or misses issue acceptance criteria,
-send it back to `Rework`.
-
-## Lessons Learned
-
-`TAN-30` showed that parser and extractor tickets need stronger acceptance
-checks than normal app or module-skeleton work.
-
-The main failure mode was:
-
-- unit tests passed on simplified fixtures
-- the real `Vendor/oot` source used additional macro forms
-- the worker kept fixing only the last reported parse error instead of proving
-  the full real command succeeded
-
-For future extractor/parser issues:
-
-- include the exact real-source command in the issue
-- require the worker to run that command before review
-- require the worker to confirm the expected output files exist
-- add at least one regression test derived from the real upstream source shape
-
-For reviewers:
-
-- if the real-source command fails, send the issue back with the exact command,
-  exact failure string, and exact expected output path
-- if the same issue loops on the same failure mode, stop the loop and fix or
-  restate the issue more concretely
+- This repository does not include any Nintendo ROMs, textures, audio, text, or
+  other game assets.
+- To use the extraction pipeline, you must supply your own legally obtained copy
+  of Ocarina of Time.
+- The `Vendor/oot` checkout is a separate upstream submodule. SwiftOOT's MIT
+  license applies to the original code in this repository, not to third-party
+  dependencies or to any content generated from a game ROM.
+- ROMs, extracted content, and local build artifacts should remain local and not
+  be committed to this repository.
