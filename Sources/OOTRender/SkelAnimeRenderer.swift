@@ -168,6 +168,7 @@ public final class SkelAnimeRenderer {
         _ skeletonEntry: OOTRenderSkeleton,
         encoder: MTLRenderCommandEncoder,
         projectionMatrix: simd_float4x4,
+        environmentFogColor: SIMD4<Float>? = nil,
         overrideLimbDraw: OverrideLimbDraw? = nil,
         postLimbDraw: PostLimbDraw? = nil
     ) throws -> [SkelLimbDrawCommand] {
@@ -179,6 +180,7 @@ public final class SkelAnimeRenderer {
             segmentTable: try makeSegmentTable(for: skeletonEntry, drawCommands: drawCommands),
             projectionMatrix: projectionMatrix,
             drawBatchResources: drawBatchResources,
+            environmentFogColor: environmentFogColor,
             displayListResolver: { skeletonEntry.asset.displayListsByAddress[$0] }
         )
 

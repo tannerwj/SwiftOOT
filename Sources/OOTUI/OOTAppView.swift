@@ -264,6 +264,7 @@ private struct GameplayShellView: View {
                             from: renderPayload,
                             playerState: runtime.playerState
                         ),
+                        timeOfDay: runtime.gameTime.timeOfDay,
                         textureBindings: renderPayload.textureBindings,
                         inputHandler: inputManager,
                         gameplayCameraConfiguration: runtime.loadedScene.flatMap {

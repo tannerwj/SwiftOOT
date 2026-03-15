@@ -66,6 +66,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     private let translucentDepthStencilState: MTLDepthStencilState
     private let sceneVertices: [N64Vertex]
     private let inFlightSemaphore = DispatchSemaphore(value: OOTRenderer.inFlightFrameCount)
+    private var environmentRenderer: EnvironmentRenderer
 
     private var frameUniformBuffers: [MTLBuffer]
     private var frameUniformBufferIndex = 0
@@ -73,6 +74,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     private var frameStatsHandler: (SceneFrameStats) -> Void
     private(set) var isDebugCameraEnabled = false
     private var frameTickHandler: @MainActor () -> Void
+    private var timeOfDay: Double
 
     public init(
         bundle: Bundle = resourceBundle,
@@ -146,6 +148,8 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         self.renderPipelineCache = [:]
         self.frameStatsHandler = frameStatsHandler
         self.frameTickHandler = frameTickHandler
+        self.environmentRenderer = EnvironmentRenderer(environment: renderScene.environment)
+        self.timeOfDay = 6.0
         self.renderPipelineState = try device.makeRenderPipelineState(
             descriptor: pipelineDescriptor
         )
@@ -157,7 +161,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         view.device = device
         view.colorPixelFormat = .bgra8Unorm
         view.depthStencilPixelFormat = Self.depthPixelFormat
-        view.clearColor = clearColor(for: renderScene.skyColor)
+        view.clearColor = clearColorForCurrentEnvironment()
         view.preferredFramesPerSecond = Self.preferredFramesPerSecond
         view.enableSetNeedsDisplay = false
         view.isPaused = false
@@ -179,9 +183,11 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     public func setFrameTickHandler(_ handler: @escaping @MainActor () -> Void) {
         frameTickHandler = handler
     }
+
     public func updateScene(_ scene: OOTRenderScene, textureBindings: [UInt32: MTLTexture]) {
         renderScene = scene
         self.textureBindings = textureBindings
+        environmentRenderer = EnvironmentRenderer(environment: scene.environment)
     }
 
     public func updateGameplayCameraConfiguration(_ configuration: GameplayCameraConfiguration?) {
@@ -241,6 +247,18 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         gameplayCameraController?.snapBehindPlayer()
     }
 
+    public func setTimeOfDay(_ timeOfDay: Double) {
+        self.timeOfDay = timeOfDay
+    }
+
+    public func clearColorForCurrentEnvironment() -> MTLClearColor {
+        guard renderScene.environment != nil else {
+            return clearColor(for: renderScene.skyColor)
+        }
+        let environmentState = environmentRenderer.currentState(timeOfDay: timeOfDay)
+        return clearColor(for: environmentState.skyColor)
+    }
+
     public func draw(in view: MTKView) {
         inFlightSemaphore.wait()
 
@@ -261,8 +279,9 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
             frameTickHandler()
         }
         let frameUniforms = activeFrameUniforms()
+            .withEnvironment(environmentRenderer.currentState(timeOfDay: timeOfDay))
         advanceFrameUniformBuffer(with: frameUniforms)
-        renderPassDescriptor.colorAttachments[0].clearColor = clearColor(for: renderScene.skyColor)
+        renderPassDescriptor.colorAttachments[0].clearColor = clearColorForCurrentEnvironment()
         configureDepthAttachment(for: renderPassDescriptor)
 
         do {
@@ -314,7 +333,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         renderPassDescriptor.colorAttachments[0].texture = texture
         renderPassDescriptor.colorAttachments[0].loadAction = .clear
         renderPassDescriptor.colorAttachments[0].storeAction = .store
-        renderPassDescriptor.colorAttachments[0].clearColor = Self.clearColor
+        renderPassDescriptor.colorAttachments[0].clearColor = clearColorForCurrentEnvironment()
 
         do {
             renderPassDescriptor.depthAttachment.texture = try makeDepthTexture(
@@ -358,11 +377,15 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         inFlightSemaphore.wait()
         defer { inFlightSemaphore.signal() }
 
+        let frameUniforms = frameUniforms.withEnvironment(
+            environmentRenderer.currentState(timeOfDay: timeOfDay)
+        )
+
         let renderPassDescriptor = MTLRenderPassDescriptor()
         renderPassDescriptor.colorAttachments[0].texture = texture
         renderPassDescriptor.colorAttachments[0].loadAction = .clear
         renderPassDescriptor.colorAttachments[0].storeAction = .store
-        renderPassDescriptor.colorAttachments[0].clearColor = clearColor(for: renderScene.skyColor)
+        renderPassDescriptor.colorAttachments[0].clearColor = clearColorForCurrentEnvironment()
         renderPassDescriptor.depthAttachment.texture = try makeDepthTexture(
             width: texture.width,
             height: texture.height
@@ -524,7 +547,18 @@ private extension OOTRenderer {
             )
         )
         renderCommandEncoder.setDepthStencilState(opaqueDepthStencilState)
+        renderCommandEncoder.setVertexBuffer(
+            currentFrameUniformBuffer,
+            offset: 0,
+            index: OOTRenderBufferIndex.frameUniforms.rawValue
+        )
+        renderCommandEncoder.setFragmentBuffer(
+            currentFrameUniformBuffer,
+            offset: 0,
+            index: OOTRenderBufferIndex.frameUniforms.rawValue
+        )
         let drawBatchResources = makeDrawBatchResources()
+        let environmentState = environmentRenderer.currentState(timeOfDay: timeOfDay)
 
         var frameStats = SceneFrameStats(roomCount: renderScene.visibleRooms.count)
 
@@ -533,6 +567,7 @@ private extension OOTRenderer {
                 segmentTable: makeSegmentTable(for: room),
                 projectionMatrix: frameUniforms.mvp,
                 drawBatchResources: drawBatchResources,
+                environmentFogColor: environmentState.fogColor,
                 textureResolver: { [textureBindings] assetID in
                     textureBindings[assetID]
                 }
@@ -549,7 +584,8 @@ private extension OOTRenderer {
             try skelAnimeRenderer.render(
                 skeleton,
                 encoder: renderCommandEncoder,
-                projectionMatrix: frameUniforms.mvp
+                projectionMatrix: frameUniforms.mvp,
+                environmentFogColor: environmentState.fogColor
             )
         }
 
@@ -590,6 +626,11 @@ private extension OOTRenderer {
         }
 
         renderCommandEncoder.setVertexBuffer(
+            currentFrameUniformBuffer,
+            offset: 0,
+            index: OOTRenderBufferIndex.frameUniforms.rawValue
+        )
+        renderCommandEncoder.setFragmentBuffer(
             currentFrameUniformBuffer,
             offset: 0,
             index: OOTRenderBufferIndex.frameUniforms.rawValue

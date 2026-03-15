@@ -30,7 +30,7 @@ final class OOTRenderTests: XCTestCase {
     }
 
     func testFrameUniformsAndCombinerUniformsMatchMetalPacking() {
-        XCTAssertEqual(MemoryLayout<FrameUniforms>.stride, 80)
+        XCTAssertEqual(MemoryLayout<FrameUniforms>.stride, 144)
         XCTAssertEqual(MemoryLayout<CombinerUniforms>.stride, 144)
     }
 
@@ -42,8 +42,65 @@ final class OOTRenderTests: XCTestCase {
         XCTAssertEqual(renderer.vertexDescriptor.attributes[0].offset, 0)
         XCTAssertEqual(renderer.vertexDescriptor.attributes[1].format, .short2)
         XCTAssertEqual(renderer.vertexDescriptor.attributes[1].offset, 8)
-        XCTAssertEqual(renderer.vertexDescriptor.attributes[2].format, .uchar4Normalized)
+        XCTAssertEqual(renderer.vertexDescriptor.attributes[2].format, .uchar4)
         XCTAssertEqual(renderer.vertexDescriptor.attributes[2].offset, 12)
+    }
+
+    func testEnvironmentRendererInterpolatesBetweenTimeKeyframes() {
+        let renderer = EnvironmentRenderer(
+            environment: makeTimeOfDayEnvironment(
+                lightSettings: [
+                    makeLightSetting(ambient: 0, light: 0, fog: 0),
+                    makeLightSetting(ambient: 255, light: 128, fog: 255),
+                    makeLightSetting(ambient: 128, light: 255, fog: 128),
+                    makeLightSetting(ambient: 0, light: 0, fog: 0),
+                ]
+            )
+        )
+
+        let state = renderer.currentState(timeOfDay: 7.0)
+
+        XCTAssertEqual(state.ambientColor.x, 0.5, accuracy: 0.05)
+        XCTAssertEqual(state.directionalLightColor.x, 0.25, accuracy: 0.05)
+        XCTAssertEqual(state.fogColor.x, 0.5, accuracy: 0.05)
+    }
+
+    func testEnvironmentRendererInterpolatesDirectionalLightDirectionBetweenTimeKeyframes() {
+        let renderer = EnvironmentRenderer(
+            environment: makeTimeOfDayEnvironment(
+                lightSettings: [
+                    makeLightSetting(ambient: 0, light: 0, fog: 0, direction: Vector3b(x: 0, y: 0, z: 127)),
+                    makeLightSetting(ambient: 0, light: 0, fog: 0, direction: Vector3b(x: 127, y: 0, z: 0)),
+                    makeLightSetting(ambient: 0, light: 0, fog: 0),
+                    makeLightSetting(ambient: 0, light: 0, fog: 0),
+                ]
+            )
+        )
+
+        let state = renderer.currentState(timeOfDay: 7.0)
+
+        XCTAssertEqual(state.directionalLightDirection.x, 0.7, accuracy: 0.1)
+        XCTAssertEqual(state.directionalLightDirection.z, 0.7, accuracy: 0.1)
+        XCTAssertEqual(state.directionalLightDirection.w, 0.0, accuracy: 0.000_1)
+    }
+
+    func testEnvironmentRendererUsesFirstLightSettingWhenSceneIsNotTimeDriven() {
+        let renderer = EnvironmentRenderer(
+            environment: makeEnvironment(
+                lightingMode: "false",
+                lightSettings: [
+                    makeLightSetting(ambient: 16, light: 32, fog: 48, direction: Vector3b(x: 0, y: 127, z: 0)),
+                    makeLightSetting(ambient: 255, light: 255, fog: 255, direction: Vector3b(x: 127, y: 0, z: 0)),
+                ]
+            )
+        )
+
+        let state = renderer.currentState(timeOfDay: 18.0)
+
+        XCTAssertEqual(state.ambientColor.x, 16.0 / 255.0, accuracy: 0.000_1)
+        XCTAssertEqual(state.directionalLightColor.x, 32.0 / 255.0, accuracy: 0.000_1)
+        XCTAssertEqual(state.fogColor.x, 48.0 / 255.0, accuracy: 0.000_1)
+        XCTAssertEqual(state.directionalLightDirection.y, 1.0, accuracy: 0.000_1)
     }
 
     func testRendererAllocatesTripleBufferedFrameResources() throws {
@@ -235,6 +292,57 @@ final class OOTRenderTests: XCTestCase {
         assertPixel(in: texture, x: 32, y: 32, equals: [52, 155, 45, 255])
     }
 
+    func testRendererAppliesDirectionalLightingWhenGeometryModeLightingEnabled() throws {
+        guard MTLCreateSystemDefaultDevice() != nil else {
+            throw XCTSkip("Metal is unavailable on this host")
+        }
+
+        let renderer = try OOTRenderer()
+        let texture = try makeRenderTargetTexture(renderer: renderer)
+        let frameUniforms = FrameUniforms(
+            mvp: simd_float4x4(diagonal: SIMD4<Float>(0.5, 0.5, 1.0, 1.0)),
+            ambientColor: SIMD4<Float>(0.2, 0.2, 0.2, 1.0),
+            directionalLightColor: SIMD4<Float>(0.6, 0.5, 0.4, 1.0),
+            directionalLightDirection: SIMD4<Float>(0.0, 0.0, -1.0, 0.0)
+        )
+        let combinerUniforms = CombinerUniforms(geometryMode: GeometryMode.lighting.rawValue)
+
+        renderer.renderToTexture(
+            texture,
+            vertices: makeTriangleVertices(color: RGBA8(red: 0, green: 0, blue: 127, alpha: 255)),
+            frameUniforms: frameUniforms,
+            combinerUniforms: combinerUniforms
+        )
+
+        assertPixel(in: texture, x: 32, y: 32, equals: [153, 179, 204, 255], accuracy: 2)
+    }
+
+    func testRendererUsesSceneEnvironmentForBackgroundClearColor() throws {
+        guard MTLCreateSystemDefaultDevice() != nil else {
+            throw XCTSkip("Metal is unavailable on this host")
+        }
+
+        let environment = makeTimeOfDayEnvironment(
+            lightSettings: [
+                makeLightSetting(ambient: 0, light: 0, fog: 0),
+                makeLightSetting(ambient: 255, light: 0, fog: 255),
+                makeLightSetting(ambient: 128, light: 0, fog: 128),
+                makeLightSetting(ambient: 0, light: 0, fog: 0),
+            ]
+        )
+        let scene = OOTRenderScene.syntheticScene(
+            vertices: makeTriangleVertices(color: RGBA8(red: 255, green: 0, blue: 0, alpha: 255)),
+            environment: environment
+        )
+        let renderer = try OOTRenderer(scene: scene)
+        renderer.setTimeOfDay(7.0)
+        let texture = try makeRenderTargetTexture(renderer: renderer)
+
+        try renderer.renderCurrentSceneToTexture(texture)
+
+        assertPixel(in: texture, x: 4, y: 4, equals: [102, 102, 102, 255], accuracy: 4)
+    }
+
     func testRendererReportsSceneFrameStats() throws {
         guard MTLCreateSystemDefaultDevice() != nil else {
             throw XCTSkip("Metal is unavailable on this host")
@@ -411,6 +519,47 @@ final class OOTRenderTests: XCTestCase {
             blendColor: blendColor,
             renderMode: RenderMode(flags: 0x1234_5678),
             otherMode: otherMode
+        )
+    }
+
+    private func makeTimeOfDayEnvironment(lightSettings: [SceneLightSetting]) -> SceneEnvironmentFile {
+        makeEnvironment(lightingMode: "LIGHT_MODE_TIME", lightSettings: lightSettings)
+    }
+
+    private func makeEnvironment(
+        lightingMode: String,
+        lightSettings: [SceneLightSetting]
+    ) -> SceneEnvironmentFile {
+        SceneEnvironmentFile(
+            sceneName: "spot04",
+            time: SceneTimeSettings(hour: 255, minute: 255, timeSpeed: 0),
+            skybox: SceneSkyboxSettings(
+                skyboxID: 29,
+                skyboxConfig: 0,
+                environmentLightingMode: lightingMode,
+                skyboxDisabled: false,
+                sunMoonDisabled: false
+            ),
+            lightSettings: lightSettings
+        )
+    }
+
+    private func makeLightSetting(
+        ambient: UInt8,
+        light: UInt8,
+        fog: UInt8,
+        direction: Vector3b = Vector3b(x: 0, y: 0, z: 127)
+    ) -> SceneLightSetting {
+        SceneLightSetting(
+            ambientColor: RGB8(red: ambient, green: ambient, blue: ambient),
+            light1Direction: direction,
+            light1Color: RGB8(red: light, green: light, blue: light),
+            light2Direction: Vector3b(x: 0, y: 0, z: -127),
+            light2Color: RGB8(red: 0, green: 0, blue: 0),
+            fogColor: RGB8(red: fog, green: fog, blue: fog),
+            blendRate: 0,
+            fogNear: 0,
+            zFar: 1_000
         )
     }
 }

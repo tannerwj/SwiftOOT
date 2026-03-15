@@ -43,17 +43,45 @@ public struct VertexOut: Sendable, Equatable {
 public struct FrameUniforms: Sendable, Equatable {
     public var mvp: simd_float4x4
     public var fogParameters: SIMD4<Float>
+    public var ambientColor: SIMD4<Float>
+    public var directionalLightColor: SIMD4<Float>
+    public var directionalLightDirection: SIMD4<Float>
+    public var fogColor: SIMD4<Float>
 
     public init(
         mvp: simd_float4x4,
-        fogParameters: SIMD4<Float> = SIMD4<Float>(0.0, 1.0, 0.0, 0.0)
+        fogParameters: SIMD4<Float> = SIMD4<Float>(0.0, 1.0, 0.0, 0.0),
+        ambientColor: SIMD4<Float> = SceneEnvironmentState.default.ambientColor,
+        directionalLightColor: SIMD4<Float> = SceneEnvironmentState.default.directionalLightColor,
+        directionalLightDirection: SIMD4<Float> = SceneEnvironmentState.default.directionalLightDirection,
+        fogColor: SIMD4<Float> = SceneEnvironmentState.default.fogColor
     ) {
         self.mvp = mvp
         self.fogParameters = fogParameters
+        self.ambientColor = ambientColor
+        self.directionalLightColor = directionalLightColor
+        self.directionalLightDirection = directionalLightDirection
+        self.fogColor = fogColor
     }
 
     public static var identity: FrameUniforms {
         FrameUniforms(mvp: matrix_identity_float4x4)
+    }
+
+    func withEnvironment(_ environment: SceneEnvironmentState) -> FrameUniforms {
+        FrameUniforms(
+            mvp: mvp,
+            fogParameters: SIMD4<Float>(
+                environment.fogNear,
+                environment.fogFar,
+                0.0,
+                0.0
+            ),
+            ambientColor: environment.ambientColor,
+            directionalLightColor: environment.directionalLightColor,
+            directionalLightDirection: environment.directionalLightDirection,
+            fogColor: environment.fogColor
+        )
     }
 }
 
@@ -271,7 +299,7 @@ func makeN64VertexDescriptor() -> MTLVertexDescriptor {
     descriptor.attributes[OOTRenderVertexAttribute.texCoord.rawValue].offset = 8
     descriptor.attributes[OOTRenderVertexAttribute.texCoord.rawValue].bufferIndex = OOTRenderBufferIndex.vertices.rawValue
 
-    descriptor.attributes[OOTRenderVertexAttribute.color.rawValue].format = .uchar4Normalized
+    descriptor.attributes[OOTRenderVertexAttribute.color.rawValue].format = .uchar4
     descriptor.attributes[OOTRenderVertexAttribute.color.rawValue].offset = 12
     descriptor.attributes[OOTRenderVertexAttribute.color.rawValue].bufferIndex = OOTRenderBufferIndex.vertices.rawValue
 

@@ -6,6 +6,34 @@ import OOTTelemetry
 import simd
 
 final class OOTCoreTests: XCTestCase {
+    func testTimeSystemAdvancesOneGameMinutePerRealSecond() {
+        let timeSystem = TimeSystem()
+        let updated = timeSystem.advance(
+            GameTime(frameCount: 0, timeOfDay: 6.0),
+            byRealSeconds: 1.0
+        )
+
+        XCTAssertEqual(updated.timeOfDay, 6.0 + (1.0 / 60.0), accuracy: 0.000_1)
+    }
+
+    func testTimeSystemUsesExplicitSceneStartTimeWhenPresent() {
+        let timeSystem = TimeSystem()
+        let environment = SceneEnvironmentFile(
+            sceneName: "market",
+            time: SceneTimeSettings(hour: 14, minute: 30, timeSpeed: 0),
+            skybox: SceneSkyboxSettings(
+                skyboxID: 1,
+                skyboxConfig: 0,
+                environmentLightingMode: "LIGHT_MODE_TIME",
+                skyboxDisabled: false,
+                sunMoonDisabled: false
+            ),
+            lightSettings: []
+        )
+
+        XCTAssertEqual(try XCTUnwrap(timeSystem.initialTimeOfDay(for: environment)), 14.5, accuracy: 0.000_1)
+    }
+
     func testGameRuntimeBootstrapsSpot04ByDefault() async {
         let runtime = await MainActor.run {
             GameRuntime(
