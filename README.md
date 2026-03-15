@@ -44,8 +44,8 @@ git submodule update --init
 ./scripts/apply_vendor_oot_patches.sh
 ```
 
-4. Install the remaining macOS build prerequisites described in
-   [`Vendor/oot/docs/BUILDING_MACOS.md`](Vendor/oot/docs/BUILDING_MACOS.md).
+4. Install the remaining macOS build prerequisites described in the upstream
+   [`zeldaret/oot` macOS build guide](https://github.com/zeldaret/oot/blob/main/docs/BUILDING_MACOS.md).
 
 5. Put your ROM in the matching upstream baserom folder.
 
