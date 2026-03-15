@@ -36,6 +36,13 @@ final class OOTDataModelTests: XCTestCase {
         assertCodableAndSendable(AnimationData.self)
         assertCodableAndSendable(LimbData.self)
         assertCodableAndSendable(MeshData.self)
+        assertCodableAndSendable(ObjectManifest.self)
+        assertCodableAndSendable(ObjectAnimationReference.self)
+        assertCodableAndSendable(ObjectMeshAsset.self)
+        assertCodableAndSendable(ObjectSkeletonFile.self)
+        assertCodableAndSendable(NamedSkeletonData.self)
+        assertCodableAndSendable(ObjectAnimationData.self)
+        assertCodableAndSendable(AnimationJointIndex.self)
     }
 
     func testF3DEX2CommandRoundTripsThroughJSON() throws {

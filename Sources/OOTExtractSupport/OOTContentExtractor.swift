@@ -47,9 +47,9 @@ public final class OOTContentExtractor {
     private static func makeDefaultPipeline() -> [any OOTExtractionPipelineComponent] {
         [
             TableExtractor(),
+            TextureExtractor(),
             SceneExtractor(),
             ObjectExtractor(),
-            TextureExtractor(),
             ActorExtractor(),
             AudioExtractor(),
             TextExtractor(),
