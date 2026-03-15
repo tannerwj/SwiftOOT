@@ -31,9 +31,18 @@ final class DrawBatchTests: XCTestCase {
             device: device,
             renderStateKey: renderStateKey
         )
+        let depthStencilDescriptor = MTLDepthStencilDescriptor()
+        depthStencilDescriptor.depthCompareFunction = .lessEqual
+        depthStencilDescriptor.isDepthWriteEnabled = true
+        let depthStencilState = try XCTUnwrap(
+            device.makeDepthStencilState(descriptor: depthStencilDescriptor)
+        )
+        let fallbackTexture = try makeSourceTexture(device: device)
         let resources = DrawBatchResources(
             device: device,
-            pipelineLookup: AnyRenderPipelineStateLookup { _ in pipelineState }
+            pipelineLookup: AnyRenderPipelineStateLookup { _ in pipelineState },
+            depthStencilLookup: AnyDepthStencilStateLookup { _ in depthStencilState },
+            fallbackTexture: fallbackTexture
         )
         var batch = DrawBatch(
             renderStateKey: renderStateKey,
@@ -131,5 +140,18 @@ final class DrawBatchTests: XCTestCase {
             mipmapLevel: 0
         )
         return pixel
+    }
+
+    private func makeSourceTexture(device: MTLDevice) throws -> MTLTexture {
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .rgba8Unorm,
+            width: 1,
+            height: 1,
+            mipmapped: false
+        )
+        descriptor.usage = .shaderRead
+        descriptor.storageMode = .shared
+
+        return try XCTUnwrap(device.makeTexture(descriptor: descriptor))
     }
 }

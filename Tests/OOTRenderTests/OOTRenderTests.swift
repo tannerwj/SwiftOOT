@@ -46,6 +46,49 @@ final class OOTRenderTests: XCTestCase {
         XCTAssertEqual(renderer.vertexDescriptor.attributes[2].offset, 12)
     }
 
+    func testRendererAllocatesTripleBufferedFrameResources() throws {
+        let renderer = try OOTRenderer()
+
+        XCTAssertEqual(renderer.inFlightUniformBufferCount, 3)
+    }
+
+    func testRendererCachesPipelineStatesPerRenderStateKey() throws {
+        let renderer = try OOTRenderer()
+        let key = RenderStateKey(
+            combinerHash: 0xCAFE_BABE,
+            geometryMode: [.zBuffer],
+            renderMode: RenderMode(flags: 0)
+        )
+
+        let firstPipeline = try renderer.cachedRenderPipelineState(for: key)
+        let secondPipeline = try renderer.cachedRenderPipelineState(for: key)
+
+        XCTAssertTrue(firstPipeline === secondPipeline)
+        XCTAssertEqual(renderer.cachedRenderPipelineStateCount, 1)
+    }
+
+    func testRendererRendersSyntheticSceneThroughInterpreter() throws {
+        guard MTLCreateSystemDefaultDevice() != nil else {
+            throw XCTSkip("Metal is unavailable on this host")
+        }
+
+        let skyColor = SIMD4<Float>(0.2, 0.3, 0.4, 1.0)
+        let renderer = try OOTRenderer(
+            scene: OOTRenderScene.syntheticScene(
+                vertices: makeTriangleVertices(
+                    color: RGBA8(red: 255, green: 0, blue: 0, alpha: 255)
+                ),
+                skyColor: skyColor
+            )
+        )
+        let texture = try makeRenderTargetTexture(renderer: renderer)
+
+        try renderer.renderCurrentSceneToTexture(texture)
+
+        assertPixel(in: texture, x: 32, y: 32, equals: [0, 0, 255, 255])
+        assertPixel(in: texture, x: 4, y: 4, equals: [102, 77, 51, 255])
+    }
+
     func testRendererDrawsFlatColorTriangleToTexture() throws {
         guard MTLCreateSystemDefaultDevice() != nil else {
             throw XCTSkip("Metal is unavailable on this host")
