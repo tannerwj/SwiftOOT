@@ -48,7 +48,13 @@ final class TableExtractorTests: XCTestCase {
         let objects = try decode([ObjectTableEntry].self, from: tablesDirectory.appendingPathComponent("object-table.json"))
 
         XCTAssertEqual(scenes, [
-            SceneTableEntry(index: 0, enumName: "SCENE_FOO", title: "title_card", drawConfig: 0),
+            SceneTableEntry(
+                index: 0,
+                segmentName: "foo_scene",
+                enumName: "SCENE_FOO",
+                title: "title_card",
+                drawConfig: 0
+            ),
         ])
         XCTAssertEqual(actors, [
             ActorTableEntry(

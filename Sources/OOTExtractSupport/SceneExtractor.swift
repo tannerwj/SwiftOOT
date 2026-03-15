@@ -473,6 +473,347 @@ extension CollisionExtractor {
     }
 }
 
+extension SceneManifestExtractor {
+    public func extract(using context: OOTExtractionContext) throws {
+        let fileManager = FileManager.default
+        let scenes = try SceneExtractor.loadScenes(
+            in: context.source,
+            sceneName: context.sceneName,
+            fileManager: fileManager
+        )
+        let sceneTableEntries = try Self.loadSceneTableEntries(from: context.output)
+        let sceneTableBySegmentName = Dictionary(uniqueKeysWithValues: sceneTableEntries.map { ($0.segmentName, $0) })
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        var extractedScenes = 0
+        var skippedScenes = 0
+
+        sceneLoop: for scene in scenes {
+            guard let sceneTableEntry = Self.resolveSceneTableEntry(for: scene, sceneTableBySegmentName: sceneTableBySegmentName)
+            else {
+                guard context.sceneName == nil else {
+                    throw SceneManifestExtractorError.missingSceneTableEntry(scene.name)
+                }
+                print("[\(name)] skipped scene manifest for \(scene.name): missing scene-table entry")
+                skippedScenes += 1
+                continue
+            }
+
+            let sceneDirectory = context.output
+                .appendingPathComponent("Scenes", isDirectory: true)
+                .appendingPathComponent(scene.name, isDirectory: true)
+            let metadataDirectory = Self.metadataDirectoryPath(for: scene, outputRoot: context.output)
+            let roomDirectoryRoot = sceneDirectory.appendingPathComponent("rooms", isDirectory: true)
+
+            var roomManifests: [RoomManifest] = []
+            roomManifests.reserveCapacity(scene.rooms.count)
+
+            for (index, room) in scene.rooms.enumerated() {
+                let roomDirectory = roomDirectoryRoot.appendingPathComponent(room.outputName, isDirectory: true)
+                guard fileManager.fileExists(atPath: roomDirectory.path) else {
+                    guard context.sceneName == nil else {
+                        throw SceneManifestExtractorError.missingReferencedPath(roomDirectory.path)
+                    }
+                    print("[\(name)] skipped scene manifest for \(scene.name): missing room directory \(roomDirectory.path)")
+                    skippedScenes += 1
+                    continue sceneLoop
+                }
+
+                roomManifests.append(
+                    RoomManifest(
+                        id: index,
+                        name: room.symbolName,
+                        directory: try Self.relativePath(from: context.output, to: roomDirectory),
+                        textureDirectories: Self.textureDirectories(
+                            named: [room.sourceName, room.symbolName],
+                            outputRoot: context.output,
+                            fileManager: fileManager
+                        )
+                    )
+                )
+            }
+
+            let metadataNames = ["actors.json", "environment.json", "paths.json", "exits.json"]
+            for metadataName in metadataNames {
+                let metadataURL = metadataDirectory.appendingPathComponent(metadataName)
+                guard fileManager.fileExists(atPath: metadataURL.path) else {
+                    guard context.sceneName == nil else {
+                        throw SceneManifestExtractorError.missingReferencedPath(metadataURL.path)
+                    }
+                    print("[\(name)] skipped scene manifest for \(scene.name): missing metadata file \(metadataURL.path)")
+                    skippedScenes += 1
+                    continue sceneLoop
+                }
+            }
+
+            let collisionURL = sceneDirectory.appendingPathComponent("collision.bin")
+            let manifest = SceneManifest(
+                id: sceneTableEntry.index,
+                name: scene.name,
+                title: sceneTableEntry.title,
+                drawConfig: sceneTableEntry.drawConfig,
+                rooms: roomManifests,
+                collisionPath: fileManager.fileExists(atPath: collisionURL.path)
+                    ? try Self.relativePath(from: context.output, to: collisionURL)
+                    : nil,
+                actorsPath: try Self.relativePath(
+                    from: context.output,
+                    to: metadataDirectory.appendingPathComponent("actors.json")
+                ),
+                environmentPath: try Self.relativePath(
+                    from: context.output,
+                    to: metadataDirectory.appendingPathComponent("environment.json")
+                ),
+                pathsPath: try Self.relativePath(
+                    from: context.output,
+                    to: metadataDirectory.appendingPathComponent("paths.json")
+                ),
+                exitsPath: try Self.relativePath(
+                    from: context.output,
+                    to: metadataDirectory.appendingPathComponent("exits.json")
+                ),
+                textureDirectories: Self.textureDirectories(
+                    named: [scene.sceneSourceName, scene.sceneSymbolName],
+                    outputRoot: context.output,
+                    fileManager: fileManager
+                )
+            )
+
+            let data = try encoder.encode(manifest)
+            _ = try JSONDecoder().decode(SceneManifest.self, from: data)
+            try fileManager.createDirectory(at: sceneDirectory, withIntermediateDirectories: true)
+            try data.write(
+                to: sceneDirectory.appendingPathComponent("SceneManifest.json"),
+                options: .atomic
+            )
+            extractedScenes += 1
+        }
+
+        print("[\(name)] wrote \(extractedScenes) scene manifest(s)")
+        if skippedScenes > 0 {
+            print("[\(name)] skipped \(skippedScenes) scene(s) with incomplete extracted outputs")
+        }
+    }
+
+    public func verify(using context: OOTVerificationContext) throws {
+        let manifestFiles = try Self.sceneManifestFiles(in: context.content, fileManager: .default)
+
+        for manifestFile in manifestFiles {
+            let manifest: SceneManifest = try Self.readJSON(from: manifestFile)
+            try Self.verify(manifest: manifest, contentRoot: context.content)
+        }
+
+        print("[\(name)] verified \(manifestFiles.count) scene manifest(s)")
+    }
+}
+
+private extension SceneManifestExtractor {
+    static func loadSceneTableEntries(from outputRoot: URL) throws -> [SceneTableEntry] {
+        let tableURL = outputRoot
+            .appendingPathComponent("Manifests", isDirectory: true)
+            .appendingPathComponent("tables", isDirectory: true)
+            .appendingPathComponent("scene-table.json")
+        guard FileManager.default.fileExists(atPath: tableURL.path) else {
+            throw SceneManifestExtractorError.missingSceneTable(tableURL.path)
+        }
+        return try readJSON(from: tableURL)
+    }
+
+    static func resolveSceneTableEntry(
+        for scene: SceneExtractor.SceneDefinition,
+        sceneTableBySegmentName: [String: SceneTableEntry]
+    ) -> SceneTableEntry? {
+        sceneTableBySegmentName[scene.sceneSourceName] ?? sceneTableBySegmentName[scene.sceneSymbolName]
+    }
+
+    static func metadataDirectoryPath(for scene: SceneExtractor.SceneDefinition, outputRoot: URL) -> URL {
+        var directory = outputRoot
+            .appendingPathComponent("Manifests", isDirectory: true)
+            .appendingPathComponent("scenes", isDirectory: true)
+
+        for component in scene.categoryPath.split(separator: "/") {
+            directory.appendPathComponent(String(component), isDirectory: true)
+        }
+        directory.appendPathComponent(scene.name, isDirectory: true)
+        return directory
+    }
+
+    static func textureDirectories(named candidates: [String], outputRoot: URL, fileManager: FileManager) -> [String] {
+        var directories: [String] = []
+        var seen: Set<String> = []
+
+        for candidate in candidates where seen.insert(candidate).inserted {
+            let directory = outputRoot
+                .appendingPathComponent("Textures", isDirectory: true)
+                .appendingPathComponent(candidate, isDirectory: true)
+            guard fileManager.fileExists(atPath: directory.path) else {
+                continue
+            }
+            if let relativePath = try? relativePath(from: outputRoot, to: directory) {
+                directories.append(relativePath)
+            }
+        }
+
+        return directories
+    }
+
+    static func relativePath(from root: URL, to target: URL) throws -> String {
+        let rootPath = root.standardizedFileURL.path
+        let targetPath = target.standardizedFileURL.path
+
+        if targetPath == rootPath {
+            return ""
+        }
+
+        let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
+        guard targetPath.hasPrefix(prefix) else {
+            throw SceneManifestExtractorError.invalidReferencedPath(targetPath)
+        }
+
+        return String(targetPath.dropFirst(prefix.count))
+    }
+
+    static func sceneManifestFiles(in contentRoot: URL, fileManager: FileManager) throws -> [URL] {
+        let scenesRoot = contentRoot.appendingPathComponent("Scenes", isDirectory: true)
+        guard fileManager.fileExists(atPath: scenesRoot.path) else {
+            return []
+        }
+
+        guard let enumerator = fileManager.enumerator(
+            at: scenesRoot,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        return try enumerator.compactMap { item -> URL? in
+            guard let fileURL = item as? URL else {
+                return nil
+            }
+
+            let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
+            guard values.isRegularFile == true, fileURL.lastPathComponent == "SceneManifest.json" else {
+                return nil
+            }
+
+            return fileURL
+        }
+        .sorted { $0.path < $1.path }
+    }
+
+    static func verify(manifest: SceneManifest, contentRoot: URL) throws {
+        for room in manifest.rooms {
+            let roomDirectory = try referencedURL(path: room.directory, contentRoot: contentRoot)
+            guard FileManager.default.fileExists(atPath: roomDirectory.path) else {
+                throw SceneManifestExtractorError.missingReferencedPath(roomDirectory.path)
+            }
+
+            let vertexURL = roomDirectory.appendingPathComponent("vtx.bin")
+            let displayListURL = roomDirectory.appendingPathComponent("dl.json")
+            guard FileManager.default.fileExists(atPath: vertexURL.path) else {
+                throw SceneManifestExtractorError.missingReferencedPath(vertexURL.path)
+            }
+            guard FileManager.default.fileExists(atPath: displayListURL.path) else {
+                throw SceneManifestExtractorError.missingReferencedPath(displayListURL.path)
+            }
+
+            _ = try VertexParser.decode(Data(contentsOf: vertexURL), path: vertexURL.path)
+            _ = try JSONDecoder().decode([F3DEX2Command].self, from: Data(contentsOf: displayListURL))
+
+            try verifyTextureDirectories(room.textureDirectories, contentRoot: contentRoot)
+        }
+
+        if let collisionPath = manifest.collisionPath {
+            let collisionURL = try referencedURL(path: collisionPath, contentRoot: contentRoot)
+            guard FileManager.default.fileExists(atPath: collisionURL.path) else {
+                throw SceneManifestExtractorError.missingReferencedPath(collisionURL.path)
+            }
+            _ = try CollisionExtractor.decode(Data(contentsOf: collisionURL), path: collisionURL.path)
+        }
+
+        if let actorsPath = manifest.actorsPath {
+            let actorsURL = try referencedURL(path: actorsPath, contentRoot: contentRoot)
+            let _: SceneActorsFile = try readJSON(from: actorsURL)
+        }
+        if let environmentPath = manifest.environmentPath {
+            let environmentURL = try referencedURL(path: environmentPath, contentRoot: contentRoot)
+            let _: SceneEnvironmentFile = try readJSON(from: environmentURL)
+        }
+        if let pathsPath = manifest.pathsPath {
+            let pathsURL = try referencedURL(path: pathsPath, contentRoot: contentRoot)
+            let _: ScenePathsFile = try readJSON(from: pathsURL)
+        }
+        if let exitsPath = manifest.exitsPath {
+            let exitsURL = try referencedURL(path: exitsPath, contentRoot: contentRoot)
+            let _: SceneExitsFile = try readJSON(from: exitsURL)
+        }
+
+        try verifyTextureDirectories(manifest.textureDirectories, contentRoot: contentRoot)
+    }
+
+    static func verifyTextureDirectories(_ paths: [String], contentRoot: URL) throws {
+        for path in paths {
+            let directoryURL = try referencedURL(path: path, contentRoot: contentRoot)
+            var isDirectory = ObjCBool(false)
+            guard FileManager.default.fileExists(atPath: directoryURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                throw SceneManifestExtractorError.missingReferencedPath(directoryURL.path)
+            }
+        }
+    }
+
+    static func referencedURL(path: String, contentRoot: URL) throws -> URL {
+        let url = contentRoot.appendingPathComponent(path, isDirectory: false)
+        _ = try relativePath(from: contentRoot, to: url)
+        return url
+    }
+
+    static func readJSON<T: Decodable>(from url: URL) throws -> T {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw SceneManifestExtractorError.missingReferencedPath(url.path)
+        }
+
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            throw SceneManifestExtractorError.unreadableFile(url.path, error)
+        }
+
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            throw SceneManifestExtractorError.invalidJSON(url.path, error)
+        }
+    }
+}
+
+private enum SceneManifestExtractorError: LocalizedError {
+    case missingSceneTable(String)
+    case missingSceneTableEntry(String)
+    case missingReferencedPath(String)
+    case invalidReferencedPath(String)
+    case unreadableFile(String, Error)
+    case invalidJSON(String, Error)
+
+    var errorDescription: String? {
+        switch self {
+        case .missingSceneTable(let path):
+            return "Missing scene-table manifest at \(path)"
+        case .missingSceneTableEntry(let sceneName):
+            return "Could not resolve a scene-table entry for \(sceneName)"
+        case .missingReferencedPath(let path):
+            return "Missing referenced output at \(path)"
+        case .invalidReferencedPath(let path):
+            return "Referenced path escapes the content root: \(path)"
+        case .unreadableFile(let path, let error):
+            return "Failed to read \(path): \(error.localizedDescription)"
+        case .invalidJSON(let path, let error):
+            return "Failed to decode JSON at \(path): \(error.localizedDescription)"
+        }
+    }
+}
+
 private extension SceneExtractor {
     struct MetadataReferenceTables {
         let actorIDByName: [String: Int]
@@ -583,8 +924,12 @@ private extension SceneExtractor {
                 continue
             }
 
-            let parentPath = fileURL.deletingLastPathComponent().path
-            let relativeCategoryPath = String(parentPath.dropFirst(xmlRoot.path.count)).trimmingPrefix("/")
+            let normalizedXMLRoot = xmlRoot.resolvingSymlinksInPath().standardizedFileURL
+            let normalizedParent = fileURL.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
+            let relativeCategoryPath = normalizedParent
+                .pathComponents
+                .dropFirst(normalizedXMLRoot.pathComponents.count)
+                .joined(separator: "/")
 
             scenes.append(
                 SceneDefinition(

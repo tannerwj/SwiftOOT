@@ -65,38 +65,24 @@ final class OOTDataModelTests: XCTestCase {
     }
 
     func testSceneManifestEncodesNestedFoundationalTypes() throws {
-        let vertex = N64Vertex(
-            position: Vector3s(x: 1, y: 2, z: 3),
-            flag: 0,
-            textureCoordinate: Vector2s(x: 4, y: 5),
-            colorOrNormal: RGBA8(red: 255, green: 128, blue: 64, alpha: 255)
-        )
         let room = RoomManifest(
             id: 0,
-            name: "Inside Deku Tree",
-            objectIDs: [1, 2],
-            actors: [ActorProfile(id: 1, category: 5, flags: 0x20, objectID: 3)],
-            mesh: MeshData(vertices: [vertex], indices: [0])
+            name: "spot04_room_0",
+            directory: "Scenes/spot04/rooms/room_0",
+            textureDirectories: ["Textures/spot04_room_0"]
         )
         let manifest = SceneManifest(
-            id: 1,
-            name: "ydan",
-            title: "Inside the Deku Tree",
+            id: 0x55,
+            name: "spot04",
+            title: "g_pn_31",
+            drawConfig: 0,
             rooms: [room],
-            objectIDs: [1, 2, 3],
-            collision: CollisionMesh(
-                vertices: [Vector3s(x: 0, y: 0, z: 0)],
-                polygons: [
-                    CollisionPoly(
-                        surfaceType: 1,
-                        vertexA: 0,
-                        vertexB: 0,
-                        vertexC: 0,
-                        normal: Vector3s(x: 0, y: 1, z: 0),
-                        distance: 0
-                    )
-                ]
-            )
+            collisionPath: "Scenes/spot04/collision.bin",
+            actorsPath: "Manifests/scenes/overworld/spot04/actors.json",
+            environmentPath: "Manifests/scenes/overworld/spot04/environment.json",
+            pathsPath: "Manifests/scenes/overworld/spot04/paths.json",
+            exitsPath: "Manifests/scenes/overworld/spot04/exits.json",
+            textureDirectories: ["Textures/spot04_scene"]
         )
 
         let data = try JSONEncoder().encode(manifest)

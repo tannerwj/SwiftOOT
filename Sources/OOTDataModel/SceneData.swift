@@ -2,46 +2,58 @@ public struct SceneManifest: Codable, Sendable, Equatable {
     public var id: Int
     public var name: String
     public var title: String?
+    public var drawConfig: Int?
     public var rooms: [RoomManifest]
-    public var objectIDs: [Int]
-    public var collision: CollisionMesh?
+    public var collisionPath: String?
+    public var actorsPath: String?
+    public var environmentPath: String?
+    public var pathsPath: String?
+    public var exitsPath: String?
+    public var textureDirectories: [String]
 
     public init(
         id: Int,
         name: String,
         title: String? = nil,
+        drawConfig: Int? = nil,
         rooms: [RoomManifest],
-        objectIDs: [Int] = [],
-        collision: CollisionMesh? = nil
+        collisionPath: String? = nil,
+        actorsPath: String? = nil,
+        environmentPath: String? = nil,
+        pathsPath: String? = nil,
+        exitsPath: String? = nil,
+        textureDirectories: [String] = []
     ) {
         self.id = id
         self.name = name
         self.title = title
+        self.drawConfig = drawConfig
         self.rooms = rooms
-        self.objectIDs = objectIDs
-        self.collision = collision
+        self.collisionPath = collisionPath
+        self.actorsPath = actorsPath
+        self.environmentPath = environmentPath
+        self.pathsPath = pathsPath
+        self.exitsPath = exitsPath
+        self.textureDirectories = textureDirectories
     }
 }
 
 public struct RoomManifest: Codable, Sendable, Equatable {
     public var id: Int
     public var name: String
-    public var objectIDs: [Int]
-    public var actors: [ActorProfile]
-    public var mesh: MeshData?
+    public var directory: String
+    public var textureDirectories: [String]
 
     public init(
         id: Int,
         name: String,
-        objectIDs: [Int] = [],
-        actors: [ActorProfile] = [],
-        mesh: MeshData? = nil
+        directory: String,
+        textureDirectories: [String] = []
     ) {
         self.id = id
         self.name = name
-        self.objectIDs = objectIDs
-        self.actors = actors
-        self.mesh = mesh
+        self.directory = directory
+        self.textureDirectories = textureDirectories
     }
 }
 
@@ -61,12 +73,20 @@ public struct ActorProfile: Codable, Sendable, Equatable {
 
 public struct SceneTableEntry: Codable, Sendable, Equatable {
     public var index: Int
+    public var segmentName: String
     public var enumName: String
     public var title: String?
     public var drawConfig: Int?
 
-    public init(index: Int, enumName: String, title: String? = nil, drawConfig: Int? = nil) {
+    public init(
+        index: Int,
+        segmentName: String,
+        enumName: String,
+        title: String? = nil,
+        drawConfig: Int? = nil
+    ) {
         self.index = index
+        self.segmentName = segmentName
         self.enumName = enumName
         self.title = title
         self.drawConfig = drawConfig
