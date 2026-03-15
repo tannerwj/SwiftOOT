@@ -4,6 +4,9 @@ import PackageDescription
 
 let package = Package(
     name: "SwiftOOT",
+    platforms: [
+        .macOS(.v14),
+    ],
     products: [
         .library(
             name: "OOTDataModel",
@@ -24,6 +27,14 @@ let package = Package(
         .library(
             name: "OOTRender",
             targets: ["OOTRender"]
+        ),
+        .library(
+            name: "OOTTelemetry",
+            targets: ["OOTTelemetry"]
+        ),
+        .library(
+            name: "OOTCore",
+            targets: ["OOTCore"]
         ),
     ],
     dependencies: [
@@ -53,6 +64,14 @@ let package = Package(
             dependencies: ["OOTDataModel"],
             exclude: ["OOTShaders.metal"]
         ),
+        .target(
+            name: "OOTTelemetry",
+            dependencies: ["OOTDataModel"]
+        ),
+        .target(
+            name: "OOTCore",
+            dependencies: ["OOTContent", "OOTDataModel", "OOTTelemetry"]
+        ),
         .testTarget(
             name: "OOTDataModelTests",
             dependencies: ["OOTDataModel"]
@@ -60,6 +79,10 @@ let package = Package(
         .testTarget(
             name: "OOTContentTests",
             dependencies: ["OOTContent", "OOTDataModel"]
+        ),
+        .testTarget(
+            name: "OOTCoreTests",
+            dependencies: ["OOTCore", "OOTContent", "OOTDataModel"]
         ),
         .testTarget(
             name: "OOTExtractCLITests",
