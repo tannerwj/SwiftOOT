@@ -6,7 +6,9 @@ import OOTDataModel
 
 final class OOTContentTests: XCTestCase {
     func testContentLoaderConformsToProtocol() {
-        let loader: any ContentLoading = ContentLoader()
+        let loader: any ContentLoading = ContentLoader(
+            contentRoot: URL(fileURLWithPath: "/tmp", isDirectory: true)
+        )
 
         XCTAssertNotNil(loader)
     }

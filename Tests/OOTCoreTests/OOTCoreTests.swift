@@ -31,7 +31,10 @@ final class OOTCoreTests: XCTestCase {
 
     @MainActor
     func testGameRuntimeStartsWithBootStateAndRequiredProperties() {
-        let runtime = GameRuntime(suspender: { _ in })
+        let runtime = GameRuntime(
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
 
         XCTAssertEqual(runtime.currentState, .boot)
         XCTAssertNil(runtime.playState)
@@ -43,7 +46,10 @@ final class OOTCoreTests: XCTestCase {
 
     @MainActor
     func testStartAdvancesFromBootToTitleScreen() async {
-        let runtime = GameRuntime(suspender: { _ in })
+        let runtime = GameRuntime(
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
 
         await runtime.start()
 
@@ -53,7 +59,10 @@ final class OOTCoreTests: XCTestCase {
 
     @MainActor
     func testChoosingNewGameOpensFileSelectAndStartsGameplay() async {
-        let runtime = GameRuntime(suspender: { _ in })
+        let runtime = GameRuntime(
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
         await runtime.start()
 
         runtime.chooseTitleOption(.newGame)
@@ -73,7 +82,10 @@ final class OOTCoreTests: XCTestCase {
 
     @MainActor
     func testContinueWithoutSaveStaysOnTitleScreen() async {
-        let runtime = GameRuntime(suspender: { _ in })
+        let runtime = GameRuntime(
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
         await runtime.start()
 
         runtime.chooseTitleOption(.continueGame)
@@ -93,6 +105,7 @@ final class OOTCoreTests: XCTestCase {
                     .empty(id: 2),
                 ]
             ),
+            sceneLoader: MockSceneLoader(),
             suspender: { _ in }
         )
         await runtime.start()
@@ -155,6 +168,84 @@ final class OOTCoreTests: XCTestCase {
         )
     }
 
+    func testPlayerStateTransitionsBetweenIdleWalkRunAndUpdatesFacing() {
+        let system = CollisionSystem(staticMeshes: [fixtureCollisionMesh()])
+        let configuration = PlayerMovementConfiguration(
+            walkSpeed: 1,
+            runSpeed: 1.5,
+            floorProbeHeight: 4,
+            collisionRadius: 0.5
+        )
+        let initialState = PlayerState(
+            position: Vec3f(x: 2, y: 0, z: 8),
+            velocity: Vec3f(x: 0, y: 0, z: 0),
+            facingRadians: 0,
+            isGrounded: true,
+            locomotionState: .idle,
+            animationState: PlayerAnimationState(),
+            floorHeight: 0
+        )
+
+        let walking = initialState.updating(
+            input: ControllerInputState(stick: StickInput(x: 0, y: 0.5)),
+            collisionSystem: system,
+            configuration: configuration
+        )
+        XCTAssertEqual(walking.locomotionState, .walking)
+        XCTAssertEqual(walking.animationState.currentClip, .walk)
+        XCTAssertEqual(Double(walking.facingRadians), 0, accuracy: 0.001)
+
+        let running = initialState.updating(
+            input: ControllerInputState(stick: StickInput(x: 1, y: 0)),
+            collisionSystem: system,
+            configuration: configuration
+        )
+        XCTAssertEqual(running.locomotionState, .running)
+        XCTAssertEqual(running.animationState.currentClip, .run)
+        XCTAssertEqual(Double(running.facingRadians), Double.pi / 2, accuracy: 0.001)
+    }
+
+    func testPlayerStateSnapsToNearbyFloorAndFallsWithoutSupport() {
+        let system = CollisionSystem(staticMeshes: [fixtureCollisionMesh()])
+        let configuration = PlayerMovementConfiguration()
+
+        let nearFloor = PlayerState(
+            position: Vec3f(x: 2, y: 4, z: 2),
+            velocity: Vec3f(x: 0, y: 0, z: 0),
+            facingRadians: 0,
+            isGrounded: false,
+            locomotionState: .falling,
+            animationState: PlayerAnimationState(currentClip: .idle),
+            floorHeight: nil
+        )
+        let snapped = nearFloor.updating(
+            input: ControllerInputState(),
+            collisionSystem: system,
+            configuration: configuration
+        )
+        XCTAssertTrue(snapped.isGrounded)
+        XCTAssertEqual(Double(snapped.position.y), 0, accuracy: 0.001)
+        XCTAssertEqual(snapped.locomotionState, .idle)
+
+        let unsupported = PlayerState(
+            position: Vec3f(x: 20, y: 20, z: 20),
+            velocity: Vec3f(x: 0, y: 0, z: 0),
+            facingRadians: 0,
+            isGrounded: false,
+            locomotionState: .falling,
+            animationState: PlayerAnimationState(currentClip: .idle),
+            floorHeight: nil
+        )
+        let falling = unsupported.updating(
+            input: ControllerInputState(),
+            collisionSystem: system,
+            configuration: configuration
+        )
+        XCTAssertFalse(falling.isGrounded)
+        XCTAssertEqual(falling.locomotionState, .falling)
+        XCTAssertLessThan(falling.position.y, unsupported.position.y)
+    }
+
     @MainActor
     func testLoadSceneSpawnsBaselineActorsUsingDefaultRegistry() throws {
         let fixture = RuntimeFixture(
@@ -175,7 +266,11 @@ final class OOTCoreTests: XCTestCase {
                 makeActorTableEntry(id: 4, name: "ACTOR_OBJ_HANA", category: .prop),
             ]
         )
-        let runtime = GameRuntime(contentLoader: fixture.contentLoader, suspender: { _ in })
+        let runtime = GameRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
 
         try runtime.loadScene(id: 0x55)
 
@@ -240,6 +335,7 @@ final class OOTCoreTests: XCTestCase {
         )
         let runtime = GameRuntime(
             contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
             actorRegistry: registry,
             suspender: { _ in }
         )
@@ -295,6 +391,7 @@ final class OOTCoreTests: XCTestCase {
         )
         let runtime = GameRuntime(
             contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
             actorRegistry: registry,
             suspender: { _ in }
         )
@@ -353,6 +450,7 @@ final class OOTCoreTests: XCTestCase {
         )
         let runtime = GameRuntime(
             contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
             actorRegistry: registry,
             suspender: { _ in }
         )
@@ -584,6 +682,14 @@ private struct MockSceneLoader: SceneLoading {
 
     func loadActorTable() throws -> [ActorTableEntry] {
         []
+    }
+
+    func loadObjectTable() throws -> [ObjectTableEntry] {
+        []
+    }
+
+    func loadObject(named name: String) throws -> LoadedObject {
+        throw ContentLoaderError.sceneLoadingUnavailable
     }
 
     func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh? {

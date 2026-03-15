@@ -58,8 +58,8 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     let vertexDescriptor: MTLVertexDescriptor
     let orbitCameraController: OrbitCameraController
 
-    private let renderScene: OOTRenderScene
-    private let textureBindings: [UInt32: MTLTexture]
+    private var renderScene: OOTRenderScene
+    private var textureBindings: [UInt32: MTLTexture]
     private let fallbackTexture: MTLTexture
     private let opaqueDepthStencilState: MTLDepthStencilState
     private let translucentDepthStencilState: MTLDepthStencilState
@@ -163,6 +163,11 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
 
     public func setFrameStatsHandler(_ handler: @escaping (SceneFrameStats) -> Void) {
         frameStatsHandler = handler
+    }
+
+    public func updateScene(_ scene: OOTRenderScene, textureBindings: [UInt32: MTLTexture]) {
+        renderScene = scene
+        self.textureBindings = textureBindings
     }
 
     public func draw(in view: MTKView) {
