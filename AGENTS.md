@@ -61,3 +61,100 @@ The zeldaret/oot repo lives at `Vendor/oot/`. Key locations:
 - Don't implement actor behavior by transpiling C — rewrite idiomatically in Swift
 - Don't over-abstract. Three similar lines > premature abstraction.
 
+## Symphony Orchestration
+
+Symphony is the execution layer for issue work. Linear is the queue.
+
+### State Machine
+
+- `Backlog`: not ready
+- `Todo`: ready for Symphony pickup
+- `In Progress`: worker is active
+- `Human Review`: branch/PR is ready for review
+- `Rework`: reviewer found issues; Symphony should restart from current `master`
+- `Merging`: approved and ready to land
+- `Done`: merged
+
+### Worker Contract
+
+For a normal implementation pass, Symphony should:
+
+1. pick one issue from `Todo`
+2. create a fresh branch from current `master`
+3. implement only that issue
+4. run the issue's verification commands
+5. update docs if behavior or setup changed
+6. open or update the PR
+7. move the issue to `Human Review`
+8. stop
+
+Workers should not continue directly into the next issue from the same branch.
+
+For extractor and parser issues, fixture tests are necessary but not sufficient.
+If the issue touches `Vendor/oot` parsing, the worker must also run the exact
+real-source acceptance command from the issue against the local `Vendor/oot`
+tree before moving to `Human Review`.
+
+For example, a scene-scoped extractor issue should not move to review unless the
+worker has verified the real command succeeds and the expected output files
+exist on disk.
+
+### Reviewer Contract
+
+Review the actual branch, not just the issue text or agent handoff.
+
+At minimum:
+
+- inspect the PR diff
+- verify the branch still matches the issue scope
+- run relevant local verification commands when practical
+- look for packaging, scheme, entrypoint, or merge-order problems that CI may miss
+
+If the branch is acceptable:
+
+- move the issue to `Merging`
+
+If the branch is not acceptable:
+
+- move the issue to `Rework`
+- leave concrete feedback in Linear or on the PR
+- include the exact command to rerun
+- include the exact expected output files to check
+- include the exact failure string if one was observed
+
+### Rework Rules
+
+When an issue moves to `Rework`, the next Symphony worker should:
+
+- start from fresh `master`
+- address only the review findings
+- reopen with a clean branch/PR state
+
+Do not stack rework on top of stale implementation branches unless there is a
+specific reason to preserve them.
+
+If the same issue returns to `Rework` more than twice for the same underlying
+failure mode, stop treating it as a normal review loop. Tighten the issue's
+verification contract, add a regression test for the real failing input shape,
+and either:
+
+- have the next worker prove the real acceptance command locally before review, or
+- take over the branch directly and fix it.
+
+### Lessons Learned
+
+`TAN-30` exposed a repeatable failure pattern:
+
+- fixture-only tests gave false confidence
+- the real `Vendor/oot` source used macro-heavy forms the fixtures did not cover
+- reviewers were correctly catching the failure, but the branch kept returning
+  with narrow fixes that still did not satisfy the real command
+
+To avoid repeating that pattern:
+
+- write at least one regression test from a real upstream source shape, not only
+  a simplified fixture invented for the test
+- put the exact real-source acceptance command in the issue body
+- require the worker handoff to include the command output and the concrete
+  generated files
+- reject parser/extractor issues that only prove synthetic fixtures

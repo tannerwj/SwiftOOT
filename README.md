@@ -74,3 +74,69 @@ This project is intended for mostly serial, issue-by-issue agent execution:
 
 See [AGENTS.md](AGENTS.md) for the issue readiness rules, definition of done,
 and handoff format.
+
+## Symphony Workflow
+
+Symphony is the worker orchestrator for this repo. Linear is the source of truth
+for what Symphony should pick up next.
+
+### Issue States
+
+- `Backlog`: not ready for implementation
+- `Todo`: ready for Symphony pickup
+- `In Progress`: Symphony worker is actively implementing the issue
+- `Human Review`: implementation is complete and ready for branch/PR review
+- `Rework`: review found issues; Symphony should start fresh from `master` and address them
+- `Merging`: approved and ready for Symphony to land
+- `Done`: merged and complete
+
+### Expected Flow
+
+1. Move a small, unblocked, well-scoped issue to `Todo`.
+2. Symphony picks it up, creates a branch/PR, implements the change, verifies it, and moves the issue to `Human Review`.
+3. Human review checks the actual PR branch, not just the Linear summary.
+4. If changes are needed:
+   - move the issue to `Rework`
+   - leave concrete review feedback on the PR or Linear issue
+5. If approved:
+   - move the issue to `Merging`
+   - Symphony lands the PR and moves the issue to `Done`
+
+### Review Standard
+
+Human review should verify branch-level reality:
+
+- read the PR diff
+- inspect the actual branch contents
+- run the relevant local build/test commands when practical
+- confirm the branch satisfies the Linear issue contract
+
+Passing CI is necessary but not sufficient. If the branch introduces merge risk,
+runner-only breakage, incorrect packaging, or misses issue acceptance criteria,
+send it back to `Rework`.
+
+## Lessons Learned
+
+`TAN-30` showed that parser and extractor tickets need stronger acceptance
+checks than normal app or module-skeleton work.
+
+The main failure mode was:
+
+- unit tests passed on simplified fixtures
+- the real `Vendor/oot` source used additional macro forms
+- the worker kept fixing only the last reported parse error instead of proving
+  the full real command succeeded
+
+For future extractor/parser issues:
+
+- include the exact real-source command in the issue
+- require the worker to run that command before review
+- require the worker to confirm the expected output files exist
+- add at least one regression test derived from the real upstream source shape
+
+For reviewers:
+
+- if the real-source command fails, send the issue back with the exact command,
+  exact failure string, and exact expected output path
+- if the same issue loops on the same failure mode, stop the loop and fix or
+  restate the issue more concretely
