@@ -21,6 +21,7 @@ public struct LoadedScene: Sendable, Equatable {
     public var manifest: SceneManifest
     public var collision: CollisionMesh?
     public var actors: SceneActorsFile?
+    public var spawns: SceneSpawnsFile?
     public var environment: SceneEnvironmentFile?
     public var paths: ScenePathsFile?
     public var rooms: [LoadedSceneRoom]
@@ -29,6 +30,7 @@ public struct LoadedScene: Sendable, Equatable {
         manifest: SceneManifest,
         collision: CollisionMesh? = nil,
         actors: SceneActorsFile? = nil,
+        spawns: SceneSpawnsFile? = nil,
         environment: SceneEnvironmentFile? = nil,
         paths: ScenePathsFile? = nil,
         rooms: [LoadedSceneRoom]
@@ -36,6 +38,7 @@ public struct LoadedScene: Sendable, Equatable {
         self.manifest = manifest
         self.collision = collision
         self.actors = actors
+        self.spawns = spawns
         self.environment = environment
         self.paths = paths
         self.rooms = rooms
@@ -163,6 +166,10 @@ public struct SceneLoader: SceneLoading {
 
     public func loadActors(for manifest: SceneManifest) throws -> SceneActorsFile? {
         try loadOptionalJSON(SceneActorsFile.self, fromRelativePath: manifest.actorsPath)
+    }
+
+    public func loadSpawns(for manifest: SceneManifest) throws -> SceneSpawnsFile? {
+        try loadOptionalJSON(SceneSpawnsFile.self, fromRelativePath: manifest.spawnsPath)
     }
 
     public func loadEnvironment(for manifest: SceneManifest) throws -> SceneEnvironmentFile? {
@@ -294,6 +301,7 @@ private extension SceneLoader {
             manifest: manifest,
             collision: loadCollisionMesh(for: manifest),
             actors: loadActors(for: manifest),
+            spawns: loadSpawns(for: manifest),
             environment: loadEnvironment(for: manifest),
             paths: loadPaths(for: manifest),
             rooms: manifest.rooms.map { room in

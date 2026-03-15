@@ -13,6 +13,7 @@ public struct MetalView: NSViewRepresentable {
     private let scene: OOTRenderScene
     private let textureBindings: [UInt32: MTLTexture]
     private let inputHandler: (any GameplayInputHandling)?
+    private let gameplayCameraConfiguration: GameplayCameraConfiguration?
     private let frameStatsHandler: (SceneFrameStats) -> Void
 
     public init(
@@ -20,12 +21,14 @@ public struct MetalView: NSViewRepresentable {
         scene: OOTRenderScene,
         textureBindings: [UInt32: MTLTexture] = [:],
         inputHandler: (any GameplayInputHandling)? = nil,
+        gameplayCameraConfiguration: GameplayCameraConfiguration? = nil,
         frameStatsHandler: @escaping (SceneFrameStats) -> Void = { _ in }
     ) {
         self.sceneIdentity = sceneIdentity
         self.scene = scene
         self.textureBindings = textureBindings
         self.inputHandler = inputHandler
+        self.gameplayCameraConfiguration = gameplayCameraConfiguration
         self.frameStatsHandler = frameStatsHandler
     }
 
@@ -40,6 +43,7 @@ public struct MetalView: NSViewRepresentable {
             renderer = try OOTRenderer(
                 scene: scene,
                 textureBindings: textureBindings,
+                gameplayCameraConfiguration: gameplayCameraConfiguration,
                 frameStatsHandler: frameStatsHandler
             )
         } catch {
@@ -57,6 +61,7 @@ public struct MetalView: NSViewRepresentable {
     public func updateNSView(_ nsView: MTKView, context: Context) {
         context.coordinator.renderer?.setFrameStatsHandler(frameStatsHandler)
         context.coordinator.renderer?.updateScene(scene, textureBindings: textureBindings)
+        context.coordinator.renderer?.updateGameplayCameraConfiguration(gameplayCameraConfiguration)
         if let nsView = nsView as? OrbitInputMTKView {
             nsView.gameplayInputHandler = inputHandler
         }
@@ -87,10 +92,7 @@ final class OrbitInputMTKView: MTKView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        inputRenderer?.orbitCameraController.orbit(
-            deltaX: event.deltaX,
-            deltaY: event.deltaY
-        )
+        inputRenderer?.handlePrimaryDrag(deltaX: event.deltaX, deltaY: event.deltaY)
     }
 
     override func rightMouseDown(with event: NSEvent) {
@@ -98,20 +100,19 @@ final class OrbitInputMTKView: MTKView {
     }
 
     override func rightMouseDragged(with event: NSEvent) {
-        inputRenderer?.orbitCameraController.pan(
-            deltaX: event.deltaX,
-            deltaY: event.deltaY
-        )
+        inputRenderer?.handleSecondaryDrag(deltaX: event.deltaX, deltaY: event.deltaY)
     }
 
     override func scrollWheel(with event: NSEvent) {
-        inputRenderer?.orbitCameraController.zoom(
-            scrollDeltaY: event.scrollingDeltaY
-        )
+        inputRenderer?.handleScroll(scrollDeltaY: event.scrollingDeltaY)
     }
 
     override func keyDown(with event: NSEvent) {
         guard gameplayInputHandler?.handleKeyDown(event) != true else {
+            return
+        }
+
+        guard handleCameraKeyEvent(event) == false else {
             return
         }
 
@@ -124,5 +125,32 @@ final class OrbitInputMTKView: MTKView {
         }
 
         super.keyUp(with: event)
+    }
+
+    private func handleCameraKeyEvent(_ event: NSEvent) -> Bool {
+        if
+            event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains([.command, .shift]),
+            event.charactersIgnoringModifiers?.lowercased() == "c"
+        {
+            inputRenderer?.toggleDebugCamera()
+            return true
+        }
+
+        guard let characters = event.charactersIgnoringModifiers?.lowercased() else {
+            return false
+        }
+
+        var handled = false
+        for character in characters {
+            switch character {
+            case "z":
+                inputRenderer?.snapGameplayCameraBehindPlayer()
+                handled = true
+            default:
+                continue
+            }
+        }
+
+        return handled
     }
 }

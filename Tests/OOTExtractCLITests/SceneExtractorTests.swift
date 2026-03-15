@@ -418,6 +418,10 @@ final class SceneExtractorTests: XCTestCase {
             SceneActorsFile.self,
             from: Data(contentsOf: sceneDirectory.appendingPathComponent("actors.json"))
         )
+        let spawns = try JSONDecoder().decode(
+            SceneSpawnsFile.self,
+            from: Data(contentsOf: sceneDirectory.appendingPathComponent("spawns.json"))
+        )
         let environment = try JSONDecoder().decode(
             SceneEnvironmentFile.self,
             from: Data(contentsOf: sceneDirectory.appendingPathComponent("environment.json"))
@@ -434,6 +438,8 @@ final class SceneExtractorTests: XCTestCase {
         XCTAssertEqual(actors.sceneName, "spot04")
         XCTAssertEqual(actors.rooms.map(\.roomName), ["spot04_room_0"])
         XCTAssertEqual(actors.rooms[0].actors.count, 78)
+        XCTAssertEqual(spawns.sceneName, "spot04")
+        XCTAssertEqual(spawns.spawns.count, 12)
 
         let kokiriSpawns = actors.rooms[0].actors.filter { $0.actorName == "ACTOR_EN_KO" }
         XCTAssertEqual(
@@ -445,6 +451,15 @@ final class SceneExtractorTests: XCTestCase {
                 Vector3s(x: -1472, y: -80, z: -294),
                 Vector3s(x: 669, y: 0, z: 521),
             ]
+        )
+        XCTAssertEqual(
+            spawns.spawns[0],
+            SceneSpawnPoint(
+                index: 0,
+                position: Vector3s(x: 0, y: 0, z: 0),
+                rotation: Vector3s(x: 0, y: 0, z: 0),
+                params: 0
+            )
         )
 
         XCTAssertEqual(environment.sceneName, "spot04")
@@ -867,6 +882,21 @@ SceneCmd spot04_sceneCommands[] = {
     SCENE_CMD_EXIT_LIST(spot04_sceneExitList_0001B4),
     SCENE_CMD_ENV_LIGHT_SETTINGS(12, spot04_sceneLightSettings0x0001CC),
     SCENE_CMD_END(),
+};
+
+ActorEntry spot04_sceneStartPositionList0x0000A4[] = {
+    { ACTOR_PLAYER, {      0,      0,      0 }, {      0,      0,      0 }, 0x0000 },
+    { ACTOR_PLAYER, {    100,      0,    200 }, {      0, 0X4000,      0 }, 0x0001 },
+    { ACTOR_PLAYER, {   -150,     20,    320 }, {      0, 0X8000,      0 }, 0x0002 },
+    { ACTOR_PLAYER, {    480,      0,   -210 }, {      0, 0XC000,      0 }, 0x0003 },
+    { ACTOR_PLAYER, {   -220,     80,   -640 }, {      0, 0X2000,      0 }, 0x0004 },
+    { ACTOR_PLAYER, {    715,      0,     40 }, {      0, 0X6000,      0 }, 0x0005 },
+    { ACTOR_PLAYER, {   -890,      0,    540 }, {      0, 0XA000,      0 }, 0x0006 },
+    { ACTOR_PLAYER, {    240,     60,    960 }, {      0, 0XE000,      0 }, 0x0007 },
+    { ACTOR_PLAYER, {  -1120,    120,    180 }, {      0, 0X1000,      0 }, 0x0008 },
+    { ACTOR_PLAYER, {    300,    -80,   -900 }, {      0, 0X3000,      0 }, 0x0009 },
+    { ACTOR_PLAYER, {   -450,      0,   1240 }, {      0, 0X5000,      0 }, 0x000A },
+    { ACTOR_PLAYER, {    980,     40,   -360 }, {      0, 0X7000,      0 }, 0x000B },
 };
 
 u16 spot04_sceneExitList_0001B4[] = {

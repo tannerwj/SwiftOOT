@@ -6,6 +6,7 @@ public struct SceneManifest: Codable, Sendable, Equatable {
     public var rooms: [RoomManifest]
     public var collisionPath: String?
     public var actorsPath: String?
+    public var spawnsPath: String?
     public var environmentPath: String?
     public var pathsPath: String?
     public var exitsPath: String?
@@ -19,6 +20,7 @@ public struct SceneManifest: Codable, Sendable, Equatable {
         rooms: [RoomManifest],
         collisionPath: String? = nil,
         actorsPath: String? = nil,
+        spawnsPath: String? = nil,
         environmentPath: String? = nil,
         pathsPath: String? = nil,
         exitsPath: String? = nil,
@@ -31,6 +33,7 @@ public struct SceneManifest: Codable, Sendable, Equatable {
         self.rooms = rooms
         self.collisionPath = collisionPath
         self.actorsPath = actorsPath
+        self.spawnsPath = spawnsPath
         self.environmentPath = environmentPath
         self.pathsPath = pathsPath
         self.exitsPath = exitsPath

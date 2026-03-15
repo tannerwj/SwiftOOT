@@ -35,7 +35,7 @@ final class CollisionExtractorTests: XCTestCase {
         let collisionData = try Data(contentsOf: collisionURL)
         let collision = try CollisionExtractor.decode(collisionData, path: collisionURL.path)
 
-        XCTAssertEqual(collisionData.count, 116)
+        XCTAssertEqual(collisionData.count, 144)
         XCTAssertEqual(collision.minimumBounds, Vector3s(x: -1000, y: -200, z: -3000))
         XCTAssertEqual(collision.maximumBounds, Vector3s(x: 4000, y: 500, z: 6000))
         XCTAssertEqual(
@@ -84,7 +84,7 @@ final class CollisionExtractorTests: XCTestCase {
             [
                 CollisionSurfaceTypeBinary(
                     low: surfaceType0(
-                        bgCamIndex: 11,
+                        bgCamIndex: 0,
                         exitIndex: 0,
                         floorType: 0,
                         unk18: 0,
@@ -105,6 +105,23 @@ final class CollisionExtractorTests: XCTestCase {
                     )
                 ),
                 CollisionSurfaceTypeBinary(low: 0x00000001, high: 0x00000002),
+            ]
+        )
+        XCTAssertEqual(
+            collision.bgCameras,
+            [
+                CollisionBgCameraBinary(
+                    setting: 0x0012,
+                    count: 0,
+                    cameraData: CollisionBgCameraDataBinary(
+                        position: Vector3s(x: 120, y: 240, z: 360),
+                        rotation: Vector3s(x: 0x1000, y: 0x2000, z: 0),
+                        fov: 60,
+                        parameter: 7,
+                        unknown: 0
+                    ),
+                    crawlspacePoints: []
+                )
             ]
         )
         XCTAssertEqual(
@@ -185,6 +202,7 @@ final class CollisionExtractorTests: XCTestCase {
                     )
                 ],
                 surfaceTypes: [CollisionSurfaceTypeBinary(low: 0, high: 0)],
+                bgCameras: [],
                 waterBoxes: []
             )
         )
@@ -275,10 +293,22 @@ CollisionPoly spot04_sceneCollisionHeader_000100Polygons[] = {
 
 SurfaceType spot04_sceneCollisionHeader_000100SurfaceTypes[] = {
     {
-        SURFACETYPE0(11, 0, FLOOR_TYPE_0, 0, WALL_TYPE_0, FLOOR_PROPERTY_0, false, false),
+        SURFACETYPE0(0, 0, FLOOR_TYPE_0, 0, WALL_TYPE_0, FLOOR_PROPERTY_0, false, false),
         SURFACETYPE1(SURFACE_MATERIAL_WOOD, FLOOR_EFFECT_0, 31, 1, false, CONVEYOR_SPEED_DISABLED, CONVEYOR_DIRECTION_FROM_BINANG(0x0), false),
     },
     { 0x00000001, 0x00000002 },
+};
+
+BgCamFuncData spot04_sceneCollisionHeader_000100BgCamData_0000[] = {
+    { 120, 240, 360 },
+    { 0x1000, 0x2000, 0x0000 },
+    60,
+    7,
+    0,
+};
+
+BgCamInfo spot04_sceneCollisionHeader_000100BgCamList[] = {
+    { 0x0012, 0, &spot04_sceneCollisionHeader_000100BgCamData_0000 },
 };
 
 WaterBox spot04_sceneCollisionHeader_000100WaterBoxes[] = {
@@ -291,7 +321,7 @@ CollisionHeader spot04_sceneCollisionHeader_000100 = {
     ARRAY_COUNT(spot04_sceneCollisionHeader_000100Vertices), spot04_sceneCollisionHeader_000100Vertices,
     ARRAY_COUNT(spot04_sceneCollisionHeader_000100Polygons), spot04_sceneCollisionHeader_000100Polygons,
     spot04_sceneCollisionHeader_000100SurfaceTypes,
-    NULL,
+    spot04_sceneCollisionHeader_000100BgCamList,
     ARRAY_COUNT(spot04_sceneCollisionHeader_000100WaterBoxes), spot04_sceneCollisionHeader_000100WaterBoxes,
 };
 """

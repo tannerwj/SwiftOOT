@@ -34,6 +34,7 @@ enum CollisionMeshDecoder {
         let vertexCount = Int(try readInteger(from: data, offset: &offset, as: UInt16.self, path: path))
         let polygonCount = Int(try readInteger(from: data, offset: &offset, as: UInt16.self, path: path))
         let surfaceTypeCount = Int(try readInteger(from: data, offset: &offset, as: UInt16.self, path: path))
+        let bgCameraCount = Int(try readInteger(from: data, offset: &offset, as: UInt16.self, path: path))
         let waterBoxCount = Int(try readInteger(from: data, offset: &offset, as: UInt16.self, path: path))
 
         var vertices: [Vector3s] = []
@@ -78,6 +79,44 @@ enum CollisionMeshDecoder {
             )
         }
 
+        var bgCameras: [CollisionBgCamera] = []
+        bgCameras.reserveCapacity(bgCameraCount)
+        for _ in 0..<bgCameraCount {
+            let setting = try readInteger(from: data, offset: &offset, as: UInt16.self, path: path)
+            let count = try readInteger(from: data, offset: &offset, as: Int16.self, path: path)
+            let hasCameraData = try readInteger(from: data, offset: &offset, as: UInt16.self, path: path) != 0
+            let crawlspacePointCount = Int(try readInteger(from: data, offset: &offset, as: UInt16.self, path: path))
+
+            let cameraData: CollisionBgCameraData? = if hasCameraData {
+                try CollisionBgCameraData(
+                    position: readVector3s(from: data, offset: &offset, path: path),
+                    rotation: readVector3s(from: data, offset: &offset, path: path),
+                    fov: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+                    parameter: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+                    unknown: readInteger(from: data, offset: &offset, as: Int16.self, path: path)
+                )
+            } else {
+                nil
+            }
+
+            var crawlspacePoints: [Vector3s] = []
+            crawlspacePoints.reserveCapacity(crawlspacePointCount)
+            for _ in 0..<crawlspacePointCount {
+                crawlspacePoints.append(
+                    try readVector3s(from: data, offset: &offset, path: path)
+                )
+            }
+
+            bgCameras.append(
+                CollisionBgCamera(
+                    setting: setting,
+                    count: count,
+                    cameraData: cameraData,
+                    crawlspacePoints: crawlspacePoints
+                )
+            )
+        }
+
         var waterBoxes: [CollisionWaterBox] = []
         waterBoxes.reserveCapacity(waterBoxCount)
         for _ in 0..<waterBoxCount {
@@ -112,7 +151,20 @@ enum CollisionMeshDecoder {
             vertices: vertices,
             polygons: polygons,
             surfaceTypes: surfaceTypes,
+            bgCameras: bgCameras,
             waterBoxes: waterBoxes
+        )
+    }
+
+    private static func readVector3s(
+        from data: Data,
+        offset: inout Int,
+        path: String
+    ) throws -> Vector3s {
+        try Vector3s(
+            x: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+            y: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+            z: readInteger(from: data, offset: &offset, as: Int16.self, path: path)
         )
     }
 

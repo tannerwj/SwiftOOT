@@ -30,9 +30,11 @@ final class SceneLoaderTests: XCTestCase {
         XCTAssertEqual(scene.collision?.vertices.count, 3)
         XCTAssertEqual(scene.collision?.polygons.count, 1)
         XCTAssertEqual(scene.collision?.surfaceTypes.first?.wallType, 3)
+        XCTAssertEqual(scene.collision?.bgCameras.first?.cameraData?.fov, 60)
         XCTAssertEqual(scene.collision?.waterBoxes.first?.roomIndex, 2)
 
         XCTAssertEqual(scene.actors, fixture.actors)
+        XCTAssertEqual(scene.spawns, fixture.spawns)
         XCTAssertEqual(scene.environment, fixture.environment)
         XCTAssertEqual(scene.paths, fixture.paths)
     }
@@ -72,6 +74,7 @@ private struct SceneLoaderFixture {
     let contentRoot: URL
     let sceneDirectory: URL
     let actors: SceneActorsFile
+    let spawns: SceneSpawnsFile
     let environment: SceneEnvironmentFile
     let paths: ScenePathsFile
 
@@ -102,6 +105,17 @@ private struct SceneLoaderFixture {
                     ]
                 ),
                 RoomActorSpawns(roomName: "spot04_room_1", actors: []),
+            ]
+        )
+        spawns = SceneSpawnsFile(
+            sceneName: "spot04",
+            spawns: [
+                SceneSpawnPoint(
+                    index: 0,
+                    position: Vector3s(x: 100, y: 20, z: 300),
+                    rotation: Vector3s(x: 0, y: 0x4000, z: 0),
+                    params: 7
+                )
             ]
         )
         environment = SceneEnvironmentFile(
@@ -237,6 +251,7 @@ private struct SceneLoaderFixture {
                 ],
                 collisionPath: "Scenes/spot04/collision.bin",
                 actorsPath: "Manifests/scenes/overworld/spot04/actors.json",
+                spawnsPath: "Manifests/scenes/overworld/spot04/spawns.json",
                 environmentPath: "Manifests/scenes/overworld/spot04/environment.json",
                 pathsPath: "Manifests/scenes/overworld/spot04/paths.json",
                 textureDirectories: ["Textures/spot04_scene"]
@@ -253,6 +268,7 @@ private struct SceneLoaderFixture {
             .appendingPathComponent("spot04", isDirectory: true)
 
         try writeJSON(actors, to: metadataRoot.appendingPathComponent("actors.json"))
+        try writeJSON(spawns, to: metadataRoot.appendingPathComponent("spawns.json"))
         try writeJSON(environment, to: metadataRoot.appendingPathComponent("environment.json"))
         try writeJSON(paths, to: metadataRoot.appendingPathComponent("paths.json"))
     }
@@ -291,6 +307,19 @@ private struct SceneLoaderFixture {
                 CollisionSurfaceType(
                     low: (7 << 8) | (3 << 21),
                     high: (5 << 6) | (1 << 17)
+                )
+            ],
+            bgCameras: [
+                CollisionBgCamera(
+                    setting: 0x0012,
+                    count: 0,
+                    cameraData: CollisionBgCameraData(
+                        position: Vector3s(x: 4, y: 5, z: 6),
+                        rotation: Vector3s(x: 0x1000, y: 0x2000, z: 0),
+                        fov: 60,
+                        parameter: 9,
+                        unknown: 0
+                    )
                 )
             ],
             waterBoxes: [
@@ -388,6 +417,7 @@ private struct SceneLoaderFixture {
         append(UInt16(collision.vertices.count), to: &data)
         append(UInt16(collision.polygons.count), to: &data)
         append(UInt16(collision.surfaceTypes.count), to: &data)
+        append(UInt16(collision.bgCameras.count), to: &data)
         append(UInt16(collision.waterBoxes.count), to: &data)
 
         for vertex in collision.vertices {
@@ -410,6 +440,31 @@ private struct SceneLoaderFixture {
         for surfaceType in collision.surfaceTypes {
             append(surfaceType.low, to: &data)
             append(surfaceType.high, to: &data)
+        }
+
+        for bgCamera in collision.bgCameras {
+            append(bgCamera.setting, to: &data)
+            append(UInt16(bitPattern: bgCamera.count), to: &data)
+            append(bgCamera.cameraData == nil ? UInt16(0) : UInt16(1), to: &data)
+            append(UInt16(bgCamera.crawlspacePoints.count), to: &data)
+
+            if let cameraData = bgCamera.cameraData {
+                append(cameraData.position.x, to: &data)
+                append(cameraData.position.y, to: &data)
+                append(cameraData.position.z, to: &data)
+                append(cameraData.rotation.x, to: &data)
+                append(cameraData.rotation.y, to: &data)
+                append(cameraData.rotation.z, to: &data)
+                append(cameraData.fov, to: &data)
+                append(cameraData.parameter, to: &data)
+                append(cameraData.unknown, to: &data)
+            }
+
+            for point in bgCamera.crawlspacePoints {
+                append(point.x, to: &data)
+                append(point.y, to: &data)
+                append(point.z, to: &data)
+            }
         }
 
         for waterBox in collision.waterBoxes {
