@@ -25,11 +25,13 @@ public final class F3DEX2Interpreter {
     private let displayListResolver: @Sendable (UInt32) -> [F3DEX2Command]?
     private let warningSink: @Sendable (String) -> Void
     private var rawCombineMode: CombineMode
+    private var hasExplicitCombineMode: Bool
 
     public init(
         rspState: RSPState = RSPState(),
         rdpState: RDPState = RDPState(),
         segmentTable: SegmentTable = SegmentTable(),
+        projectionMatrix: simd_float4x4 = matrix_identity_float4x4,
         drawBatchResources: DrawBatchResources? = nil,
         displayListResolver: @escaping @Sendable (UInt32) -> [F3DEX2Command]? = { _ in nil },
         warningSink: @escaping @Sendable (String) -> Void = { _ in }
@@ -38,7 +40,7 @@ public final class F3DEX2Interpreter {
         self.rdpState = rdpState
         self.segmentTable = segmentTable
         self.warnings = []
-        self.projectionMatrix = matrix_identity_float4x4
+        self.projectionMatrix = projectionMatrix
         self.textureImage = nil
         self.tileSizes = Array(repeating: nil, count: RDPState.tileCount)
         self.lastLoadBlock = nil
@@ -47,12 +49,14 @@ public final class F3DEX2Interpreter {
         self.displayListResolver = displayListResolver
         self.warningSink = warningSink
         self.rawCombineMode = CombineMode(colorMux: 0, alphaMux: 0)
+        self.hasExplicitCombineMode = false
         self.drawBatch = DrawBatch(
             renderStateKey: Self.renderStateKey(
                 geometryMode: rspState.geometryMode,
                 renderMode: rdpState.renderMode,
                 combineMode: CombineMode(colorMux: 0, alphaMux: 0)
             ),
+            combinerUniforms: CombinerUniforms(),
             resources: drawBatchResources
         )
     }
@@ -121,6 +125,7 @@ public final class F3DEX2Interpreter {
             case .dpSetCombineMode(let combineMode):
                 try flushPendingTriangles(encoder: encoder)
                 rawCombineMode = combineMode
+                hasExplicitCombineMode = true
                 rdpState.setCombineMode(Self.decodeCombineState(from: combineMode))
                 synchronizeBatchState()
             case .dpSetRenderMode(let renderMode):
@@ -145,6 +150,10 @@ public final class F3DEX2Interpreter {
             }
         }
 
+        try flushPendingTriangles(encoder: encoder)
+    }
+
+    public func flush(encoder: MTLRenderCommandEncoder) throws {
         try flushPendingTriangles(encoder: encoder)
     }
 }
@@ -340,6 +349,15 @@ private extension F3DEX2Interpreter {
             renderMode: rdpState.renderMode,
             combineMode: rawCombineMode
         )
+        if hasExplicitCombineMode {
+            drawBatch.combinerUniforms = CombinerUniforms(
+                rdpState: rdpState,
+                geometryMode: rspState.geometryMode,
+                textureScale: Self.textureScale(for: rspState.textureState)
+            )
+        } else {
+            drawBatch.combinerUniforms = CombinerUniforms()
+        }
     }
 
     func flushPendingTriangles(encoder: MTLRenderCommandEncoder) throws {
@@ -410,6 +428,16 @@ private extension F3DEX2Interpreter {
                 )
             )
         )
+    }
+
+    static func textureScale(for textureState: TextureState) -> SIMD2<Float> {
+        guard textureState.enabled else {
+            return SIMD2<Float>(repeating: 1.0)
+        }
+
+        let scaleS = textureState.scaleS == 0 ? 1.0 : Float(textureState.scaleS) / 65_536.0
+        let scaleT = textureState.scaleT == 0 ? 1.0 : Float(textureState.scaleT) / 65_536.0
+        return SIMD2<Float>(scaleS, scaleT)
     }
 }
 
