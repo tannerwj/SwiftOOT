@@ -16,6 +16,7 @@ A build-time CLI extracts game data from the OoT decompilation (C source + XML a
 - Xcode 26+
 - [Tuist](https://tuist.io) 4.158.2 (pinned in [`.tool-versions`](.tool-versions))
 - A base OoT ROM (not included)
+- Homebrew `make` (`gmake`) and `mipsel-linux-gnu-binutils` for `Vendor/oot`
 
 ## Setup
 
@@ -23,36 +24,70 @@ SwiftOOT pins the upstream [zeldaret/oot](https://github.com/zeldaret/oot)
 checkout as a git submodule in `Vendor/oot/`. `OOTExtractCLI` reads from that
 checkout after the upstream `gmake setup` flow has completed.
 
-1. Initialize the pinned submodule checkout:
+1. Install the pinned Tuist version and the local `Vendor/oot` helpers:
+
+```bash
+mise install tuist
+brew install make mipsel-linux-gnu-binutils
+```
+
+2. Initialize the pinned submodule checkout:
 
 ```bash
 git submodule update --init
 ```
 
-2. Install the macOS build prerequisites described in
+3. Install the remaining macOS build prerequisites described in
    [`Vendor/oot/docs/BUILDING_MACOS.md`](Vendor/oot/docs/BUILDING_MACOS.md).
 
-3. Run the upstream asset setup flow:
+4. Put your ROM in the matching upstream baserom folder.
+
+Validated local flow:
 
 ```bash
-cd Vendor/oot && gmake setup   # extracts assets via ZAPD
+cp ~/Downloads/<your-rom>.n64 Vendor/oot/baseroms/ntsc-1.2/baserom.n64
+```
+
+More generally, upstream expects:
+
+```bash
+Vendor/oot/baseroms/<version>/baserom.z64
+Vendor/oot/baseroms/<version>/baserom.n64
+Vendor/oot/baseroms/<version>/baserom.v64
+```
+
+5. Run the upstream asset setup flow.
+
+```bash
+cd Vendor/oot
+MIPS_BINUTILS_PREFIX=mipsel-linux-gnu- gmake setup VERSION=ntsc-1.2
 cd ../..
 ```
 
-4. Generate the Xcode workspace:
+If current macOS clang fails while building `tools/assets/build_from_png`, use
+this temporary local workaround until [TAN-79](https://linear.app/tannerwj/issue/TAN-79/make-vendoroot-gmake-setup-portable-on-current-macos-clang)
+lands:
 
 ```bash
-mise install tuist             # optional, but matches CI's pinned Tuist setup
+cd Vendor/oot
+MIPS_BINUTILS_PREFIX=mipsel-linux-gnu- gmake setup VERSION=ntsc-1.2 CFLAGS='-Wno-error=gnu-folding-constant'
+cd ../..
+```
+
+6. Resolve packages and generate the Xcode workspace:
+
+```bash
+tuist install
 tuist generate --no-open
 open SwiftOOT.xcworkspace
 ```
 
 ## Verification
 
-CI now runs the following M0 verification flow on every pull request. No extra
-environment variables are required for this path.
+CI now runs the following verification flow on every pull request.
 
 ```bash
+tuist install
 tuist generate --no-open
 xcodebuild -workspace SwiftOOT.xcworkspace -scheme OOTMac -destination 'platform=macOS' build
 xcodebuild -workspace SwiftOOT.xcworkspace -scheme SwiftOOT-Workspace -destination 'platform=macOS' test
@@ -62,6 +97,28 @@ xcodebuild -workspace SwiftOOT.xcworkspace -scheme SwiftOOT-Workspace -destinati
 that runs the current M0 unit test bundles. If you use `mise`, `mise install
 tuist` reads the pinned version from `.tool-versions`; otherwise install Tuist
 4.158.2 manually before running the commands above.
+
+When validating extractor work against the real `Vendor/oot` tree, use the
+exact issue command. For example, the current scoped extraction smoke test is:
+
+```bash
+swift run OOTExtractCLI extract --source Vendor/oot --output /tmp/swiftoot-spot04 --scene spot04
+swift run OOTExtractCLI verify --content /tmp/swiftoot-spot04
+```
+
+## Generated vs Committed
+
+Committed:
+
+- Swift source, tests, project definitions, docs
+- the `Vendor/oot` submodule pointer
+
+Generated locally and ignored by git:
+
+- `Vendor/oot/extracted/`
+- `Vendor/oot/build/`
+- `Content/OOT/`
+- Xcode/Tuist build artifacts like `Derived/`, `DerivedData/`, and `.build/`
 
 ## Agent Workflow
 
@@ -86,7 +143,7 @@ for what Symphony should pick up next.
 - `Todo`: ready for Symphony pickup
 - `In Progress`: Symphony worker is actively implementing the issue
 - `Human Review`: implementation is complete and ready for branch/PR review
-- `Rework`: review found issues; Symphony should start fresh from `master` and address them
+- `Rework`: review found issues; Symphony should continue on the existing branch, workspace, and PR by default
 - `Merging`: approved and ready for Symphony to land
 - `Done`: merged and complete
 
@@ -98,6 +155,7 @@ for what Symphony should pick up next.
 4. If changes are needed:
    - move the issue to `Rework`
    - leave concrete review feedback on the PR or Linear issue
+   - keep the same branch and PR unless the reviewer explicitly requests a restart
 5. If approved:
    - move the issue to `Merging`
    - Symphony lands the PR and moves the issue to `Done`
