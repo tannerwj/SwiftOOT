@@ -32,6 +32,8 @@ final class OOTDataModelTests: XCTestCase {
         assertCodableAndSendable(Vector3b.self)
         assertCodableAndSendable(CollisionMesh.self)
         assertCodableAndSendable(CollisionPoly.self)
+        assertCodableAndSendable(CollisionSurfaceType.self)
+        assertCodableAndSendable(CollisionWaterBox.self)
         assertCodableAndSendable(SkeletonData.self)
         assertCodableAndSendable(AnimationData.self)
         assertCodableAndSendable(LimbData.self)
