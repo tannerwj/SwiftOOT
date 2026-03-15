@@ -427,6 +427,41 @@ final class DisplayListParserTests: XCTestCase {
         XCTAssertFalse(outputFiles.contains("gUnsupportedDL.json"))
     }
 
+    func testExtractorSkipsSourceFileWhenIncludeBackedAssetSourceIsMissing() throws {
+        let fixtureRoot = try makeFixtureRoot()
+        let assetsDirectory = fixtureRoot.appendingPathComponent("assets", isDirectory: true)
+        try FileManager.default.createDirectory(at: assetsDirectory, withIntermediateDirectories: true)
+
+        try """
+        #include "gfx.h"
+
+        u64 gMissingTex[] = {
+        #include "assets/missing.inc.c"
+        };
+
+        Gfx gResilientDL[] = {
+            gsSPEndDisplayList(),
+        };
+        """.write(
+            to: fixtureRoot.appendingPathComponent("assets/missing-include.c"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let outputRoot = fixtureRoot.appendingPathComponent("Output", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true)
+
+        XCTAssertNoThrow(try DisplayListParser().extract(using: OOTExtractionContext(source: fixtureRoot, output: outputRoot)))
+
+        let outputFiles = FileManager.default.enumerator(
+            at: outputRoot.appendingPathComponent("DisplayLists", isDirectory: true),
+            includingPropertiesForKeys: nil
+        )?
+        .compactMap { ($0 as? URL)?.lastPathComponent } ?? []
+
+        XCTAssertTrue(outputFiles.contains("gResilientDL.json"))
+    }
+
     private func makeFixtureRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("swiftoot-displaylists-\(UUID().uuidString)", isDirectory: true)
