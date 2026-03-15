@@ -170,6 +170,69 @@ final class TextureExtractorTests: XCTestCase {
             )
         )
     }
+
+    func testExtractFallsBackToOwningSceneSourceWhenWrapperIsMissing() throws {
+        let harness = try TextureHarness()
+        defer { harness.cleanup() }
+
+        try harness.writeXML(
+            at: "assets/xml/scenes/dungeons/Bmori1.xml",
+            contents: """
+            <Root>
+                <File Name="Bmori1_scene" Segment="2">
+                    <Texture Name="gForestTempleDayEntranceTex" Format="ia16" Width="1" Height="1" Offset="0x0"/>
+                    <Texture Name="gForestTempleNightEntranceTex" Format="ia16" Width="1" Height="1" Offset="0x2"/>
+                    <Scene Name="Bmori1_scene" Offset="0x0"/>
+                </File>
+            </Root>
+            """
+        )
+        try harness.writeSource(
+            at: "build/assets/scenes/dungeons/Bmori1/Bmori1_scene.h",
+            contents: """
+            u16 gForestTempleDayEntranceTex[] = {
+                0x00FF,
+            };
+
+            u16 gForestTempleNightEntranceTex[] = {
+                0xFF00,
+            };
+            """
+        )
+        try harness.writeSource(
+            at: "src/code/z_scene_table.c",
+            contents: """
+            #include "assets/scenes/dungeons/Bmori1/Bmori1_scene.h"
+
+            void* sForestTempleEntranceTextures[] = {
+                gForestTempleDayEntranceTex,
+                gForestTempleNightEntranceTex,
+            };
+            """
+        )
+
+        try TextureExtractor().extract(using: harness.extractionContext)
+
+        let textureDirectory = harness.outputRoot
+            .appendingPathComponent("Textures", isDirectory: true)
+            .appendingPathComponent("Bmori1_scene", isDirectory: true)
+        let metadata = try JSONDecoder().decode(
+            TextureAssetMetadata.self,
+            from: Data(contentsOf: textureDirectory.appendingPathComponent("gForestTempleDayEntranceTex.tex.json"))
+        )
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: textureDirectory
+                    .appendingPathComponent("gForestTempleNightEntranceTex.tex.bin")
+                    .path
+            )
+        )
+        XCTAssertEqual(
+            metadata,
+            TextureAssetMetadata(format: .ia16, width: 1, height: 1, hasTLUT: false)
+        )
+    }
 }
 
 private struct TextureHarness {
