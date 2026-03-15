@@ -135,7 +135,11 @@ enum SceneRenderPayloadBuilder {
     ) -> GameplayCameraConfiguration? {
         if let playerState {
             return GameplayCameraConfiguration(
-                playerPosition: playerState.position.simd,
+                playerPosition: SIMD3<Float>(
+                    playerState.position.x,
+                    playerState.position.y,
+                    playerState.position.z
+                ),
                 playerYaw: playerState.facingRadians,
                 collision: scene.collision
             )
