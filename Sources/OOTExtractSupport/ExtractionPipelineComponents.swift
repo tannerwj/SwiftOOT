@@ -3,10 +3,12 @@ import Foundation
 public struct OOTExtractionContext: Sendable {
     public let source: URL
     public let output: URL
+    public let sceneName: String?
 
-    public init(source: URL, output: URL) {
+    public init(source: URL, output: URL, sceneName: String? = nil) {
         self.source = source
         self.output = output
+        self.sceneName = sceneName
     }
 }
 
@@ -26,11 +28,11 @@ public protocol OOTExtractionPipelineComponent: Sendable {
 }
 
 public extension OOTExtractionPipelineComponent {
-    public func extract(using context: OOTExtractionContext) throws {
+    func extract(using context: OOTExtractionContext) throws {
         print("[\(name)] extract \(context.source.path) -> \(context.output.path)")
     }
 
-    public func verify(using context: OOTVerificationContext) throws {
+    func verify(using context: OOTVerificationContext) throws {
         print("[\(name)] verify \(context.content.path)")
     }
 }

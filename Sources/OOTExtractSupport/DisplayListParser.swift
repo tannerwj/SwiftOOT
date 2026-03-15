@@ -147,7 +147,90 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
 
     private func parseCommands(in body: String) throws -> [F3DEX2Command] {
         let invocations = try MacroInvocation.parseAll(in: body)
-        return try invocations.map(buildCommand(from:))
+        var commands: [F3DEX2Command] = []
+        for invocation in invocations {
+            if let expandedCommands = try expandCommand(from: invocation) {
+                commands.append(contentsOf: expandedCommands)
+            } else {
+                commands.append(try buildCommand(from: invocation))
+            }
+        }
+        return commands
+    }
+
+    private func expandCommand(from invocation: MacroInvocation) throws -> [F3DEX2Command]? {
+        switch invocation.name {
+        case "__SWIFTOOT_gsDPLoadTextureBlock":
+            try invocation.requireCount(12)
+            return try expandLoadTextureBlock(
+                address: parseAddress(invocation.arguments[0]),
+                formatExpression: invocation.arguments[1],
+                texelSizeExpression: invocation.arguments[2],
+                widthExpression: invocation.arguments[3],
+                heightExpression: invocation.arguments[4],
+                tmemExpression: "0",
+                tileExpression: "0",
+                paletteExpression: invocation.arguments[5],
+                wrapSExpression: invocation.arguments[6],
+                wrapTExpression: invocation.arguments[7],
+                maskSExpression: invocation.arguments[8],
+                maskTExpression: invocation.arguments[9],
+                shiftSExpression: invocation.arguments[10],
+                shiftTExpression: invocation.arguments[11]
+            )
+        case "__SWIFTOOT_gsDPLoadMultiBlock":
+            try invocation.requireCount(14)
+            return try expandLoadTextureBlock(
+                address: parseAddress(invocation.arguments[0]),
+                formatExpression: invocation.arguments[3],
+                texelSizeExpression: invocation.arguments[4],
+                widthExpression: invocation.arguments[5],
+                heightExpression: invocation.arguments[6],
+                tmemExpression: invocation.arguments[1],
+                tileExpression: invocation.arguments[2],
+                paletteExpression: invocation.arguments[7],
+                wrapSExpression: invocation.arguments[8],
+                wrapTExpression: invocation.arguments[9],
+                maskSExpression: invocation.arguments[10],
+                maskTExpression: invocation.arguments[11],
+                shiftSExpression: invocation.arguments[12],
+                shiftTExpression: invocation.arguments[13]
+            )
+        case "__SWIFTOOT_gsDPLoadTextureBlock_4b":
+            try invocation.requireCount(11)
+            return try expandLoadTextureBlock4b(
+                address: parseAddress(invocation.arguments[0]),
+                formatExpression: invocation.arguments[1],
+                widthExpression: invocation.arguments[2],
+                heightExpression: invocation.arguments[3],
+                paletteExpression: invocation.arguments[4],
+                wrapSExpression: invocation.arguments[5],
+                wrapTExpression: invocation.arguments[6],
+                maskSExpression: invocation.arguments[7],
+                maskTExpression: invocation.arguments[8],
+                shiftSExpression: invocation.arguments[9],
+                shiftTExpression: invocation.arguments[10]
+            )
+        case "__SWIFTOOT_gsDPLoadTLUT_pal256":
+            try invocation.requireCount(1)
+            let address = try parseAddress(invocation.arguments[0])
+            return [
+                .dpSetTextureImage(
+                    ImageDescriptor(
+                        format: .rgba16,
+                        texelSize: .bits16,
+                        width: 1,
+                        address: address
+                    )
+                ),
+                .dpTileSync,
+                .dpLoadSync,
+                .dpLoadTLUT(LoadTLUTCommand(tile: 7, colorCount: 255)),
+                .dpPipeSync,
+            ]
+        default:
+            return nil
+        }
     }
 
     private func buildCommand(from invocation: MacroInvocation) throws -> F3DEX2Command {
@@ -187,6 +270,14 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
                         vertex2: try parseUInt8(invocation.arguments[6]),
                         flag: try parseUInt8(invocation.arguments[7])
                     )
+                )
+            )
+        case "__SWIFTOOT_gsSPCullDisplayList":
+            try invocation.requireCount(2)
+            return .spCullDisplayList(
+                CullDisplayListCommand(
+                    firstVertex: try parseUInt16(invocation.arguments[0]),
+                    lastVertex: try parseUInt16(invocation.arguments[1])
                 )
             )
         case "__SWIFTOOT_gsSPDisplayList":
@@ -324,6 +415,9 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
                     setBits: 0
                 )
             )
+        case "__SWIFTOOT_gsDPSetTextureLUT":
+            try invocation.requireCount(1)
+            return .dpSetTextureLUT(try parseTextureLUTMode(invocation.arguments[0]))
         case "__SWIFTOOT_gsDPSetPrimColor":
             try invocation.requireCount(6)
             return .dpSetPrimColor(
@@ -405,6 +499,297 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
         default:
             throw DisplayListParserError.unsupportedTexelSize(expression)
         }
+    }
+
+    private func parseTextureLUTMode(_ expression: String) throws -> TextureLUTMode {
+        switch try parseUInt32(expression) {
+        case 0:
+            return .none
+        case 2, 2 << 14:
+            return .rgba16
+        case 3, 3 << 14:
+            return .ia16
+        default:
+            throw DisplayListParserError.invalidInvocation("Unsupported texture LUT mode: \(expression)")
+        }
+    }
+
+    private func loadBlockTexelSize(for texelSize: TexelSize) throws -> TexelSize {
+        switch texelSize {
+        case .bits4, .bits8, .bits16:
+            return .bits16
+        case .bits32:
+            return .bits32
+        }
+    }
+
+    private func expandLoadTextureBlock(
+        address: UInt32,
+        formatExpression: String,
+        texelSizeExpression: String,
+        widthExpression: String,
+        heightExpression: String,
+        tmemExpression: String,
+        tileExpression: String,
+        paletteExpression: String,
+        wrapSExpression: String,
+        wrapTExpression: String,
+        maskSExpression: String,
+        maskTExpression: String,
+        shiftSExpression: String,
+        shiftTExpression: String
+    ) throws -> [F3DEX2Command] {
+        let format = try parseTextureFormat(format: formatExpression, texelSize: texelSizeExpression)
+        let texelSize = try parseTexelSize(texelSizeExpression)
+        let width = try parseUInt16(widthExpression)
+        let height = try parseUInt16(heightExpression)
+        let tmem = try parseUInt16(tmemExpression)
+        let tile = try parseUInt8(tileExpression)
+        let palette = try parseUInt8(paletteExpression)
+        let wrapS = try parseUInt8(wrapSExpression)
+        let wrapT = try parseUInt8(wrapTExpression)
+        let maskS = try parseUInt8(maskSExpression)
+        let maskT = try parseUInt8(maskTExpression)
+        let shiftS = try parseUInt8(shiftSExpression)
+        let shiftT = try parseUInt8(shiftTExpression)
+
+        let loadBlockTexelSize = try loadBlockTexelSize(for: texelSize)
+        let texelCount = try loadBlockTexelCount(width: width, height: height, texelSize: texelSize)
+        let dxt = try loadBlockDXT(width: width, texelSize: texelSize)
+        let line = try textureLine(width: width, texelSize: texelSize)
+
+        return [
+            .dpSetTextureImage(
+                ImageDescriptor(
+                    format: format,
+                    texelSize: loadBlockTexelSize,
+                    width: 1,
+                    address: address
+                )
+            ),
+            .dpSetTile(
+                makeTileDescriptor(
+                    format: format,
+                    texelSize: loadBlockTexelSize,
+                    line: 0,
+                    tmem: tmem,
+                    tile: 7,
+                    palette: 0,
+                    wrapS: wrapS,
+                    wrapT: wrapT,
+                    maskS: maskS,
+                    maskT: maskT,
+                    shiftS: shiftS,
+                    shiftT: shiftT
+                )
+            ),
+            .dpLoadSync,
+            .dpLoadBlock(
+                LoadBlockCommand(
+                    tile: 7,
+                    upperLeftS: 0,
+                    upperLeftT: 0,
+                    texelCount: texelCount,
+                    dxt: dxt
+                )
+            ),
+            .dpPipeSync,
+            .dpSetTile(
+                makeTileDescriptor(
+                    format: format,
+                    texelSize: texelSize,
+                    line: line,
+                    tmem: tmem,
+                    tile: tile,
+                    palette: palette,
+                    wrapS: wrapS,
+                    wrapT: wrapT,
+                    maskS: maskS,
+                    maskT: maskT,
+                    shiftS: shiftS,
+                    shiftT: shiftT
+                )
+            ),
+            .dpSetTileSize(
+                TileSizeCommand(
+                    tile: tile,
+                    upperLeftS: 0,
+                    upperLeftT: 0,
+                    lowerRightS: UInt16((Int(width) - 1) << 2),
+                    lowerRightT: UInt16((Int(height) - 1) << 2)
+                )
+            ),
+        ]
+    }
+
+    private func expandLoadTextureBlock4b(
+        address: UInt32,
+        formatExpression: String,
+        widthExpression: String,
+        heightExpression: String,
+        paletteExpression: String,
+        wrapSExpression: String,
+        wrapTExpression: String,
+        maskSExpression: String,
+        maskTExpression: String,
+        shiftSExpression: String,
+        shiftTExpression: String
+    ) throws -> [F3DEX2Command] {
+        let format = try parseTextureFormat(format: formatExpression, texelSize: "0")
+        let width = try parseUInt16(widthExpression)
+        let height = try parseUInt16(heightExpression)
+        let palette = try parseUInt8(paletteExpression)
+        let wrapS = try parseUInt8(wrapSExpression)
+        let wrapT = try parseUInt8(wrapTExpression)
+        let maskS = try parseUInt8(maskSExpression)
+        let maskT = try parseUInt8(maskTExpression)
+        let shiftS = try parseUInt8(shiftSExpression)
+        let shiftT = try parseUInt8(shiftTExpression)
+        let dxt = try loadBlockDXT(width: width, texelSize: .bits4)
+        let texelCount = try loadBlockTexelCount(width: width, height: height, texelSize: .bits4)
+        let line = UInt16((((Int(width) >> 1) + 7) >> 3))
+
+        return [
+            .dpSetTextureImage(
+                ImageDescriptor(
+                    format: format,
+                    texelSize: .bits16,
+                    width: 1,
+                    address: address
+                )
+            ),
+            .dpSetTile(
+                makeTileDescriptor(
+                    format: format,
+                    texelSize: .bits16,
+                    line: 0,
+                    tmem: 0,
+                    tile: 7,
+                    palette: 0,
+                    wrapS: wrapS,
+                    wrapT: wrapT,
+                    maskS: maskS,
+                    maskT: maskT,
+                    shiftS: shiftS,
+                    shiftT: shiftT
+                )
+            ),
+            .dpLoadSync,
+            .dpLoadBlock(
+                LoadBlockCommand(
+                    tile: 7,
+                    upperLeftS: 0,
+                    upperLeftT: 0,
+                    texelCount: texelCount,
+                    dxt: dxt
+                )
+            ),
+            .dpPipeSync,
+            .dpSetTile(
+                makeTileDescriptor(
+                    format: format,
+                    texelSize: .bits4,
+                    line: line,
+                    tmem: 0,
+                    tile: 0,
+                    palette: palette,
+                    wrapS: wrapS,
+                    wrapT: wrapT,
+                    maskS: maskS,
+                    maskT: maskT,
+                    shiftS: shiftS,
+                    shiftT: shiftT
+                )
+            ),
+            .dpSetTileSize(
+                TileSizeCommand(
+                    tile: 0,
+                    upperLeftS: 0,
+                    upperLeftT: 0,
+                    lowerRightS: UInt16((Int(width) - 1) << 2),
+                    lowerRightT: UInt16((Int(height) - 1) << 2)
+                )
+            ),
+        ]
+    }
+
+    private func makeTileDescriptor(
+        format: TextureFormat,
+        texelSize: TexelSize,
+        line: UInt16,
+        tmem: UInt16,
+        tile: UInt8,
+        palette: UInt8,
+        wrapS: UInt8,
+        wrapT: UInt8,
+        maskS: UInt8,
+        maskT: UInt8,
+        shiftS: UInt8,
+        shiftT: UInt8
+    ) -> TileDescriptor {
+        TileDescriptor(
+            format: format,
+            texelSize: texelSize,
+            line: line,
+            tmem: tmem,
+            tile: tile,
+            palette: palette,
+            clampS: (wrapS & 0x02) != 0,
+            mirrorS: (wrapS & 0x01) != 0,
+            maskS: maskS,
+            shiftS: shiftS,
+            clampT: (wrapT & 0x02) != 0,
+            mirrorT: (wrapT & 0x01) != 0,
+            maskT: maskT,
+            shiftT: shiftT
+        )
+    }
+
+    private func loadBlockTexelCount(width: UInt16, height: UInt16, texelSize: TexelSize) throws -> UInt16 {
+        let texelProduct = Int(width) * Int(height)
+
+        let count: Int
+        switch texelSize {
+        case .bits4:
+            count = ((texelProduct + 3) >> 2) - 1
+        case .bits8:
+            count = ((texelProduct + 1) >> 1) - 1
+        case .bits16, .bits32:
+            count = texelProduct - 1
+        }
+
+        guard count >= 0, count <= Int(UInt16.max) else {
+            throw DisplayListParserError.integerOutOfRange("\(width)x\(height)")
+        }
+        return UInt16(count)
+    }
+
+    private func loadBlockDXT(width: UInt16, texelSize: TexelSize) throws -> UInt16 {
+        let wordsPerLine: Int
+        switch texelSize {
+        case .bits4:
+            wordsPerLine = max(1, Int(width) / 16)
+        case .bits8:
+            wordsPerLine = max(1, Int(width) / 4)
+        case .bits16:
+            wordsPerLine = max(1, Int(width) * 2 / 8)
+        case .bits32:
+            wordsPerLine = max(1, Int(width) * 4 / 8)
+        }
+
+        return UInt16(((1 << 11) + wordsPerLine - 1) / wordsPerLine)
+    }
+
+    private func textureLine(width: UInt16, texelSize: TexelSize) throws -> UInt16 {
+        let lineBytes: Int
+        switch texelSize {
+        case .bits4, .bits8:
+            lineBytes = 1
+        case .bits16, .bits32:
+            lineBytes = 2
+        }
+
+        return UInt16((((Int(width) * lineBytes) + 7) >> 3))
     }
 
     private func parseCombineMode(_ arguments: [String]) throws -> CombineMode {
@@ -522,11 +907,40 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
             return value
         }
 
+        if let indexedIdentifier = try parseIndexedAddress(expression) {
+            return Self.stableID(for: indexedIdentifier)
+        }
+
         let identifier = normalizedIdentifier(expression)
         guard identifier.range(of: #"^[A-Za-z_][A-Za-z0-9_]*$"#, options: .regularExpression) != nil else {
             throw DisplayListParserError.invalidAddressExpression(expression)
         }
         return Self.stableID(for: identifier)
+    }
+
+    private func parseIndexedAddress(_ expression: String) throws -> String? {
+        let trimmed = expression.trimmingCharacters(in: .whitespacesAndNewlines)
+        let range = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
+        guard let match = Self.indexedAddressExpression.firstMatch(in: trimmed, range: range) else {
+            return nil
+        }
+
+        let base = try Self.capturedGroup(1, from: match, in: trimmed)
+        let indexExpression = try Self.capturedGroup(2, from: match, in: trimmed)
+        let index = try parseUInt32(indexExpression)
+        return "\(base)[\(index)]"
+    }
+
+    private static let indexedAddressExpression = try! NSRegularExpression(
+        pattern: #"^&?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\[\s*(.+?)\s*\]$"#
+    )
+
+    private static func capturedGroup(_ index: Int, from match: NSTextCheckingResult, in string: String) throws -> String {
+        let range = match.range(at: index)
+        guard let swiftRange = Range(range, in: string) else {
+            throw DisplayListParserError.invalidInvocation("Missing capture group \(index)")
+        }
+        return String(string[swiftRange])
     }
 
     private func parseUInt8(_ expression: String) throws -> UInt8 {
@@ -542,8 +956,30 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
     }
 
     private func parseInteger(_ expression: String) throws -> Int64 {
-        var parser = try IntegerExpressionParser(expression: expression)
+        var parser = try IntegerExpressionParser(expression: normalizedIntegerExpression(expression))
         return try parser.parse()
+    }
+
+    private func normalizedIntegerExpression(_ expression: String) -> String {
+        let replacements: [String: String] = [
+            "G_TX_RENDERTILE": "0",
+            "G_TX_LOADTILE": "7",
+            "G_TX_NOMIRROR": "0",
+            "G_TX_WRAP": "0",
+            "G_TX_MIRROR": "1",
+            "G_TX_CLAMP": "2",
+            "G_TX_NOLOD": "0",
+            "G_ON": "1",
+            "G_OFF": "0",
+        ]
+
+        return replacements.reduce(expression) { partialResult, replacement in
+            partialResult.replacingOccurrences(
+                of: #"\b\#(replacement.key)\b"#,
+                with: replacement.value,
+                options: .regularExpression
+            )
+        }
     }
 
     private func cast<T: FixedWidthInteger>(_ value: Int64, to type: T.Type, expression: String) throws -> T {
@@ -728,13 +1164,9 @@ struct CMacroPreprocessor {
             "-x",
             "c",
             wrapperURL.path,
-            "-I",
-            sourceRoot.path,
-            "-I",
-            sourceRoot.appendingPathComponent("include").path,
-            "-I",
-            fileURL.deletingLastPathComponent().path,
-        ]
+        ] + includeDirectories(for: fileURL, sourceRoot: sourceRoot).flatMap { directory in
+            ["-I", directory.path]
+        }
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -765,16 +1197,60 @@ struct CMacroPreprocessor {
         let error = String(data: errorCapture.data, encoding: .utf8) ?? ""
 
         guard process.terminationStatus == 0 else {
+            // Extracted asset sources can reference unrelated blob includes that are absent
+            // locally, but clang still emits enough expanded geometry/display-list output
+            // before the failure for downstream parsing to succeed.
+            if output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                return output
+            }
+
             throw DisplayListParserError.preprocessorFailure(error.trimmingCharacters(in: .whitespacesAndNewlines))
         }
 
         return output
     }
 
+    private func includeDirectories(for fileURL: URL, sourceRoot: URL) -> [URL] {
+        let candidates = [
+            assetRoot(for: fileURL),
+            sourceRoot.appendingPathComponent("build", isDirectory: true),
+            sourceRoot,
+            sourceRoot.appendingPathComponent("include", isDirectory: true),
+            fileURL.deletingLastPathComponent(),
+        ]
+
+        var seenPaths = Set<String>()
+        return candidates.compactMap { directory in
+            guard let directory else {
+                return nil
+            }
+
+            let path = directory.standardizedFileURL.path
+            guard seenPaths.insert(path).inserted else {
+                return nil
+            }
+
+            return directory
+        }
+    }
+
+    private func assetRoot(for fileURL: URL) -> URL? {
+        let standardizedPath = fileURL.standardizedFileURL.path
+        guard let assetsRange = standardizedPath.range(of: "/assets/") else {
+            return nil
+        }
+
+        return URL(
+            fileURLWithPath: String(standardizedPath[..<assetsRange.lowerBound]),
+            isDirectory: true
+        )
+    }
+
     private func makeWrapper(for fileURL: URL) -> String {
         let escapedPath = fileURL.path.replacingOccurrences(of: "\\", with: "\\\\")
         let macroNames = [
             "gsSPVertex",
+            "gsSPCullDisplayList",
             "gsSP1Triangle",
             "gsSP2Triangles",
             "gsSPDisplayList",
@@ -785,6 +1261,11 @@ struct CMacroPreprocessor {
             "gsSPPopMatrix",
             "gsSPTexture",
             "gsDPSetTextureImage",
+            "gsDPSetTextureLUT",
+            "gsDPLoadTextureBlock",
+            "gsDPLoadTextureBlock_4b",
+            "gsDPLoadMultiBlock",
+            "gsDPLoadTLUT_pal256",
             "gsDPLoadBlock",
             "gsDPLoadTile",
             "gsDPSetTile",
