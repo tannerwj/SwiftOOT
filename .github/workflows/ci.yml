@@ -19,10 +19,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install pinned Tuist
-        uses: jdx/mise-action@v3
+        uses: jdx/mise-action@v4
 
       - name: Show tool versions
         run: |
