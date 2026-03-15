@@ -430,6 +430,9 @@ private extension OOTRenderer {
         ) else {
             return
         }
+        defer {
+            renderCommandEncoder.endEncoding()
+        }
 
         renderCommandEncoder.setViewport(
             MTLViewport(
@@ -471,7 +474,6 @@ private extension OOTRenderer {
             )
         }
 
-        renderCommandEncoder.endEncoding()
         frameStatsHandler(frameStats)
     }
 

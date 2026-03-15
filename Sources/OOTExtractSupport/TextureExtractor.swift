@@ -1,4 +1,6 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 import OOTDataModel
 
 extension TextureExtractor {
@@ -18,24 +20,71 @@ extension TextureExtractor {
                 sourceRoot: context.source,
                 fileManager: fileManager
             )
-            let expandedSource = try CMacroPreprocessor().preprocess(
-                fileURL: sourceFile,
-                sourceRoot: context.source
+            let arrayBackedTextures = sourceGroup.textures.filter { $0.pngURL == nil }
+            let requiredArrayNames = Set(
+                arrayBackedTextures.map(\.name)
+                    + arrayBackedTextures.compactMap(\.tlutName)
+                    + arrayBackedTextures.compactMap(\.tlutOffset).compactMap { sourceGroup.tlutByOffset[$0]?.name }
             )
-            let arrays = try Self.parseTextureArrays(in: expandedSource, sourceFile: sourceFile)
+            let arrays: [String: ParsedTextureArray]
+            if requiredArrayNames.isEmpty {
+                arrays = [:]
+            } else {
+                let expandedSource = try CMacroPreprocessor().preprocess(
+                    fileURL: sourceFile,
+                    sourceRoot: context.source
+                )
+                arrays = try Self.parseTextureArrays(
+                    in: expandedSource,
+                    sourceFile: sourceFile,
+                    requiredArrayNames: requiredArrayNames
+                )
+            }
             let outputDirectory = context.output
                 .appendingPathComponent("Textures", isDirectory: true)
                 .appendingPathComponent(sourceGroup.outputSource, isDirectory: true)
             try fileManager.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 
             for texture in sourceGroup.textures {
+                if let pngURL = texture.pngURL {
+                    let binaryData = try Self.loadPNGTextureData(
+                        from: pngURL,
+                        expectedWidth: texture.width,
+                        expectedHeight: texture.height
+                    )
+                    try binaryData.write(
+                        to: outputDirectory.appendingPathComponent("\(texture.name).tex.bin"),
+                        options: [.atomic]
+                    )
+                    try Self.writeJSON(
+                        TextureAssetMetadata(format: .rgba32, width: texture.width, height: texture.height, hasTLUT: false),
+                        to: outputDirectory.appendingPathComponent("\(texture.name).tex.json")
+                    )
+                    emittedTextures += 1
+                    continue
+                }
+
                 guard let textureArray = arrays[texture.name] else {
                     throw TextureExtractorError.missingArray(texture.name, sourceFile.path)
                 }
 
                 let tlutDataSource: N64TextureDataSource?
                 let tlutFormat: TextureFormat?
-                if let tlutOffset = texture.tlutOffset {
+                if let tlutName = texture.tlutName {
+                    guard let tlut = sourceGroup.tlutByName[tlutName] else {
+                        throw TextureExtractorError.missingNamedTLUTDefinition(
+                            texture.name,
+                            tlutName,
+                            sourceGroup.xmlURL.path
+                        )
+                    }
+                    guard let tlutArray = arrays[tlut.name] else {
+                        throw TextureExtractorError.missingArray(tlut.name, sourceFile.path)
+                    }
+
+                    tlutDataSource = tlutArray.dataSource
+                    tlutFormat = tlut.format
+                } else if let tlutOffset = texture.tlutOffset {
                     guard let tlut = sourceGroup.tlutByOffset[tlutOffset] else {
                         throw TextureExtractorError.missingTLUTDefinition(
                             texture.name,
@@ -143,6 +192,7 @@ private extension TextureExtractor {
         let assetDirectory: String
         let textures: [TextureDefinition]
         let tlutByOffset: [Int: TLUTDefinition]
+        let tlutByName: [String: TLUTDefinition]
     }
 
     struct TextureDefinition: Sendable {
@@ -152,6 +202,8 @@ private extension TextureExtractor {
         let height: Int
         let offset: Int
         let tlutOffset: Int?
+        let tlutName: String?
+        let pngURL: URL?
     }
 
     struct TLUTDefinition: Sendable {
@@ -162,6 +214,22 @@ private extension TextureExtractor {
 
     struct ParsedTextureArray: Sendable {
         let dataSource: N64TextureDataSource
+    }
+
+    struct SourceBackedTextureDeclaration: Sendable {
+        let name: String
+        let format: TextureFormat
+        let width: Int
+        let height: Int
+        let order: Int
+        let tlutName: String?
+        let pngURL: URL?
+    }
+
+    struct SourceBackedTLUTDeclaration: Sendable {
+        let name: String
+        let format: TextureFormat?
+        let order: Int
     }
 
     enum AssetKind {
@@ -184,6 +252,7 @@ private extension TextureExtractor {
         private let defaultSourceName: String
         private(set) var groupedTextures: [String: [TextureDefinition]] = [:]
         private(set) var groupedTLUTs: [String: [TLUTDefinition]] = [:]
+        private(set) var sourceNames: [String] = []
         private var currentSourceName: String?
 
         init(defaultSourceName: String) {
@@ -200,10 +269,13 @@ private extension TextureExtractor {
             switch elementName {
             case "File":
                 currentSourceName = attributeDict["Name"]
+                if let currentSourceName, sourceNames.contains(currentSourceName) == false {
+                    sourceNames.append(currentSourceName)
+                }
             case "Texture":
                 guard
                     let name = attributeDict["Name"],
-                    let format = Self.parseTextureFormat(attributeDict["Format"]),
+                    let format = parseTextureFormat(attributeDict["Format"]),
                     let width = Self.parseInteger(attributeDict["Width"]),
                     let height = Self.parseInteger(attributeDict["Height"]),
                     let offset = Self.parseInteger(attributeDict["Offset"])
@@ -219,7 +291,9 @@ private extension TextureExtractor {
                         width: width,
                         height: height,
                         offset: offset,
-                        tlutOffset: Self.parseInteger(attributeDict["TlutOffset"])
+                        tlutOffset: Self.parseInteger(attributeDict["TlutOffset"]),
+                        tlutName: nil,
+                        pngURL: nil
                     )
                 )
             case "TLUT":
@@ -234,7 +308,7 @@ private extension TextureExtractor {
                 groupedTLUTs[sourceName, default: []].append(
                     TLUTDefinition(
                         name: name,
-                        format: Self.parseTextureFormat(attributeDict["Format"]),
+                        format: parseTextureFormat(attributeDict["Format"]),
                         offset: offset
                     )
                 )
@@ -260,25 +334,27 @@ private extension TextureExtractor {
             }
             return try? Int(parseIntegerExpression(value))
         }
-
-        private static func parseTextureFormat(_ rawValue: String?) -> TextureFormat? {
-            guard let rawValue else {
-                return nil
-            }
-
-            let normalized = rawValue
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-                .replacingOccurrences(of: "_", with: "")
-                .replacingOccurrences(of: "-", with: "")
-
-            return TextureFormat(rawValue: normalized)
-        }
     }
 
     static let arrayExpression = try! NSRegularExpression(
         pattern: #"(?:^|\s)(?:static\s+)?(?:(?:const|volatile)\s+)*(s8|u8|s16|u16|s32|u32|s64|u64)\s+([A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]]*\])?\s*=\s*\{"#,
         options: [.anchorsMatchLines]
+    )
+    static let sourceBackedTextureDefinitionExpression = try! NSRegularExpression(
+        pattern: #"(?:^|\n)\s*u(?:8|16|32|64)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\[[^\]]*\]\s*=\s*\{\s*#include\s+\"([^\"]+)\"\s*\};"#,
+        options: [.dotMatchesLineSeparators]
+    )
+    static let textureDimensionExpression = try! NSRegularExpression(
+        pattern: #"#define\s+([A-Za-z_][A-Za-z0-9_]*)_(WIDTH|HEIGHT)\s+([0-9]+)"#
+    )
+    static let textureIncludeWithTLUTExpression = try! NSRegularExpression(
+        pattern: #"^(?:.+)\.([A-Za-z0-9]+)\.tlut_([A-Za-z_][A-Za-z0-9_]*)\.inc\.c$"#
+    )
+    static let tlutIncludeExpression = try! NSRegularExpression(
+        pattern: #"^(?:.+)\.tlut\.([A-Za-z0-9]+)\.inc\.c$"#
+    )
+    static let textureIncludeExpression = try! NSRegularExpression(
+        pattern: #"^(?:.+)\.([A-Za-z0-9]+)\.inc\.c$"#
     )
 
     static func loadTextureSourceGroups(
@@ -351,7 +427,9 @@ private extension TextureExtractor {
             groups.append(contentsOf: try parseTextureSourceGroups(
                 from: xmlURL,
                 xmlRoot: xmlRoot,
-                assetSubdirectory: assetSubdirectory
+                assetSubdirectory: assetSubdirectory,
+                sourceRoot: sourceRoot,
+                fileManager: fileManager
             ))
         }
 
@@ -361,7 +439,9 @@ private extension TextureExtractor {
     static func parseTextureSourceGroups(
         from xmlURL: URL,
         xmlRoot: URL,
-        assetSubdirectory: String
+        assetSubdirectory: String,
+        sourceRoot: URL,
+        fileManager: FileManager
     ) throws -> [TextureSourceGroup] {
         let data = try Data(contentsOf: xmlURL)
         let xmlRelativeDirectory = xmlURL
@@ -380,13 +460,14 @@ private extension TextureExtractor {
             throw TextureExtractorError.invalidXML(xmlURL.path, message)
         }
 
+        let assetDirectory = [assetSubdirectory, xmlRelativeDirectory, defaultSourceName]
+            .filter { $0.isEmpty == false }
+            .joined(separator: "/")
         var groups: [TextureSourceGroup] = []
         for (sourceName, textures) in delegate.groupedTextures {
             let tluts = delegate.groupedTLUTs[sourceName] ?? []
             let tlutByOffset = Dictionary(tluts.map { ($0.offset, $0) }, uniquingKeysWith: { current, _ in current })
-            let assetDirectory = [assetSubdirectory, xmlRelativeDirectory, defaultSourceName]
-                .filter { $0.isEmpty == false }
-                .joined(separator: "/")
+            let tlutByName = Dictionary(tluts.map { ($0.name, $0) }, uniquingKeysWith: { current, _ in current })
             groups.append(
                 TextureSourceGroup(
                     xmlURL: xmlURL,
@@ -399,33 +480,42 @@ private extension TextureExtractor {
                         }
                         return $0.offset < $1.offset
                     },
-                    tlutByOffset: tlutByOffset
+                    tlutByOffset: tlutByOffset,
+                    tlutByName: tlutByName
                 )
+            )
+        }
+
+        if groups.isEmpty {
+            groups = try parseSourceBackedTextureSourceGroups(
+                sourceNames: delegate.sourceNames.isEmpty ? [defaultSourceName] : delegate.sourceNames,
+                xmlURL: xmlURL,
+                assetDirectory: assetDirectory,
+                sourceRoot: sourceRoot,
+                fileManager: fileManager
             )
         }
 
         return groups.sorted { $0.sourceName < $1.sourceName }
     }
 
-    static func resolveSourceFile(
-        for sourceGroup: TextureSourceGroup,
+    static func locateSourceFile(
+        named basename: String,
+        preferredExtensions: [String],
+        assetDirectory: String,
         sourceRoot: URL,
         fileManager: FileManager
-    ) throws -> URL {
+    ) throws -> URL? {
         let directDirectories = [
-            sourceRoot.appendingPathComponent("build", isDirectory: true).appendingPathComponent(sourceGroup.assetDirectory, isDirectory: true),
-            sourceRoot.appendingPathComponent(sourceGroup.assetDirectory, isDirectory: true),
+            sourceRoot.appendingPathComponent("build", isDirectory: true).appendingPathComponent(assetDirectory, isDirectory: true),
+            sourceRoot.appendingPathComponent(assetDirectory, isDirectory: true),
         ]
-        let candidateBasenames = [sourceGroup.sourceName]
-        let preferredExtensions = ["c", "inc.c"]
 
         for directory in directDirectories where fileManager.fileExists(atPath: directory.path) {
-            for basename in candidateBasenames {
-                for fileExtension in preferredExtensions {
-                    let candidate = directory.appendingPathComponent("\(basename).\(fileExtension)")
-                    if fileManager.fileExists(atPath: candidate.path) {
-                        return candidate
-                    }
+            for fileExtension in preferredExtensions {
+                let candidate = directory.appendingPathComponent("\(basename).\(fileExtension)")
+                if fileManager.fileExists(atPath: candidate.path) {
+                    return candidate
                 }
             }
         }
@@ -437,7 +527,7 @@ private extension TextureExtractor {
 
         for searchRoot in searchRoots where fileManager.fileExists(atPath: searchRoot.path) {
             if let match = try firstMatchingSource(
-                namedAnyOf: candidateBasenames,
+                namedAnyOf: [basename],
                 preferredExtensions: preferredExtensions,
                 in: searchRoot,
                 fileManager: fileManager
@@ -446,6 +536,371 @@ private extension TextureExtractor {
             }
         }
 
+        return nil
+    }
+
+    static func parseSourceBackedTextureSourceGroups(
+        sourceNames: [String],
+        xmlURL: URL,
+        assetDirectory: String,
+        sourceRoot: URL,
+        fileManager: FileManager
+    ) throws -> [TextureSourceGroup] {
+        var groups: [TextureSourceGroup] = []
+        var seenSourceNames: Set<String> = []
+
+        for sourceName in sourceNames where seenSourceNames.insert(sourceName).inserted {
+            guard let sourceFile = try locateSourceFile(
+                named: sourceName,
+                preferredExtensions: ["c", "inc.c"],
+                assetDirectory: assetDirectory,
+                sourceRoot: sourceRoot,
+                fileManager: fileManager
+            ) else {
+                continue
+            }
+
+            let headerFile = try locateSourceFile(
+                named: sourceName,
+                preferredExtensions: ["h"],
+                assetDirectory: assetDirectory,
+                sourceRoot: sourceRoot,
+                fileManager: fileManager
+            )
+            let sourceContents = try String(contentsOf: sourceFile, encoding: .utf8)
+            let headerContents = if let headerFile {
+                try String(contentsOf: headerFile, encoding: .utf8)
+            } else {
+                ""
+            }
+
+            let dimensionsByName = parseTextureDimensions(in: headerContents)
+            let declarations = parseSourceBackedTextureDeclarations(
+                in: sourceContents,
+                dimensionsByName: dimensionsByName,
+                sourceFile: sourceFile,
+                sourceRoot: sourceRoot,
+                fileManager: fileManager
+            )
+
+            guard declarations.textures.isEmpty == false else {
+                continue
+            }
+
+            let tluts = declarations.tluts.map {
+                TLUTDefinition(name: $0.name, format: $0.format, offset: $0.order)
+            }
+            let tlutByOffset = Dictionary(tluts.map { ($0.offset, $0) }, uniquingKeysWith: { current, _ in current })
+            let tlutByName = Dictionary(tluts.map { ($0.name, $0) }, uniquingKeysWith: { current, _ in current })
+            let textures = declarations.textures.map {
+                TextureDefinition(
+                    name: $0.name,
+                    format: $0.format,
+                    width: $0.width,
+                    height: $0.height,
+                    offset: $0.order,
+                    tlutOffset: nil,
+                    tlutName: $0.tlutName,
+                    pngURL: $0.pngURL
+                )
+            }.sorted {
+                if $0.offset == $1.offset {
+                    return $0.name < $1.name
+                }
+                return $0.offset < $1.offset
+            }
+
+            groups.append(
+                TextureSourceGroup(
+                    xmlURL: xmlURL,
+                    sourceName: sourceName,
+                    outputSource: sourceName,
+                    assetDirectory: assetDirectory,
+                    textures: textures,
+                    tlutByOffset: tlutByOffset,
+                    tlutByName: tlutByName
+                )
+            )
+        }
+
+        return groups
+    }
+
+    static func parseTextureDimensions(in headerContents: String) -> [String: (width: Int, height: Int)] {
+        let range = NSRange(headerContents.startIndex..<headerContents.endIndex, in: headerContents)
+        var widths: [String: Int] = [:]
+        var heights: [String: Int] = [:]
+
+        for match in textureDimensionExpression.matches(in: headerContents, range: range) {
+            let symbol = substring(in: headerContents, range: match.range(at: 1))
+            let axis = substring(in: headerContents, range: match.range(at: 2))
+            guard let value = Int(substring(in: headerContents, range: match.range(at: 3))) else {
+                continue
+            }
+
+            if axis == "WIDTH" {
+                widths[symbol] = value
+            } else {
+                heights[symbol] = value
+            }
+        }
+
+        var dimensions: [String: (width: Int, height: Int)] = [:]
+        for (symbol, width) in widths {
+            guard let height = heights[symbol] else {
+                continue
+            }
+            dimensions[symbol] = (width, height)
+        }
+
+        return dimensions
+    }
+
+    static func parseSourceBackedTextureDeclarations(
+        in sourceContents: String,
+        dimensionsByName: [String: (width: Int, height: Int)],
+        sourceFile: URL,
+        sourceRoot: URL,
+        fileManager: FileManager
+    ) -> (textures: [SourceBackedTextureDeclaration], tluts: [SourceBackedTLUTDeclaration]) {
+        let range = NSRange(sourceContents.startIndex..<sourceContents.endIndex, in: sourceContents)
+        var textures: [SourceBackedTextureDeclaration] = []
+        var tluts: [SourceBackedTLUTDeclaration] = []
+
+        for (index, match) in sourceBackedTextureDefinitionExpression.matches(in: sourceContents, range: range).enumerated() {
+            let symbol = substring(in: sourceContents, range: match.range(at: 1))
+            let includePath = substring(in: sourceContents, range: match.range(at: 2))
+
+            if let tlut = parseSourceBackedTLUTDeclaration(
+                symbol: symbol,
+                includePath: includePath,
+                order: index
+            ) {
+                tluts.append(tlut)
+                continue
+            }
+
+            guard
+                let dimension = dimensionsByName[symbol],
+                let texture = parseSourceBackedTextureDeclaration(
+                    symbol: symbol,
+                    includePath: includePath,
+                    width: dimension.width,
+                    height: dimension.height,
+                    order: index,
+                    sourceFile: sourceFile,
+                    sourceRoot: sourceRoot,
+                    fileManager: fileManager
+                )
+            else {
+                continue
+            }
+
+            textures.append(texture)
+        }
+
+        return (textures, tluts)
+    }
+
+    static func parseSourceBackedTLUTDeclaration(
+        symbol: String,
+        includePath: String,
+        order: Int
+    ) -> SourceBackedTLUTDeclaration? {
+        let basename = URL(fileURLWithPath: includePath).lastPathComponent
+        guard let match = firstMatch(in: basename, expression: tlutIncludeExpression) else {
+            return nil
+        }
+
+        let format = parseTextureFormat(substring(in: basename, range: match.range(at: 1)))
+        return SourceBackedTLUTDeclaration(name: symbol, format: format, order: order)
+    }
+
+    static func parseSourceBackedTextureDeclaration(
+        symbol: String,
+        includePath: String,
+        width: Int,
+        height: Int,
+        order: Int,
+        sourceFile: URL,
+        sourceRoot: URL,
+        fileManager: FileManager
+    ) -> SourceBackedTextureDeclaration? {
+        let basename = URL(fileURLWithPath: includePath).lastPathComponent
+        let pngURL = sourceBackedPNGURL(
+            forIncludePath: includePath,
+            sourceFile: sourceFile,
+            sourceRoot: sourceRoot,
+            fileManager: fileManager
+        )
+
+        if let match = firstMatch(in: basename, expression: textureIncludeWithTLUTExpression) {
+            guard let format = parseTextureFormat(substring(in: basename, range: match.range(at: 1))) else {
+                return nil
+            }
+
+            return SourceBackedTextureDeclaration(
+                name: symbol,
+                format: format,
+                width: width,
+                height: height,
+                order: order,
+                tlutName: substring(in: basename, range: match.range(at: 2)),
+                pngURL: pngURL
+            )
+        }
+
+        guard let match = firstMatch(in: basename, expression: textureIncludeExpression) else {
+            return nil
+        }
+        guard let format = parseTextureFormat(substring(in: basename, range: match.range(at: 1))) else {
+            return nil
+        }
+
+        return SourceBackedTextureDeclaration(
+            name: symbol,
+            format: format,
+            width: width,
+            height: height,
+            order: order,
+            tlutName: nil,
+            pngURL: pngURL
+        )
+    }
+
+    static func sourceBackedPNGURL(
+        forIncludePath includePath: String,
+        sourceFile: URL,
+        sourceRoot: URL,
+        fileManager: FileManager
+    ) -> URL? {
+        guard includePath.hasSuffix(".inc.c") else {
+            return nil
+        }
+
+        let pngPath = String(includePath.dropLast(".inc.c".count)) + ".png"
+        let candidateRoots = [
+            assetRoot(for: sourceFile),
+            sourceRoot.appendingPathComponent("build", isDirectory: true),
+            sourceRoot,
+            sourceFile.deletingLastPathComponent(),
+        ]
+
+        for root in candidateRoots.compactMap({ $0 }) {
+            let candidate = root.appendingPathComponent(pngPath)
+            if fileManager.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+        }
+
+        return nil
+    }
+
+    static func assetRoot(for fileURL: URL) -> URL? {
+        let standardizedPath = fileURL.standardizedFileURL.path
+        guard let assetsRange = standardizedPath.range(of: "/assets/") else {
+            return nil
+        }
+
+        return URL(
+            fileURLWithPath: String(standardizedPath[..<assetsRange.lowerBound]),
+            isDirectory: true
+        )
+    }
+
+    static func loadPNGTextureData(
+        from pngURL: URL,
+        expectedWidth: Int,
+        expectedHeight: Int
+    ) throws -> Data {
+        guard
+            let source = CGImageSourceCreateWithURL(pngURL as CFURL, nil),
+            let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else {
+            throw TextureExtractorError.unreadablePNG(pngURL.path)
+        }
+
+        guard image.width == expectedWidth, image.height == expectedHeight else {
+            throw TextureExtractorError.invalidPNGDimensions(
+                pngURL.path,
+                expectedWidth: expectedWidth,
+                expectedHeight: expectedHeight,
+                actualWidth: image.width,
+                actualHeight: image.height
+            )
+        }
+
+        let bytesPerPixel = 4
+        let bytesPerRow = expectedWidth * bytesPerPixel
+        var buffer = Data(count: expectedHeight * bytesPerRow)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+
+        let rendered = buffer.withUnsafeMutableBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else {
+                return false
+            }
+
+            guard let context = CGContext(
+                data: baseAddress,
+                width: expectedWidth,
+                height: expectedHeight,
+                bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else {
+                return false
+            }
+
+            context.draw(image, in: CGRect(x: 0, y: 0, width: expectedWidth, height: expectedHeight))
+            return true
+        }
+
+        guard rendered else {
+            throw TextureExtractorError.unreadablePNG(pngURL.path)
+        }
+
+        return buffer
+    }
+
+    static func parseTextureFormat(_ rawValue: String?) -> TextureFormat? {
+        guard let rawValue else {
+            return nil
+        }
+
+        let normalized = rawValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+
+        return TextureFormat(rawValue: normalized)
+    }
+
+    static func firstMatch(in input: String, expression: NSRegularExpression) -> NSTextCheckingResult? {
+        let range = NSRange(input.startIndex..<input.endIndex, in: input)
+        return expression.firstMatch(in: input, range: range)
+    }
+
+    static func resolveSourceFile(
+        for sourceGroup: TextureSourceGroup,
+        sourceRoot: URL,
+        fileManager: FileManager
+    ) throws -> URL {
+        if let sourceFile = try locateSourceFile(
+            named: sourceGroup.sourceName,
+            preferredExtensions: ["c", "inc.c"],
+            assetDirectory: sourceGroup.assetDirectory,
+            sourceRoot: sourceRoot,
+            fileManager: fileManager
+        ) {
+            return sourceFile
+        }
+
+        let searchRoots = [
+            sourceRoot.appendingPathComponent("build", isDirectory: true),
+            sourceRoot,
+        ]
         for searchRoot in searchRoots where fileManager.fileExists(atPath: searchRoot.path) {
             if let match = try firstSourceContainingRequiredTextureSymbols(
                 for: sourceGroup,
@@ -461,7 +916,8 @@ private extension TextureExtractor {
 
     static func parseTextureArrays(
         in source: String,
-        sourceFile: URL
+        sourceFile: URL,
+        requiredArrayNames: Set<String>
     ) throws -> [String: ParsedTextureArray] {
         let sanitized = stripLineComments(from: source)
         let searchRange = NSRange(sanitized.startIndex..<sanitized.endIndex, in: sanitized)
@@ -471,6 +927,9 @@ private extension TextureExtractor {
         for match in matches {
             let kindName = substring(in: sanitized, range: match.range(at: 1))
             let name = substring(in: sanitized, range: match.range(at: 2))
+            guard requiredArrayNames.contains(name) else {
+                continue
+            }
             guard let elementKind = IntegerArrayElementKind(rawValue: kindName) else {
                 continue
             }
@@ -709,7 +1168,11 @@ private extension TextureExtractor {
         in root: URL,
         fileManager: FileManager
     ) throws -> URL? {
-        let requiredSymbols = Set(sourceGroup.textures.map(\.name) + sourceGroup.tlutByOffset.values.map(\.name))
+        let requiredSymbols = Set(
+            sourceGroup.textures.map(\.name)
+                + sourceGroup.tlutByOffset.values.map(\.name)
+                + sourceGroup.tlutByName.values.map(\.name)
+        )
         guard requiredSymbols.isEmpty == false else {
             return nil
         }
@@ -1020,12 +1483,15 @@ private enum TextureExtractorError: LocalizedError {
     case invalidBinarySize(String, expected: Int, actual: Int)
     case invalidIntegerLiteral(String)
     case invalidMetadataDimensions(Int, Int)
+    case invalidPNGDimensions(String, expectedWidth: Int, expectedHeight: Int, actualWidth: Int, actualHeight: Int)
     case invalidXML(String, String)
     case integerOutOfRange(Int64, bitWidth: Int, field: String, sourceFile: String)
     case missingArray(String, String)
     case missingSourceFile(String, String)
     case missingTextureBinary(String)
+    case missingNamedTLUTDefinition(String, String, String)
     case missingTLUTDefinition(String, Int, String)
+    case unreadablePNG(String)
     case unterminatedArray
     case unexpectedTLUTMetadata(String)
 
@@ -1037,6 +1503,8 @@ private enum TextureExtractorError: LocalizedError {
             return "Unsupported integer literal: \(literal)"
         case .invalidMetadataDimensions(let width, let height):
             return "Texture metadata has invalid dimensions \(width)x\(height)."
+        case .invalidPNGDimensions(let path, let expectedWidth, let expectedHeight, let actualWidth, let actualHeight):
+            return "PNG texture '\(path)' has size \(actualWidth)x\(actualHeight), expected \(expectedWidth)x\(expectedHeight)."
         case .invalidXML(let path, let message):
             return "Failed to parse texture XML '\(path)': \(message)"
         case .integerOutOfRange(let value, let bitWidth, let field, let sourceFile):
@@ -1047,8 +1515,12 @@ private enum TextureExtractorError: LocalizedError {
             return "Texture source '\(sourceName)' referenced by '\(xmlPath)' could not be resolved."
         case .missingTextureBinary(let path):
             return "Missing texture binary: \(path)"
+        case .missingNamedTLUTDefinition(let textureName, let tlutName, let xmlPath):
+            return "Texture '\(textureName)' references TLUT '\(tlutName)' that is not defined in '\(xmlPath)'."
         case .missingTLUTDefinition(let textureName, let offset, let xmlPath):
             return "Texture '\(textureName)' references TLUT offset \(String(format: "0x%X", offset)) that is not defined in '\(xmlPath)'."
+        case .unreadablePNG(let path):
+            return "PNG texture asset '\(path)' could not be decoded."
         case .unterminatedArray:
             return "Encountered an unterminated C array while parsing texture data."
         case .unexpectedTLUTMetadata(let format):
