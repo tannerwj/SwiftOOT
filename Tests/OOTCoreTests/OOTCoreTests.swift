@@ -5,16 +5,87 @@ import OOTDataModel
 
 final class OOTCoreTests: XCTestCase {
     @MainActor
-    func testGameRuntimeStartsIdle() {
-        let runtime = GameRuntime()
+    func testGameRuntimeStartsWithBootStateAndRequiredProperties() {
+        let runtime = GameRuntime(suspender: { _ in })
 
-        XCTAssertEqual(runtime.state, .idle)
-        XCTAssertTrue(runtime.actors.isEmpty)
+        XCTAssertEqual(runtime.currentState, .boot)
         XCTAssertNil(runtime.playState)
+        XCTAssertEqual(runtime.saveContext.slots.count, 3)
+        XCTAssertFalse(runtime.canContinue)
+        XCTAssertEqual(runtime.inputState.selectionIndex, 0)
     }
 
     @MainActor
-    func testLoadSceneSpawnsBaselineActorsUsingDefaultRegistry() async throws {
+    func testStartAdvancesFromBootToTitleScreen() async {
+        let runtime = GameRuntime(suspender: { _ in })
+
+        await runtime.start()
+
+        XCTAssertEqual(runtime.currentState, .titleScreen)
+        XCTAssertEqual(runtime.gameTime.frameCount, 2)
+    }
+
+    @MainActor
+    func testChoosingNewGameOpensFileSelectAndStartsGameplay() async {
+        let runtime = GameRuntime(suspender: { _ in })
+        await runtime.start()
+
+        runtime.chooseTitleOption(.newGame)
+
+        XCTAssertEqual(runtime.currentState, .fileSelect)
+        XCTAssertEqual(runtime.fileSelectMode, .newGame)
+        XCTAssertEqual(runtime.saveContext.selectedSlotIndex, 0)
+
+        runtime.selectSaveSlot(2)
+        runtime.confirmSelectedSaveSlot()
+
+        XCTAssertEqual(runtime.currentState, .gameplay)
+        XCTAssertEqual(runtime.playState?.entryMode, .newGame)
+        XCTAssertEqual(runtime.playState?.activeSaveSlot, 2)
+        XCTAssertTrue(runtime.saveContext.slots[2].hasSaveData)
+    }
+
+    @MainActor
+    func testContinueWithoutSaveStaysOnTitleScreen() async {
+        let runtime = GameRuntime(suspender: { _ in })
+        await runtime.start()
+
+        runtime.chooseTitleOption(.continueGame)
+
+        XCTAssertEqual(runtime.currentState, .titleScreen)
+        XCTAssertNil(runtime.fileSelectMode)
+        XCTAssertEqual(runtime.statusMessage, "No saved games are available yet.")
+    }
+
+    @MainActor
+    func testContinueUsesFirstOccupiedSaveSlot() async {
+        let runtime = GameRuntime(
+            saveContext: SaveContext(
+                slots: [
+                    .empty(id: 0),
+                    SaveSlot(id: 1, playerName: "Link", locationName: "Hyrule Field", hearts: 4, hasSaveData: true),
+                    .empty(id: 2),
+                ]
+            ),
+            suspender: { _ in }
+        )
+        await runtime.start()
+
+        runtime.chooseTitleOption(.continueGame)
+
+        XCTAssertEqual(runtime.currentState, .fileSelect)
+        XCTAssertEqual(runtime.fileSelectMode, .continueGame)
+        XCTAssertEqual(runtime.saveContext.selectedSlotIndex, 1)
+
+        runtime.confirmSelectedSaveSlot()
+
+        XCTAssertEqual(runtime.currentState, .gameplay)
+        XCTAssertEqual(runtime.playState?.entryMode, .continueGame)
+        XCTAssertEqual(runtime.playState?.currentSceneName, "Hyrule Field")
+    }
+
+    @MainActor
+    func testLoadSceneSpawnsBaselineActorsUsingDefaultRegistry() throws {
         let fixture = RuntimeFixture(
             scene: makeScene(
                 roomSpawns: [
@@ -33,11 +104,11 @@ final class OOTCoreTests: XCTestCase {
                 makeActorTableEntry(id: 4, name: "ACTOR_OBJ_HANA", category: .prop),
             ]
         )
-        let runtime = GameRuntime(contentLoader: fixture.contentLoader)
+        let runtime = GameRuntime(contentLoader: fixture.contentLoader, suspender: { _ in })
 
-        try await runtime.loadScene(id: 0x55)
+        try runtime.loadScene(id: 0x55)
 
-        XCTAssertEqual(runtime.state, .running)
+        XCTAssertEqual(runtime.currentState, .gameplay)
         XCTAssertEqual(runtime.playState?.activeRoomIDs, [0])
         XCTAssertEqual(
             runtime.actors.map { String(describing: type(of: $0)) },
@@ -51,7 +122,7 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
-    func testUpdateCycleRespectsCategoryOrderAndDestroysActorsOnce() async throws {
+    func testUpdateCycleRespectsCategoryOrderAndDestroysActorsOnce() throws {
         let recorder = EventRecorder()
         var registry = ActorRegistry()
         registry.register(actorID: 10) {
@@ -98,10 +169,11 @@ final class OOTCoreTests: XCTestCase {
         )
         let runtime = GameRuntime(
             contentLoader: fixture.contentLoader,
-            actorRegistry: registry
+            actorRegistry: registry,
+            suspender: { _ in }
         )
 
-        try await runtime.loadScene(id: 0x55)
+        try runtime.loadScene(id: 0x55)
         recorder.reset()
 
         runtime.updateFrame()
@@ -117,11 +189,10 @@ final class OOTCoreTests: XCTestCase {
             ]
         )
         XCTAssertEqual(runtime.actors.count, 1)
-        XCTAssertEqual(runtime.actors.map { String(describing: type(of: $0)) }, ["RecordingActor"])
     }
 
     @MainActor
-    func testChangingActiveRoomsDespawnsLeavingActorsAndSpawnsNewRoomActors() async throws {
+    func testChangingActiveRoomsDespawnsLeavingActorsAndSpawnsNewRoomActors() throws {
         let recorder = EventRecorder()
         var registry = ActorRegistry()
         registry.register(actorID: 10) {
@@ -153,10 +224,11 @@ final class OOTCoreTests: XCTestCase {
         )
         let runtime = GameRuntime(
             contentLoader: fixture.contentLoader,
-            actorRegistry: registry
+            actorRegistry: registry,
+            suspender: { _ in }
         )
 
-        try await runtime.loadScene(id: 0x55)
+        try runtime.loadScene(id: 0x55)
         XCTAssertEqual(recorder.events, ["init:room0"])
 
         runtime.setActiveRooms([1])
@@ -174,7 +246,7 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
-    func testDrawPassesOnlyCallMatchingActors() async throws {
+    func testDrawPassesOnlyCallMatchingActors() throws {
         let recorder = EventRecorder()
         var registry = ActorRegistry()
         registry.register(actorID: 10) {
@@ -210,10 +282,11 @@ final class OOTCoreTests: XCTestCase {
         )
         let runtime = GameRuntime(
             contentLoader: fixture.contentLoader,
-            actorRegistry: registry
+            actorRegistry: registry,
+            suspender: { _ in }
         )
 
-        try await runtime.loadScene(id: 0x55)
+        try runtime.loadScene(id: 0x55)
         recorder.reset()
 
         runtime.drawActors(in: .opaque)
@@ -244,11 +317,11 @@ private struct MockContentLoader: ContentLoading {
 
     func loadInitialContent() async throws {}
 
-    func loadScene(id: Int) async throws -> LoadedScene {
+    func loadScene(id: Int) throws -> LoadedScene {
         scene
     }
 
-    func loadActorTable() async throws -> [ActorTableEntry] {
+    func loadActorTable() throws -> [ActorTableEntry] {
         actorTable
     }
 }

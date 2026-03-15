@@ -3,8 +3,29 @@ import OOTDataModel
 
 public protocol ContentLoading: Sendable {
     func loadInitialContent() async throws
-    func loadScene(id: Int) async throws -> LoadedScene
-    func loadActorTable() async throws -> [ActorTableEntry]
+    func loadScene(id: Int) throws -> LoadedScene
+    func loadActorTable() throws -> [ActorTableEntry]
+}
+
+public enum ContentLoaderError: Error, LocalizedError, Sendable, Equatable {
+    case sceneLoadingUnavailable
+
+    public var errorDescription: String? {
+        switch self {
+        case .sceneLoadingUnavailable:
+            "Scene-backed gameplay content is unavailable in the current content loader."
+        }
+    }
+}
+
+public extension ContentLoading {
+    func loadScene(id: Int) throws -> LoadedScene {
+        throw ContentLoaderError.sceneLoadingUnavailable
+    }
+
+    func loadActorTable() throws -> [ActorTableEntry] {
+        throw ContentLoaderError.sceneLoadingUnavailable
+    }
 }
 
 public struct ContentLoader: ContentLoading {
@@ -19,11 +40,11 @@ public struct ContentLoader: ContentLoading {
 
     public func loadInitialContent() async throws {}
 
-    public func loadScene(id: Int) async throws -> LoadedScene {
+    public func loadScene(id: Int) throws -> LoadedScene {
         try sceneLoader.loadScene(id: id)
     }
 
-    public func loadActorTable() async throws -> [ActorTableEntry] {
+    public func loadActorTable() throws -> [ActorTableEntry] {
         try sceneLoader.loadActorTable()
     }
 }

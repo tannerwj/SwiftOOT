@@ -44,7 +44,7 @@ public enum ActorCategory: UInt16, CaseIterable, Sendable {
     }
 }
 
-public enum ActorDrawPass: String, CaseIterable, Sendable {
+public enum ActorDrawPass: String, CaseIterable, Codable, Sendable, Equatable {
     case opaque
     case translucent
 }
@@ -155,6 +155,19 @@ public final class GenericPropActor: DamageableBaseActor {}
 public final class PlaceholderActor: DamageableBaseActor {}
 
 @MainActor
+public final class ActorRuntimeHooks: @unchecked Sendable {
+    private let destroyHandler: @MainActor (any Actor) -> Void
+
+    public init(destroyHandler: @escaping @MainActor (any Actor) -> Void) {
+        self.destroyHandler = destroyHandler
+    }
+
+    public func requestDestroy(_ actor: any Actor) {
+        destroyHandler(actor)
+    }
+}
+
+@MainActor
 public struct ActorRegistry {
     public typealias Factory = @MainActor (ActorSpawnRecord) -> any Actor
 
@@ -211,48 +224,6 @@ public struct ActorRegistry {
         ) { KokiriChildActor(spawnRecord: $0) }
 
         return registry
-    }
-}
-
-@MainActor
-public final class PlayState {
-    public let scene: LoadedScene
-    public let actorTable: [Int: ActorTableEntry]
-    public let actorContext: ActorContext
-
-    public private(set) var activeRoomIDs: Set<Int>
-    public private(set) var currentDrawPass: ActorDrawPass?
-
-    public init(
-        scene: LoadedScene,
-        actorTable: [Int: ActorTableEntry],
-        activeRoomIDs: Set<Int>,
-        actorContext: ActorContext
-    ) {
-        self.scene = scene
-        self.actorTable = actorTable
-        self.activeRoomIDs = activeRoomIDs
-        self.actorContext = actorContext
-    }
-
-    public var activeRooms: [LoadedSceneRoom] {
-        scene.rooms.filter { activeRoomIDs.contains($0.manifest.id) }
-    }
-
-    public func requestDestroy(_ actor: any Actor) {
-        actorContext.requestDestroy(actor)
-    }
-
-    public func setActiveRooms(_ roomIDs: Set<Int>) {
-        activeRoomIDs = roomIDs
-    }
-
-    func beginDrawPass(_ pass: ActorDrawPass) {
-        currentDrawPass = pass
-    }
-
-    func endDrawPass() {
-        currentDrawPass = nil
     }
 }
 
@@ -365,14 +336,13 @@ public final class ActorContext {
     }
 
     public func drawActors(in pass: ActorDrawPass, playState: PlayState) {
-        playState.beginDrawPass(pass)
-        defer { playState.endDrawPass() }
+        let drawState = playState.withCurrentDrawPass(pass)
 
         for category in ActorCategory.updatePriorityOrder {
             let actors = actorsByCategory[category, default: []].map(\.actor)
 
             for actor in actors where actor.drawPasses.contains(pass) {
-                actor.draw(playState: playState, pass: pass)
+                actor.draw(playState: drawState, pass: pass)
             }
         }
     }

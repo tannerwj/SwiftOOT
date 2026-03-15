@@ -34,6 +34,7 @@ let project = Project(
         staticFrameworkTarget(
             name: "OOTUI",
             dependencies: [
+                .target(name: "OOTCore"),
                 .target(name: "OOTRender"),
                 .target(name: "OOTContent"),
                 .target(name: "OOTDataModel"),
@@ -67,7 +68,11 @@ let project = Project(
         unitTestTarget(name: "OOTContentTests", testedTarget: "OOTContent"),
         unitTestTarget(name: "OOTCoreTests", testedTarget: "OOTCore"),
         unitTestTarget(name: "OOTRenderTests", testedTarget: "OOTRender"),
-        unitTestTarget(name: "OOTUITests", testedTarget: "OOTUI"),
+        unitTestTarget(
+            name: "OOTUITests",
+            testedTarget: "OOTUI",
+            dependencies: [.target(name: "OOTCore")]
+        ),
         unitTestTarget(name: "OOTTelemetryTests", testedTarget: "OOTTelemetry"),
     ]
 )
@@ -119,7 +124,8 @@ private func commandLineTarget(
 
 private func unitTestTarget(
     name: String,
-    testedTarget: String
+    testedTarget: String,
+    dependencies: [TargetDependency] = []
 ) -> Target {
     .target(
         name: name,
@@ -128,6 +134,6 @@ private func unitTestTarget(
         bundleId: "com.tannerwj.SwiftOOT.\(name)",
         infoPlist: .default,
         sources: .sourceFilesList(globs: ["Tests/\(name)/**"]),
-        dependencies: [.target(name: testedTarget)]
+        dependencies: [.target(name: testedTarget)] + dependencies
     )
 }
