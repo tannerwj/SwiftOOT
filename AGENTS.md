@@ -43,6 +43,21 @@ N64's fragment pipeline: `(A - B) * C + D` per cycle, 2 cycles. Emulated in a si
 - Scene/object XMLs + `.inc.c` files → geometry, textures, skeletons, animations, collision
 - Actor `.c` files → actor profiles
 
+Current validated local bootstrap:
+
+- `git submodule update --init`
+- install Homebrew `make` and `mipsel-linux-gnu-binutils`
+- place a supported ROM in `Vendor/oot/baseroms/<version>/baserom.{z64,n64,v64}`
+- run `cd Vendor/oot && MIPS_BINUTILS_PREFIX=mipsel-linux-gnu- gmake setup VERSION=ntsc-1.2`
+- run `tuist install && tuist generate --no-open`
+
+If current macOS clang fails in `tools/assets/build_from_png`, the temporary
+local workaround is:
+
+- `cd Vendor/oot && MIPS_BINUTILS_PREFIX=mipsel-linux-gnu- gmake setup VERSION=ntsc-1.2 CFLAGS='-Wno-error=gnu-folding-constant'`
+
+Track the permanent fix in `TAN-79`.
+
 ## Working with the Decompilation
 
 The zeldaret/oot repo lives at `Vendor/oot/`. Key locations:
@@ -71,8 +86,7 @@ Symphony is the execution layer for issue work. Linear is the queue.
 - `Todo`: ready for Symphony pickup
 - `In Progress`: worker is active
 - `Human Review`: branch/PR is ready for review
-- `Rework`: reviewer found issues; Symphony should continue from the current
-  branch/workspace unless a restart is explicitly required
+- `Rework`: reviewer found issues; Symphony should continue on the existing branch, workspace, and PR by default
 - `Merging`: approved and ready to land
 - `Done`: merged
 
@@ -224,15 +238,14 @@ When an issue moves to `Rework`, the next Symphony worker should:
 
 - preserve the existing workspace, branch, and PR by default
 - address only the review findings
-- keep the one-issue-per-branch model, but patch the current branch unless it
-  is unusable
+- push a focused follow-up commit on the same branch when possible
 
-Create a fresh branch from `master` only when one of these is true:
+Create a fresh branch only when:
 
-- the existing PR is closed or merged
-- the branch cannot be pushed or published cleanly
-- the workspace is corrupted or no longer matches the issue
-- the reviewer explicitly requested a restart
+- the existing PR was closed or merged
+- the branch cannot be pushed or recovered cleanly
+- the workspace is corrupted
+- the reviewer explicitly requests a reset
 
 If the same issue returns to `Rework` more than twice for the same underlying
 failure mode, stop treating it as a normal review loop. Tighten the issue's
