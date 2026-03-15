@@ -4,6 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "SwiftOOT",
+    platforms: [.macOS("26.0")],
     products: [
         .library(
             name: "OOTDataModel",
@@ -38,6 +39,14 @@ let package = Package(
             dependencies: ["OOTDataModel"]
         ),
         .target(
+            name: "OOTTelemetry",
+            dependencies: ["OOTDataModel"]
+        ),
+        .target(
+            name: "OOTCore",
+            dependencies: ["OOTContent", "OOTDataModel", "OOTTelemetry"]
+        ),
+        .target(
             name: "OOTExtractSupport",
             dependencies: ["OOTDataModel"]
         ),
@@ -60,6 +69,14 @@ let package = Package(
         .testTarget(
             name: "OOTContentTests",
             dependencies: ["OOTContent", "OOTDataModel"]
+        ),
+        .testTarget(
+            name: "OOTTelemetryTests",
+            dependencies: ["OOTTelemetry"]
+        ),
+        .testTarget(
+            name: "OOTCoreTests",
+            dependencies: ["OOTCore", "OOTContent", "OOTDataModel"]
         ),
         .testTarget(
             name: "OOTExtractCLITests",
