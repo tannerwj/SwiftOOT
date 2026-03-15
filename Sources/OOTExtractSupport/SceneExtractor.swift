@@ -214,6 +214,265 @@ extension SceneExtractor {
     }
 }
 
+struct CollisionSceneBinary: Equatable, Sendable {
+    let minimumBounds: Vector3s
+    let maximumBounds: Vector3s
+    let vertices: [Vector3s]
+    let polygons: [CollisionPolygonBinary]
+    let surfaceTypes: [CollisionSurfaceTypeBinary]
+    let waterBoxes: [CollisionWaterBoxBinary]
+}
+
+struct CollisionPolygonBinary: Equatable, Sendable {
+    let surfaceType: UInt16
+    let vertexA: UInt16
+    let vertexB: UInt16
+    let vertexC: UInt16
+    let normal: Vector3s
+    let distance: Int16
+}
+
+struct CollisionSurfaceTypeBinary: Equatable, Sendable {
+    let low: UInt32
+    let high: UInt32
+}
+
+struct CollisionWaterBoxBinary: Equatable, Sendable {
+    let xMin: Int16
+    let ySurface: Int16
+    let zMin: Int16
+    let xLength: UInt16
+    let zLength: UInt16
+    let properties: UInt32
+}
+
+extension CollisionExtractor {
+    public func extract(using context: OOTExtractionContext) throws {
+        let fileManager = FileManager.default
+        let scenes = try SceneExtractor.loadScenes(
+            in: context.source,
+            sceneName: context.sceneName,
+            fileManager: fileManager
+        )
+        var extractedScenes = 0
+        var skippedScenes = 0
+
+        for scene in scenes {
+            let sceneSourceFile: URL
+            do {
+                sceneSourceFile = try SceneExtractor.resolveSceneSource(
+                    for: scene,
+                    sourceRoot: context.source,
+                    fileManager: fileManager
+                )
+            } catch let error as SceneExtractorError where error.isMissingSource {
+                guard context.sceneName == nil else {
+                    throw error
+                }
+                print("[\(name)] skipped scene \(scene.name): \(error.localizedDescription)")
+                skippedScenes += 1
+                continue
+            }
+
+            let sceneSource = try SceneExtractor.readExpandedSource(at: sceneSourceFile, sourceRoot: context.source)
+            guard let collision = try Self.parseCollision(sceneName: scene.name, source: sceneSource) else {
+                continue
+            }
+
+            let sceneDirectory = context.output
+                .appendingPathComponent("Scenes", isDirectory: true)
+                .appendingPathComponent(scene.name, isDirectory: true)
+            try fileManager.createDirectory(at: sceneDirectory, withIntermediateDirectories: true)
+            try Self.encode(collision).write(
+                to: sceneDirectory.appendingPathComponent("collision.bin"),
+                options: .atomic
+            )
+            extractedScenes += 1
+        }
+
+        print("[\(name)] extracted \(extractedScenes) collision bundle(s)")
+        if skippedScenes > 0 {
+            print("[\(name)] skipped \(skippedScenes) scene(s) with missing source data")
+        }
+    }
+
+    public func verify(using context: OOTVerificationContext) throws {
+        let collisionFiles = try Self.collisionBinaryFiles(in: context.content, fileManager: .default)
+
+        for collisionFile in collisionFiles {
+            _ = try Self.decode(
+                Data(contentsOf: collisionFile),
+                path: collisionFile.path
+            )
+        }
+
+        print("[\(name)] verified \(collisionFiles.count) collision bundle(s)")
+    }
+
+    static func encode(_ collision: CollisionSceneBinary) -> Data {
+        var data = Data()
+        data.reserveCapacity(
+            20 +
+                (collision.vertices.count * 6) +
+                (collision.polygons.count * 16) +
+                (collision.surfaceTypes.count * 8) +
+                (collision.waterBoxes.count * 14)
+        )
+
+        data.append(bigEndian: collision.minimumBounds.x)
+        data.append(bigEndian: collision.minimumBounds.y)
+        data.append(bigEndian: collision.minimumBounds.z)
+        data.append(bigEndian: collision.maximumBounds.x)
+        data.append(bigEndian: collision.maximumBounds.y)
+        data.append(bigEndian: collision.maximumBounds.z)
+        data.append(bigEndian: UInt16(clamping: collision.vertices.count))
+        data.append(bigEndian: UInt16(clamping: collision.polygons.count))
+        data.append(bigEndian: UInt16(clamping: collision.surfaceTypes.count))
+        data.append(bigEndian: UInt16(clamping: collision.waterBoxes.count))
+
+        for vertex in collision.vertices {
+            data.append(bigEndian: vertex.x)
+            data.append(bigEndian: vertex.y)
+            data.append(bigEndian: vertex.z)
+        }
+
+        for polygon in collision.polygons {
+            data.append(bigEndian: polygon.surfaceType)
+            data.append(bigEndian: polygon.vertexA)
+            data.append(bigEndian: polygon.vertexB)
+            data.append(bigEndian: polygon.vertexC)
+            data.append(bigEndian: polygon.normal.x)
+            data.append(bigEndian: polygon.normal.y)
+            data.append(bigEndian: polygon.normal.z)
+            data.append(bigEndian: polygon.distance)
+        }
+
+        for surfaceType in collision.surfaceTypes {
+            data.append(bigEndian: surfaceType.low)
+            data.append(bigEndian: surfaceType.high)
+        }
+
+        for waterBox in collision.waterBoxes {
+            data.append(bigEndian: waterBox.xMin)
+            data.append(bigEndian: waterBox.ySurface)
+            data.append(bigEndian: waterBox.zMin)
+            data.append(bigEndian: waterBox.xLength)
+            data.append(bigEndian: waterBox.zLength)
+            data.append(bigEndian: waterBox.properties)
+        }
+
+        return data
+    }
+
+    static func decode(_ data: Data, path: String = "<memory>") throws -> CollisionSceneBinary {
+        var offset = data.startIndex
+        let minimumBounds = try Vector3s(
+            x: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+            y: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+            z: readInteger(from: data, offset: &offset, as: Int16.self, path: path)
+        )
+        let maximumBounds = try Vector3s(
+            x: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+            y: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+            z: readInteger(from: data, offset: &offset, as: Int16.self, path: path)
+        )
+        let vertexCount = Int(try readInteger(from: data, offset: &offset, as: UInt16.self, path: path))
+        let polygonCount = Int(try readInteger(from: data, offset: &offset, as: UInt16.self, path: path))
+        let surfaceTypeCount = Int(try readInteger(from: data, offset: &offset, as: UInt16.self, path: path))
+        let waterBoxCount = Int(try readInteger(from: data, offset: &offset, as: UInt16.self, path: path))
+
+        var vertices: [Vector3s] = []
+        vertices.reserveCapacity(vertexCount)
+        for _ in 0..<vertexCount {
+            vertices.append(
+                try Vector3s(
+                    x: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+                    y: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+                    z: readInteger(from: data, offset: &offset, as: Int16.self, path: path)
+                )
+            )
+        }
+
+        var polygons: [CollisionPolygonBinary] = []
+        polygons.reserveCapacity(polygonCount)
+        for _ in 0..<polygonCount {
+            polygons.append(
+                try CollisionPolygonBinary(
+                    surfaceType: readInteger(from: data, offset: &offset, as: UInt16.self, path: path),
+                    vertexA: readInteger(from: data, offset: &offset, as: UInt16.self, path: path),
+                    vertexB: readInteger(from: data, offset: &offset, as: UInt16.self, path: path),
+                    vertexC: readInteger(from: data, offset: &offset, as: UInt16.self, path: path),
+                    normal: Vector3s(
+                        x: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+                        y: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+                        z: readInteger(from: data, offset: &offset, as: Int16.self, path: path)
+                    ),
+                    distance: readInteger(from: data, offset: &offset, as: Int16.self, path: path)
+                )
+            )
+        }
+
+        var surfaceTypes: [CollisionSurfaceTypeBinary] = []
+        surfaceTypes.reserveCapacity(surfaceTypeCount)
+        for _ in 0..<surfaceTypeCount {
+            surfaceTypes.append(
+                try CollisionSurfaceTypeBinary(
+                    low: readInteger(from: data, offset: &offset, as: UInt32.self, path: path),
+                    high: readInteger(from: data, offset: &offset, as: UInt32.self, path: path)
+                )
+            )
+        }
+
+        var waterBoxes: [CollisionWaterBoxBinary] = []
+        waterBoxes.reserveCapacity(waterBoxCount)
+        for _ in 0..<waterBoxCount {
+            waterBoxes.append(
+                try CollisionWaterBoxBinary(
+                    xMin: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+                    ySurface: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+                    zMin: readInteger(from: data, offset: &offset, as: Int16.self, path: path),
+                    xLength: readInteger(from: data, offset: &offset, as: UInt16.self, path: path),
+                    zLength: readInteger(from: data, offset: &offset, as: UInt16.self, path: path),
+                    properties: readInteger(from: data, offset: &offset, as: UInt32.self, path: path)
+                )
+            )
+        }
+
+        guard offset == data.endIndex else {
+            throw CollisionExtractorError.invalidBinarySize(path, data.count, offset)
+        }
+
+        for polygon in polygons {
+            guard Int(polygon.vertexA) < vertices.count else {
+                throw CollisionExtractorError.invalidReference(path, "vertexA", Int(polygon.vertexA), vertices.count)
+            }
+            guard Int(polygon.vertexB) < vertices.count else {
+                throw CollisionExtractorError.invalidReference(path, "vertexB", Int(polygon.vertexB), vertices.count)
+            }
+            guard Int(polygon.vertexC) < vertices.count else {
+                throw CollisionExtractorError.invalidReference(path, "vertexC", Int(polygon.vertexC), vertices.count)
+            }
+            guard Int(polygon.surfaceType) < surfaceTypes.count || surfaceTypes.isEmpty else {
+                throw CollisionExtractorError.invalidReference(
+                    path,
+                    "surfaceType",
+                    Int(polygon.surfaceType),
+                    surfaceTypes.count
+                )
+            }
+        }
+
+        return CollisionSceneBinary(
+            minimumBounds: minimumBounds,
+            maximumBounds: maximumBounds,
+            vertices: vertices,
+            polygons: polygons,
+            surfaceTypes: surfaceTypes,
+            waterBoxes: waterBoxes
+        )
+    }
+}
+
 private extension SceneExtractor {
     struct MetadataReferenceTables {
         let actorIDByName: [String: Int]
@@ -1145,7 +1404,22 @@ private extension SceneExtractor {
     }
 
     static func parseSigned16Expression(_ expression: String) throws -> Int16 {
-        try parseSigned16(parseIntegerExpression(expression), field: expression)
+        let trimmed = trimExpression(expression)
+        if
+            let match = firstMatch(
+                of: try! NSRegularExpression(pattern: #"COLPOLY_SNORMAL\(\s*([^)]+?)\s*\)"#),
+                in: trimmed
+            )
+        {
+            let normal = try parseFloatingPointLiteral(substring(in: trimmed, range: match.range(at: 1)))
+            let scaled = (normal * 32767.0).rounded(.towardZero)
+            guard scaled >= Double(Int16.min), scaled <= Double(Int16.max) else {
+                throw SceneExtractorError.integerOutOfRange(expression, Int64(scaled))
+            }
+            return Int16(scaled)
+        }
+
+        return try parseSigned16(parseIntegerExpression(expression), field: expression)
     }
 
     static func parseUnsigned8Expression(_ expression: String) throws -> UInt8 {
@@ -1196,6 +1470,17 @@ private extension SceneExtractor {
         }
 
         return try parseIntegerLiteral(trimmed)
+    }
+
+    static func parseFloatingPointLiteral(_ literal: String) throws -> Double {
+        var trimmed = trimExpression(literal)
+        if trimmed.hasSuffix("f") || trimmed.hasSuffix("F") {
+            trimmed.removeLast()
+        }
+        guard trimmed.isEmpty == false, let value = Double(trimmed) else {
+            throw SceneExtractorError.invalidIntegerLiteral(literal)
+        }
+        return value
     }
 
     static func parseIntegerLiteral(_ literal: String) throws -> Int64 {
@@ -1334,6 +1619,12 @@ private extension SceneExtractor {
         expression.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    static func stripBlockComments(from expression: String) -> String {
+        let regex = try! NSRegularExpression(pattern: #"/\*.*?\*/"#, options: [.dotMatchesLineSeparators])
+        let range = NSRange(expression.startIndex..<expression.endIndex, in: expression)
+        return regex.stringByReplacingMatches(in: expression, range: range, withTemplate: " ")
+    }
+
     static func readSource(at url: URL) throws -> String {
         do {
             return try String(contentsOf: url, encoding: .utf8)
@@ -1446,6 +1737,609 @@ private extension SceneExtractor {
             return ""
         }
         return String(text[swiftRange])
+    }
+}
+
+private extension CollisionExtractor {
+    struct CollisionHeaderDefinition {
+        let minimumBounds: Vector3s
+        let maximumBounds: Vector3s
+        let vertexCount: Int
+        let vertexArrayName: String
+        let polygonCount: Int
+        let polygonArrayName: String
+        let surfaceTypeArrayName: String?
+        let waterBoxCount: Int
+        let waterBoxArrayName: String?
+    }
+
+    static func parseCollision(sceneName: String, source: String) throws -> CollisionSceneBinary? {
+        let commands = try SceneExtractor.sceneCommands(sceneName: sceneName, in: source)
+        guard let invocation = commands.first(where: { $0.name == "SCENE_CMD_COL_HEADER" }) else {
+            return nil
+        }
+        try invocation.requireCount(1)
+
+        let headerName = sanitizeReference(invocation.arguments[0])
+        let header = try collisionHeader(named: headerName, in: source)
+        let vertices = try parseVertices(named: header.vertexArrayName, in: source, expectedCount: header.vertexCount)
+        let polygons = try parsePolygons(named: header.polygonArrayName, in: source, expectedCount: header.polygonCount)
+        let surfaceTypes = try parseSurfaceTypes(named: header.surfaceTypeArrayName, in: source)
+        let waterBoxes = try parseWaterBoxes(
+            named: header.waterBoxArrayName,
+            in: source,
+            expectedCount: header.waterBoxCount
+        )
+
+        return CollisionSceneBinary(
+            minimumBounds: header.minimumBounds,
+            maximumBounds: header.maximumBounds,
+            vertices: vertices,
+            polygons: polygons,
+            surfaceTypes: surfaceTypes,
+            waterBoxes: waterBoxes
+        )
+    }
+
+    static func parseVertices(named name: String, in source: String, expectedCount: Int) throws -> [Vector3s] {
+        let array = try SceneExtractor.array(named: name, type: "Vec3s", in: source)
+        let vertices = try SceneExtractor.topLevelBraceEntries(in: array.body).map(SceneExtractor.parseVector3s)
+        try expectCount(vertices.count, expected: expectedCount, field: "vertices", name: name)
+        return vertices
+    }
+
+    static func parsePolygons(named name: String, in source: String, expectedCount: Int) throws -> [CollisionPolygonBinary] {
+        let array = try SceneExtractor.array(named: name, type: "CollisionPoly", in: source)
+        let polygons = try SceneExtractor.topLevelBraceEntries(in: array.body).map(parsePolygon)
+        try expectCount(polygons.count, expected: expectedCount, field: "polygons", name: name)
+        return polygons
+    }
+
+    static func parseSurfaceTypes(named name: String?, in source: String) throws -> [CollisionSurfaceTypeBinary] {
+        guard let name else {
+            return []
+        }
+
+        let array = try SceneExtractor.array(named: name, type: "SurfaceType", in: source)
+        let entries = try SceneExtractor.topLevelBraceEntries(in: array.body)
+        if entries.isEmpty {
+            let rawValues = SceneExtractor.splitTopLevel(array.body).filter { SceneExtractor.trimExpression($0).isEmpty == false }
+            guard rawValues.count.isMultiple(of: 2) else {
+                throw CollisionExtractorError.invalidEntry("SurfaceType", array.body)
+            }
+
+            return try stride(from: 0, to: rawValues.count, by: 2).map { index in
+                try CollisionSurfaceTypeBinary(
+                    low: parseUnsigned32Expression(rawValues[index]),
+                    high: parseUnsigned32Expression(rawValues[index + 1])
+                )
+            }
+        }
+
+        return try entries.map(parseSurfaceType)
+    }
+
+    static func parseWaterBoxes(named name: String?, in source: String, expectedCount: Int) throws -> [CollisionWaterBoxBinary] {
+        guard let name else {
+            guard expectedCount == 0 else {
+                throw CollisionExtractorError.countMismatch(name: "WaterBox", expected: expectedCount, actual: 0)
+            }
+            return []
+        }
+
+        let array = try SceneExtractor.array(named: name, type: "WaterBox", in: source)
+        let waterBoxes = try SceneExtractor.topLevelBraceEntries(in: array.body).map(parseWaterBox)
+        try expectCount(waterBoxes.count, expected: expectedCount, field: "waterBoxes", name: name)
+        return waterBoxes
+    }
+
+    static func collisionHeader(named name: String, in source: String) throws -> CollisionHeaderDefinition {
+        let body = try structBody(named: name, type: "CollisionHeader", in: source)
+        let fields = SceneExtractor.splitTopLevel(body)
+        guard fields.count == 9 || fields.count == 10 else {
+            throw CollisionExtractorError.invalidEntry("CollisionHeader", body)
+        }
+
+        let minimumBounds = try SceneExtractor.parseVector3s(fields[0])
+        let maximumBounds = try SceneExtractor.parseVector3s(fields[1])
+        let vertexArrayName = sanitizeReference(fields[3])
+        let polygonArrayName = sanitizeReference(fields[5])
+        let surfaceTypeIndex = fields.count == 10 ? 6 : 6
+        let waterBoxCountIndex = fields.count == 10 ? 8 : 7
+        let waterBoxArrayIndex = fields.count == 10 ? 9 : 8
+        let waterBoxArrayName = optionalReference(fields[waterBoxArrayIndex])
+
+        return CollisionHeaderDefinition(
+            minimumBounds: minimumBounds,
+            maximumBounds: maximumBounds,
+            vertexCount: try parseCount(
+                fields[2],
+                field: "numVertices",
+                fallbackArrayName: vertexArrayName,
+                arrayType: "Vec3s",
+                source: source
+            ),
+            vertexArrayName: vertexArrayName,
+            polygonCount: try parseCount(
+                fields[4],
+                field: "numPolygons",
+                fallbackArrayName: polygonArrayName,
+                arrayType: "CollisionPoly",
+                source: source
+            ),
+            polygonArrayName: polygonArrayName,
+            surfaceTypeArrayName: optionalReference(fields[surfaceTypeIndex]),
+            waterBoxCount: try parseCount(
+                fields[waterBoxCountIndex],
+                field: "numWaterBoxes",
+                fallbackArrayName: waterBoxArrayName,
+                arrayType: "WaterBox",
+                source: source
+            ),
+            waterBoxArrayName: waterBoxArrayName
+        )
+    }
+
+    static func parsePolygon(_ entry: String) throws -> CollisionPolygonBinary {
+        let fields = SceneExtractor.splitTopLevel(entry)
+        switch fields.count {
+        case 4:
+            let vertices = try parsePackedVertexTriplet(fields[1])
+            return try CollisionPolygonBinary(
+                surfaceType: parseUnsigned16Expression(fields[0]),
+                vertexA: vertices.0,
+                vertexB: vertices.1,
+                vertexC: vertices.2,
+                normal: SceneExtractor.parseVector3s(fields[2]),
+                distance: SceneExtractor.parseSigned16Expression(fields[3])
+            )
+        case 6:
+            return try CollisionPolygonBinary(
+                surfaceType: parseUnsigned16Expression(fields[0]),
+                vertexA: parsePackedVertexIndex(fields[1]),
+                vertexB: parsePackedVertexIndex(fields[2]),
+                vertexC: parsePackedVertexIndex(fields[3]),
+                normal: SceneExtractor.parseVector3s(fields[4]),
+                distance: SceneExtractor.parseSigned16Expression(fields[5])
+            )
+        case 8:
+            return try CollisionPolygonBinary(
+                surfaceType: parseUnsigned16Expression(fields[0]),
+                vertexA: parsePackedVertexIndex(fields[1]),
+                vertexB: parsePackedVertexIndex(fields[2]),
+                vertexC: parsePackedVertexIndex(fields[3]),
+                normal: Vector3s(
+                    x: SceneExtractor.parseSigned16Expression(fields[4]),
+                    y: SceneExtractor.parseSigned16Expression(fields[5]),
+                    z: SceneExtractor.parseSigned16Expression(fields[6])
+                ),
+                distance: SceneExtractor.parseSigned16Expression(fields[7])
+            )
+        default:
+            throw CollisionExtractorError.invalidEntry("CollisionPoly", entry)
+        }
+    }
+
+    static func parseSurfaceType(_ entry: String) throws -> CollisionSurfaceTypeBinary {
+        var fields = SceneExtractor.splitTopLevel(entry)
+        if fields.count != 2, let nestedEntries = try? SceneExtractor.topLevelBraceEntries(in: entry), nestedEntries.count == 1 {
+            fields = SceneExtractor.splitTopLevel(nestedEntries[0])
+        }
+        guard fields.count == 2 else {
+            throw CollisionExtractorError.invalidEntry("SurfaceType", entry)
+        }
+        return try CollisionSurfaceTypeBinary(
+            low: parseSurfaceTypeWord(fields[0]),
+            high: parseSurfaceTypeWord(fields[1])
+        )
+    }
+
+    static func parseWaterBox(_ entry: String) throws -> CollisionWaterBoxBinary {
+        let fields = SceneExtractor.splitTopLevel(entry)
+        switch fields.count {
+        case 6:
+            return try CollisionWaterBoxBinary(
+                xMin: SceneExtractor.parseSigned16Expression(fields[0]),
+                ySurface: SceneExtractor.parseSigned16Expression(fields[1]),
+                zMin: SceneExtractor.parseSigned16Expression(fields[2]),
+                xLength: parseUnsigned16Expression(fields[3]),
+                zLength: parseUnsigned16Expression(fields[4]),
+                properties: parseUnsigned32Expression(fields[5])
+            )
+        case 4:
+            let minimum = try SceneExtractor.parseVector3s(fields[0])
+            return try CollisionWaterBoxBinary(
+                xMin: minimum.x,
+                ySurface: minimum.y,
+                zMin: minimum.z,
+                xLength: parseUnsigned16Expression(fields[1]),
+                zLength: parseUnsigned16Expression(fields[2]),
+                properties: parseUnsigned32Expression(fields[3])
+            )
+        default:
+            throw CollisionExtractorError.invalidEntry("WaterBox", entry)
+        }
+    }
+
+    static func collisionBinaryFiles(in contentRoot: URL, fileManager: FileManager) throws -> [URL] {
+        let scenesRoot = contentRoot.appendingPathComponent("Scenes", isDirectory: true)
+        guard fileManager.fileExists(atPath: scenesRoot.path) else {
+            return []
+        }
+
+        guard let enumerator = fileManager.enumerator(
+            at: scenesRoot,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        return try enumerator.compactMap { item -> URL? in
+            guard let fileURL = item as? URL else {
+                return nil
+            }
+
+            let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
+            guard values.isRegularFile == true, fileURL.lastPathComponent == "collision.bin" else {
+                return nil
+            }
+
+            return fileURL
+        }
+        .sorted { $0.path < $1.path }
+    }
+
+    static func structBody(named name: String, type: String, in source: String) throws -> String {
+        let sanitized = SceneExtractor.stripLineComments(from: source)
+        let pattern =
+            #"(?:^|\s)(?:static\s+)?\#(NSRegularExpression.escapedPattern(for: type))\s+\#(NSRegularExpression.escapedPattern(for: name))\s*=\s*\{"#
+        let regex = try NSRegularExpression(pattern: pattern, options: [.anchorsMatchLines])
+        guard let match = regex.firstMatch(
+            in: sanitized,
+            range: NSRange(sanitized.startIndex..<sanitized.endIndex, in: sanitized)
+        ) else {
+            throw CollisionExtractorError.missingStruct(type: type, name: name)
+        }
+
+        let braceLocation = match.range.location + match.range.length - 1
+        let bodyRange = try SceneExtractor.matchingBraceRange(in: sanitized, openingBraceLocation: braceLocation)
+        return SceneExtractor.substring(in: sanitized, range: bodyRange)
+    }
+
+    static func parseCount(
+        _ expression: String,
+        field: String,
+        fallbackArrayName: String?,
+        arrayType: String,
+        source: String
+    ) throws -> Int {
+        let trimmed = SceneExtractor.trimExpression(expression)
+        if let arrayName = parseArrayCountReference(from: trimmed) {
+            let resolvedName = arrayName.isEmpty ? fallbackArrayName : arrayName
+            guard let resolvedName else {
+                throw CollisionExtractorError.invalidEntry(field, expression)
+            }
+            let array = try SceneExtractor.array(named: resolvedName, type: arrayType, in: source)
+            let entries = try SceneExtractor.topLevelBraceEntries(in: array.body)
+            if entries.isEmpty {
+                return SceneExtractor.splitTopLevel(array.body)
+                    .filter { SceneExtractor.trimExpression($0).isEmpty == false }
+                    .count
+            }
+            return entries.count
+        }
+
+        let value = try SceneExtractor.parseIntegerExpression(expression)
+        guard value >= 0, value <= Int64(UInt16.max) else {
+            throw CollisionExtractorError.integerOutOfRange(field: field, value: value)
+        }
+        return Int(value)
+    }
+
+    static func parseArrayCountReference(from expression: String) -> String? {
+        guard
+            let match = SceneExtractor.firstMatch(
+                of: try! NSRegularExpression(pattern: #"ARRAY_COUNT(?:U)?\(\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)"#),
+                in: expression
+            )
+        else {
+            return nil
+        }
+
+        return SceneExtractor.substring(in: expression, range: match.range(at: 1))
+    }
+
+    static func parseUnsigned16Expression(_ expression: String) throws -> UInt16 {
+        let value = try SceneExtractor.parseIntegerExpression(expression)
+        guard 0...Int64(UInt16.max) ~= value else {
+            throw CollisionExtractorError.integerOutOfRange(field: expression, value: value)
+        }
+        return UInt16(value)
+    }
+
+    static func parseUnsigned32Expression(_ expression: String) throws -> UInt32 {
+        let trimmed = SceneExtractor.trimExpression(SceneExtractor.stripBlockComments(from: expression))
+        if
+            let match = SceneExtractor.firstMatch(
+                of: try! NSRegularExpression(pattern: #"(?s)WATERBOX_PROPERTIES\(\s*(.*)\s*\)"#),
+                in: trimmed
+            )
+        {
+            let arguments = SceneExtractor.splitTopLevel(
+                SceneExtractor.substring(in: trimmed, range: match.range(at: 1))
+            )
+            guard arguments.count == 4 else {
+                throw CollisionExtractorError.invalidEntry("WaterBox", expression)
+            }
+
+            let bgCamIndex = try parseSurfaceTypeScalar(arguments[0])
+            let lightIndex = try parseSurfaceTypeScalar(arguments[1])
+            let room = try parseSurfaceTypeScalar(arguments[2])
+            let setFlag19 = try parseSurfaceTypeScalar(arguments[3])
+
+            let words: [UInt32] = [
+                UInt32((bgCamIndex & 0xFF) << 0),
+                UInt32((lightIndex & 0x1F) << 8),
+                UInt32((room & 0x3F) << 13),
+                UInt32((setFlag19 & 1) << 19),
+            ]
+            return words.reduce(0, |)
+        }
+
+        let value = try SceneExtractor.parseIntegerExpression(trimmed)
+        guard 0...Int64(UInt32.max) ~= value else {
+            throw CollisionExtractorError.integerOutOfRange(field: expression, value: value)
+        }
+        return UInt32(value)
+    }
+
+    static func parseSurfaceTypeWord(_ expression: String) throws -> UInt32 {
+        let trimmed = SceneExtractor.trimExpression(expression)
+
+        if
+            let match = SceneExtractor.firstMatch(
+                of: try! NSRegularExpression(pattern: #"(?s)SURFACETYPE([01])\(\s*(.*)\s*\)"#),
+                in: trimmed
+            )
+        {
+            let variant = SceneExtractor.substring(in: trimmed, range: match.range(at: 1))
+            let arguments = SceneExtractor.splitTopLevel(
+                SceneExtractor.substring(in: trimmed, range: match.range(at: 2))
+            )
+
+            switch variant {
+            case "0":
+                guard arguments.count == 8 else {
+                    throw CollisionExtractorError.invalidEntry("SurfaceType", expression)
+                }
+                let bgCamIndex = try parseSurfaceTypeScalar(arguments[0])
+                let exitIndex = try parseSurfaceTypeScalar(arguments[1])
+                let floorType = try parseSurfaceTypeScalar(arguments[2])
+                let unk18 = try parseSurfaceTypeScalar(arguments[3])
+                let wallType = try parseSurfaceTypeScalar(arguments[4])
+                let floorProperty = try parseSurfaceTypeScalar(arguments[5])
+                let isSoft = try parseSurfaceTypeScalar(arguments[6])
+                let isHorseBlocked = try parseSurfaceTypeScalar(arguments[7])
+
+                let words: [UInt32] = [
+                    UInt32((bgCamIndex & 0xFF) << 0),
+                    UInt32((exitIndex & 0x1F) << 8),
+                    UInt32((floorType & 0x1F) << 13),
+                    UInt32((unk18 & 0x07) << 18),
+                    UInt32((wallType & 0x1F) << 21),
+                    UInt32((floorProperty & 0x0F) << 26),
+                    UInt32((isSoft & 1) << 30),
+                    UInt32((isHorseBlocked & 1) << 31),
+                ]
+                return words.reduce(0, |)
+            case "1":
+                guard arguments.count == 8 else {
+                    throw CollisionExtractorError.invalidEntry("SurfaceType", expression)
+                }
+                let material = try parseSurfaceTypeScalar(arguments[0])
+                let floorEffect = try parseSurfaceTypeScalar(arguments[1])
+                let lightSetting = try parseSurfaceTypeScalar(arguments[2])
+                let echo = try parseSurfaceTypeScalar(arguments[3])
+                let canHookshot = try parseSurfaceTypeScalar(arguments[4])
+                let conveyorSpeed = try parseSurfaceTypeScalar(arguments[5])
+                let conveyorDirection = try parseSurfaceTypeScalar(arguments[6])
+                let unk27 = try parseSurfaceTypeScalar(arguments[7])
+
+                let words: [UInt32] = [
+                    UInt32((material & 0x0F) << 0),
+                    UInt32((floorEffect & 0x03) << 4),
+                    UInt32((lightSetting & 0x1F) << 6),
+                    UInt32((echo & 0x3F) << 11),
+                    UInt32((canHookshot & 1) << 17),
+                    UInt32((conveyorSpeed & 0x07) << 18),
+                    UInt32((conveyorDirection & 0x3F) << 21),
+                    UInt32((unk27 & 1) << 27),
+                ]
+                return words.reduce(0, |)
+            default:
+                break
+            }
+        }
+
+        return try parseUnsigned32Expression(trimmed)
+    }
+
+    static func parsePackedVertexIndex(_ expression: String) throws -> UInt16 {
+        let trimmed = SceneExtractor.trimExpression(expression)
+        if
+            let match = SceneExtractor.firstMatch(
+                of: try! NSRegularExpression(
+                    pattern: #"COLPOLY_VTX\(\s*([^,]+?)\s*,\s*([^)]+?)\s*\)"#
+                ),
+                in: trimmed
+            )
+        {
+            let vertexID = try SceneExtractor.parseIntegerExpression(
+                SceneExtractor.substring(in: trimmed, range: match.range(at: 1))
+            )
+            let flags = try parseCollisionVertexFlags(
+                SceneExtractor.substring(in: trimmed, range: match.range(at: 2))
+            )
+
+            guard 0...0x1FFF ~= vertexID, 0...7 ~= flags else {
+                throw CollisionExtractorError.invalidEntry("CollisionPoly vertex", expression)
+            }
+
+            let packed = (((UInt16(flags) & 7) << 13) | (UInt16(vertexID) & 0x1FFF))
+            return packed & 0x1FFF
+        }
+
+        return try parseUnsigned16Expression(expression) & 0x1FFF
+    }
+
+    static func parsePackedVertexTriplet(_ expression: String) throws -> (UInt16, UInt16, UInt16) {
+        let trimmed = SceneExtractor.trimExpression(expression)
+        let contents: String
+        if trimmed.first == "{", trimmed.last == "}" {
+            contents = String(trimmed.dropFirst().dropLast())
+        } else {
+            contents = trimmed
+        }
+
+        let values = SceneExtractor.splitTopLevel(contents)
+        guard values.count == 3 else {
+            throw CollisionExtractorError.invalidEntry("CollisionPoly vertices", expression)
+        }
+
+        return try (
+            parsePackedVertexIndex(values[0]),
+            parsePackedVertexIndex(values[1]),
+            parsePackedVertexIndex(values[2])
+        )
+    }
+
+    static func parseCollisionVertexFlags(_ expression: String) throws -> Int64 {
+        let trimmed = SceneExtractor.trimExpression(SceneExtractor.stripBlockComments(from: expression))
+        if trimmed.contains("|") {
+            return try SceneExtractor.splitTopLevel(trimmed.replacingOccurrences(of: "|", with: ","))
+                .reduce(0) { partial, component in
+                    partial | (try parseCollisionVertexFlags(component))
+                }
+        }
+
+        switch trimmed {
+        case "0", "COLPOLY_IGNORE_NONE":
+            return 0
+        case "COLPOLY_IGNORE_CAMERA", "COLPOLY_IS_FLOOR_CONVEYOR":
+            return 1
+        case "COLPOLY_IGNORE_ENTITY":
+            return 2
+        case "COLPOLY_IGNORE_PROJECTILES":
+            return 4
+        default:
+            return try SceneExtractor.parseIntegerExpression(trimmed)
+        }
+    }
+
+    static func parseSurfaceTypeScalar(_ expression: String) throws -> Int64 {
+        let trimmed = SceneExtractor.trimExpression(SceneExtractor.stripBlockComments(from: expression))
+
+        if trimmed.contains("|") {
+            return try SceneExtractor.splitTopLevel(trimmed.replacingOccurrences(of: "|", with: ","))
+                .reduce(0) { partial, component in
+                    partial | (try parseSurfaceTypeScalar(component))
+                }
+        }
+
+        if let value = try? Int64(SceneExtractor.parseBoolExpression(trimmed) ? 1 : 0) {
+            return value
+        }
+
+        if
+            let match = SceneExtractor.firstMatch(
+                of: try! NSRegularExpression(pattern: #"CONVEYOR_DIRECTION_FROM_BINANG\(\s*([^)]+?)\s*\)"#),
+                in: trimmed
+            )
+        {
+            let raw = try SceneExtractor.parseIntegerExpression(
+                SceneExtractor.substring(in: trimmed, range: match.range(at: 1))
+            )
+            return raw / (0x10000 / 64)
+        }
+
+        let mappedValues: [String: Int64] = [
+            "CONVEYOR_SPEED_DISABLED": 0,
+            "CONVEYOR_SPEED_SLOW": 1,
+            "CONVEYOR_SPEED_MEDIUM": 2,
+            "CONVEYOR_SPEED_FAST": 3,
+            "SURFACE_MATERIAL_DIRT": 0,
+            "SURFACE_MATERIAL_SAND": 1,
+            "SURFACE_MATERIAL_STONE": 2,
+            "SURFACE_MATERIAL_JABU": 3,
+            "SURFACE_MATERIAL_WATER_SHALLOW": 4,
+            "SURFACE_MATERIAL_WATER_DEEP": 5,
+            "SURFACE_MATERIAL_TALL_GRASS": 6,
+            "SURFACE_MATERIAL_LAVA": 7,
+            "SURFACE_MATERIAL_GRASS": 8,
+            "SURFACE_MATERIAL_BRIDGE": 9,
+            "SURFACE_MATERIAL_WOOD": 10,
+            "SURFACE_MATERIAL_DIRT_SOFT": 11,
+            "SURFACE_MATERIAL_ICE": 12,
+            "SURFACE_MATERIAL_CARPET": 13,
+        ]
+        if let mapped = mappedValues[trimmed] {
+            return mapped
+        }
+
+        if
+            let match = SceneExtractor.firstMatch(
+                of: try! NSRegularExpression(
+                    pattern: #"^(?:FLOOR_TYPE|WALL_TYPE|FLOOR_EFFECT|FLOOR_PROPERTY)_([0-9]+)$"#
+                ),
+                in: trimmed
+            )
+        {
+            return try SceneExtractor.parseIntegerExpression(
+                SceneExtractor.substring(in: trimmed, range: match.range(at: 1))
+            )
+        }
+
+        return try SceneExtractor.parseIntegerExpression(trimmed)
+    }
+
+    static func sanitizeReference(_ expression: String) -> String {
+        SceneExtractor.trimExpression(expression)
+            .trimmingPrefix("&")
+            .trimmingPrefix("*")
+    }
+
+    static func optionalReference(_ expression: String) -> String? {
+        let trimmed = sanitizeReference(expression)
+        guard trimmed.isEmpty == false, trimmed != "NULL", trimmed != "0" else {
+            return nil
+        }
+        return trimmed
+    }
+
+    static func expectCount(_ actual: Int, expected: Int, field: String, name: String) throws {
+        guard actual == expected else {
+            throw CollisionExtractorError.countMismatch(name: "\(field) \(name)", expected: expected, actual: actual)
+        }
+    }
+
+    static func readInteger<T: FixedWidthInteger>(
+        from data: Data,
+        offset: inout Data.Index,
+        as type: T.Type,
+        path: String
+    ) throws -> T {
+        let end = offset + MemoryLayout<T>.size
+        guard end <= data.endIndex else {
+            throw CollisionExtractorError.invalidBinarySize(path, data.count, offset)
+        }
+
+        var value: T = 0
+        withUnsafeMutableBytes(of: &value) { destination in
+            _ = data[offset..<end].copyBytes(to: destination)
+        }
+        offset = end
+        return T(bigEndian: value)
     }
 }
 
@@ -1691,6 +2585,41 @@ private enum SceneExtractorError: LocalizedError {
             return "Encountered unbalanced braces while parsing array entries"
         case .unterminatedArray:
             return "Encountered unterminated C array body"
+        }
+    }
+}
+
+private enum CollisionExtractorError: LocalizedError {
+    case countMismatch(name: String, expected: Int, actual: Int)
+    case integerOutOfRange(field: String, value: Int64)
+    case invalidBinarySize(String, Int, Int)
+    case invalidEntry(String, String)
+    case invalidReference(String, String, Int, Int)
+    case missingStruct(type: String, name: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .countMismatch(let name, let expected, let actual):
+            return "Expected \(expected) entries for \(name), found \(actual)."
+        case .integerOutOfRange(let field, let value):
+            return "Value \(value) is out of range for \(field)."
+        case .invalidBinarySize(let path, let actualSize, let consumedBytes):
+            return "Collision binary '\(path)' has invalid size \(actualSize) bytes after consuming \(consumedBytes) bytes."
+        case .invalidEntry(let type, let entry):
+            return "Unable to parse \(type) entry: \(entry)"
+        case .invalidReference(let path, let field, let index, let count):
+            return "Collision binary '\(path)' has \(field) index \(index) outside \(count) available entries."
+        case .missingStruct(let type, let name):
+            return "Missing \(type) struct \(name)."
+        }
+    }
+}
+
+private extension Data {
+    mutating func append<T: FixedWidthInteger>(bigEndian value: T) {
+        var encoded = value.bigEndian
+        Swift.withUnsafeBytes(of: &encoded) { buffer in
+            append(contentsOf: buffer)
         }
     }
 }
