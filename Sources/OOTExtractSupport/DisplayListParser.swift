@@ -15,9 +15,17 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
         let files = try candidateFiles(in: context.source)
         let outputDirectory = context.output.appendingPathComponent("DisplayLists", isDirectory: true)
         var emittedCount = 0
+        var skippedSourceCount = 0
 
         for fileURL in files {
-            let displayLists = try parseDisplayLists(in: fileURL, sourceRoot: context.source)
+            let displayLists: [ParsedDisplayList]
+            do {
+                displayLists = try parseDisplayLists(in: fileURL, sourceRoot: context.source)
+            } catch let error as DisplayListParserError where error.isSkippableSourceFailure {
+                skippedSourceCount += 1
+                print("[\(name)] skipped \(relativePath(for: fileURL, sourceRoot: context.source)): \(error.localizedDescription)")
+                continue
+            }
             guard !displayLists.isEmpty else {
                 continue
             }
@@ -40,6 +48,9 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
         }
 
         print("[\(name)] emitted \(emittedCount) display list JSON file(s)")
+        if skippedSourceCount > 0 {
+            print("[\(name)] skipped \(skippedSourceCount) source file(s) with unsupported or missing include-backed display lists")
+        }
     }
 
     func parseDisplayLists(in fileURL: URL, sourceRoot: URL) throws -> [ParsedDisplayList] {
@@ -47,7 +58,15 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
         let arrays = try parseArrays(in: expandedSource)
 
         return try arrays.map { array in
-            let commands = try parseCommands(in: array.body)
+            let commands: [F3DEX2Command]
+            do {
+                commands = try parseCommands(in: array.body)
+            } catch let error as DisplayListParserError where error.isSkippableSourceFailure {
+                throw error
+            } catch {
+                print("[\(name)] failed to parse display list array \(array.name) in \(fileURL.path): \(error.localizedDescription)")
+                throw error
+            }
             return ParsedDisplayList(name: array.name, commands: commands)
         }
     }
@@ -103,6 +122,10 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
         let relative = fileURL.deletingLastPathComponent().path.replacingOccurrences(of: sourceRoot.path, with: "")
         let trimmed = relative.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func relativePath(for fileURL: URL, sourceRoot: URL) -> String {
+        fileURL.path.replacingOccurrences(of: sourceRoot.path + "/", with: "")
     }
 
     private func parseArrays(in source: String) throws -> [DisplayListArray] {
@@ -211,6 +234,23 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
                 shiftSExpression: invocation.arguments[9],
                 shiftTExpression: invocation.arguments[10]
             )
+        case "__SWIFTOOT_gsDPLoadMultiBlock_4b":
+            try invocation.requireCount(13)
+            return try expandLoadTextureBlock4b(
+                address: parseAddress(invocation.arguments[0]),
+                formatExpression: invocation.arguments[3],
+                widthExpression: invocation.arguments[4],
+                heightExpression: invocation.arguments[5],
+                paletteExpression: invocation.arguments[6],
+                wrapSExpression: invocation.arguments[7],
+                wrapTExpression: invocation.arguments[8],
+                maskSExpression: invocation.arguments[9],
+                maskTExpression: invocation.arguments[10],
+                shiftSExpression: invocation.arguments[11],
+                shiftTExpression: invocation.arguments[12],
+                tmemExpression: invocation.arguments[1],
+                tileExpression: invocation.arguments[2]
+            )
         case "__SWIFTOOT_gsDPLoadTLUT_pal256":
             try invocation.requireCount(1)
             let address = try parseAddress(invocation.arguments[0])
@@ -226,6 +266,40 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
                 .dpTileSync,
                 .dpLoadSync,
                 .dpLoadTLUT(LoadTLUTCommand(tile: 7, colorCount: 255)),
+                .dpPipeSync,
+            ]
+        case "__SWIFTOOT_gsDPLoadTLUT_pal16":
+            try invocation.requireCount(2)
+            let palette = try parseUInt16(invocation.arguments[0])
+            let address = try parseAddress(invocation.arguments[1])
+            return [
+                .dpSetTextureImage(
+                    ImageDescriptor(
+                        format: .rgba16,
+                        texelSize: .bits16,
+                        width: 1,
+                        address: address
+                    )
+                ),
+                .dpTileSync,
+                .dpSetTile(
+                    makeTileDescriptor(
+                        format: .rgba16,
+                        texelSize: .bits16,
+                        line: 0,
+                        tmem: UInt16(256 + ((Int(palette & 0x000F)) * 16)),
+                        tile: 7,
+                        palette: 0,
+                        wrapS: 0,
+                        wrapT: 0,
+                        maskS: 0,
+                        maskT: 0,
+                        shiftS: 0,
+                        shiftT: 0
+                    )
+                ),
+                .dpLoadSync,
+                .dpLoadTLUT(LoadTLUTCommand(tile: 7, colorCount: 15)),
                 .dpPipeSync,
             ]
         default:
@@ -286,6 +360,15 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
         case "__SWIFTOOT_gsSPBranchList", "__SWIFTOOT_gsSPBranchDL":
             try invocation.requireCount(1)
             return .spBranchList(try parseAddress(invocation.arguments[0]))
+        case "__SWIFTOOT_gsSPBranchLessZraw":
+            try invocation.requireCount(3)
+            return .spBranchLessZ(
+                BranchLessZCommand(
+                    branchAddress: try parseAddress(invocation.arguments[0]),
+                    vertexIndex: try parseUInt16(invocation.arguments[1]),
+                    zValue: try parseUInt32(invocation.arguments[2])
+                )
+            )
         case "__SWIFTOOT_gsSPEndDisplayList":
             try invocation.requireCount(0)
             return .spEndDisplayList
@@ -633,7 +716,9 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
         maskSExpression: String,
         maskTExpression: String,
         shiftSExpression: String,
-        shiftTExpression: String
+        shiftTExpression: String,
+        tmemExpression: String = "0",
+        tileExpression: String = "0"
     ) throws -> [F3DEX2Command] {
         let format = try parseTextureFormat(format: formatExpression, texelSize: "0")
         let width = try parseUInt16(widthExpression)
@@ -645,6 +730,8 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
         let maskT = try parseUInt8(maskTExpression)
         let shiftS = try parseUInt8(shiftSExpression)
         let shiftT = try parseUInt8(shiftTExpression)
+        let tmem = try parseUInt16(tmemExpression)
+        let tile = try parseUInt8(tileExpression)
         let dxt = try loadBlockDXT(width: width, texelSize: .bits4)
         let texelCount = try loadBlockTexelCount(width: width, height: height, texelSize: .bits4)
         let line = UInt16((((Int(width) >> 1) + 7) >> 3))
@@ -663,7 +750,7 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
                     format: format,
                     texelSize: .bits16,
                     line: 0,
-                    tmem: 0,
+                    tmem: tmem,
                     tile: 7,
                     palette: 0,
                     wrapS: wrapS,
@@ -690,8 +777,8 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
                     format: format,
                     texelSize: .bits4,
                     line: line,
-                    tmem: 0,
-                    tile: 0,
+                    tmem: tmem,
+                    tile: tile,
                     palette: palette,
                     wrapS: wrapS,
                     wrapT: wrapT,
@@ -703,7 +790,7 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
             ),
             .dpSetTileSize(
                 TileSizeCommand(
-                    tile: 0,
+                    tile: tile,
                     upperLeftS: 0,
                     upperLeftT: 0,
                     lowerRightS: UInt16((Int(width) - 1) << 2),
@@ -1010,6 +1097,17 @@ private enum DisplayListParserError: LocalizedError {
     case unterminatedArray
     case integerOutOfRange(String)
 
+    var isSkippableSourceFailure: Bool {
+        switch self {
+        case .unsupportedMacro:
+            return true
+        case .preprocessorFailure(let message):
+            return message.contains("file not found")
+        default:
+            return false
+        }
+    }
+
     var errorDescription: String? {
         switch self {
         case .preprocessorFailure(let message):
@@ -1256,6 +1354,7 @@ struct CMacroPreprocessor {
             "gsSPDisplayList",
             "gsSPBranchList",
             "gsSPBranchDL",
+            "gsSPBranchLessZraw",
             "gsSPEndDisplayList",
             "gsSPMatrix",
             "gsSPPopMatrix",
@@ -1265,6 +1364,8 @@ struct CMacroPreprocessor {
             "gsDPLoadTextureBlock",
             "gsDPLoadTextureBlock_4b",
             "gsDPLoadMultiBlock",
+            "gsDPLoadMultiBlock_4b",
+            "gsDPLoadTLUT_pal16",
             "gsDPLoadTLUT_pal256",
             "gsDPLoadBlock",
             "gsDPLoadTile",

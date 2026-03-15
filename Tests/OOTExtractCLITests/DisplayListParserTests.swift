@@ -200,6 +200,233 @@ final class DisplayListParserTests: XCTestCase {
         )
     }
 
+    func testParserExpandsLoadTLUTPal16Macro() throws {
+        let fixtureRoot = try makeFixtureRoot()
+        let sourceFile = fixtureRoot.appendingPathComponent("pal16.c")
+        try """
+        #include "gfx.h"
+
+        static Gfx pal16DL[] = {
+            gsDPLoadTLUT_pal16(3, sceneTLUT),
+            gsSPEndDisplayList(),
+        };
+        """.write(to: sourceFile, atomically: true, encoding: .utf8)
+
+        let displayLists = try DisplayListParser().parseDisplayLists(in: sourceFile, sourceRoot: fixtureRoot)
+
+        XCTAssertEqual(
+            displayLists,
+            [
+                ParsedDisplayList(
+                    name: "pal16DL",
+                    commands: [
+                        .dpSetTextureImage(
+                            ImageDescriptor(
+                                format: .rgba16,
+                                texelSize: .bits16,
+                                width: 1,
+                                address: DisplayListParser.stableID(for: "sceneTLUT")
+                            )
+                        ),
+                        .dpTileSync,
+                        .dpSetTile(
+                            TileDescriptor(
+                                format: .rgba16,
+                                texelSize: .bits16,
+                                line: 0,
+                                tmem: 304,
+                                tile: 7,
+                                palette: 0,
+                                clampS: false,
+                                mirrorS: false,
+                                maskS: 0,
+                                shiftS: 0,
+                                clampT: false,
+                                mirrorT: false,
+                                maskT: 0,
+                                shiftT: 0
+                            )
+                        ),
+                        .dpLoadSync,
+                        .dpLoadTLUT(LoadTLUTCommand(tile: 7, colorCount: 15)),
+                        .dpPipeSync,
+                        .spEndDisplayList,
+                    ]
+                ),
+            ]
+        )
+    }
+
+    func testParserExpandsLoadMultiBlock4bMacro() throws {
+        let fixtureRoot = try makeFixtureRoot()
+        let sourceFile = fixtureRoot.appendingPathComponent("multi-block-4b.c")
+        try """
+        #include "gfx.h"
+
+        static Gfx multiBlock4bDL[] = {
+            gsDPLoadMultiBlock_4b(sceneMaskTex, 0x0100, 1, G_IM_FMT_I, 16, 16, 0, G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMIRROR | G_TX_WRAP, 4, 4, G_TX_NOLOD, G_TX_NOLOD),
+            gsSPEndDisplayList(),
+        };
+        """.write(to: sourceFile, atomically: true, encoding: .utf8)
+
+        let displayLists = try DisplayListParser().parseDisplayLists(in: sourceFile, sourceRoot: fixtureRoot)
+
+        XCTAssertEqual(
+            displayLists,
+            [
+                ParsedDisplayList(
+                    name: "multiBlock4bDL",
+                    commands: [
+                        .dpSetTextureImage(
+                            ImageDescriptor(
+                                format: .i4,
+                                texelSize: .bits16,
+                                width: 1,
+                                address: DisplayListParser.stableID(for: "sceneMaskTex")
+                            )
+                        ),
+                        .dpSetTile(
+                            TileDescriptor(
+                                format: .i4,
+                                texelSize: .bits16,
+                                line: 0,
+                                tmem: 256,
+                                tile: 7,
+                                palette: 0,
+                                clampS: false,
+                                mirrorS: false,
+                                maskS: 4,
+                                shiftS: 0,
+                                clampT: false,
+                                mirrorT: false,
+                                maskT: 4,
+                                shiftT: 0
+                            )
+                        ),
+                        .dpLoadSync,
+                        .dpLoadBlock(
+                            LoadBlockCommand(
+                                tile: 7,
+                                upperLeftS: 0,
+                                upperLeftT: 0,
+                                texelCount: 63,
+                                dxt: 2048
+                            )
+                        ),
+                        .dpPipeSync,
+                        .dpSetTile(
+                            TileDescriptor(
+                                format: .i4,
+                                texelSize: .bits4,
+                                line: 1,
+                                tmem: 256,
+                                tile: 1,
+                                palette: 0,
+                                clampS: false,
+                                mirrorS: false,
+                                maskS: 4,
+                                shiftS: 0,
+                                clampT: false,
+                                mirrorT: false,
+                                maskT: 4,
+                                shiftT: 0
+                            )
+                        ),
+                        .dpSetTileSize(
+                            TileSizeCommand(
+                                tile: 1,
+                                upperLeftS: 0,
+                                upperLeftT: 0,
+                                lowerRightS: 60,
+                                lowerRightT: 60
+                            )
+                        ),
+                        .spEndDisplayList,
+                    ]
+                ),
+            ]
+        )
+    }
+
+    func testParserBuildsBranchLessZRawCommand() throws {
+        let fixtureRoot = try makeFixtureRoot()
+        let sourceFile = fixtureRoot.appendingPathComponent("branch-less-z.c")
+        try """
+        #include "gfx.h"
+
+        static Gfx branchLessZDL[] = {
+            gsSPBranchLessZraw(sceneBranchDL, 7, 0x1770),
+            gsSPEndDisplayList(),
+        };
+        """.write(to: sourceFile, atomically: true, encoding: .utf8)
+
+        let displayLists = try DisplayListParser().parseDisplayLists(in: sourceFile, sourceRoot: fixtureRoot)
+
+        XCTAssertEqual(
+            displayLists,
+            [
+                ParsedDisplayList(
+                    name: "branchLessZDL",
+                    commands: [
+                        .spBranchLessZ(
+                            BranchLessZCommand(
+                                branchAddress: DisplayListParser.stableID(for: "sceneBranchDL"),
+                                vertexIndex: 7,
+                                zValue: 0x1770
+                            )
+                        ),
+                        .spEndDisplayList,
+                    ]
+                ),
+            ]
+        )
+    }
+
+    func testExtractorSkipsSourceFileWhenDisplayListContainsUnsupportedMacro() throws {
+        let fixtureRoot = try makeFixtureRoot()
+        let assetsDirectory = fixtureRoot.appendingPathComponent("assets", isDirectory: true)
+        try FileManager.default.createDirectory(at: assetsDirectory, withIntermediateDirectories: true)
+
+        try """
+        #include "gfx.h"
+
+        Gfx gValidDL[] = {
+            gsSPEndDisplayList(),
+        };
+        """.write(
+            to: fixtureRoot.appendingPathComponent("assets/valid.c"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        try """
+        #include "gfx.h"
+
+        Gfx gUnsupportedDL[] = {
+            gsSPUnsupportedCommand(0),
+            gsSPEndDisplayList(),
+        };
+        """.write(
+            to: fixtureRoot.appendingPathComponent("assets/unsupported.c"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let outputRoot = fixtureRoot.appendingPathComponent("Output", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputRoot, withIntermediateDirectories: true)
+
+        XCTAssertNoThrow(try DisplayListParser().extract(using: OOTExtractionContext(source: fixtureRoot, output: outputRoot)))
+
+        let outputFiles = FileManager.default.enumerator(
+            at: outputRoot.appendingPathComponent("DisplayLists", isDirectory: true),
+            includingPropertiesForKeys: nil
+        )?
+        .compactMap { ($0 as? URL)?.lastPathComponent } ?? []
+
+        XCTAssertTrue(outputFiles.contains("gValidDL.json"))
+        XCTAssertFalse(outputFiles.contains("gUnsupportedDL.json"))
+    }
+
     private func makeFixtureRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("swiftoot-displaylists-\(UUID().uuidString)", isDirectory: true)
@@ -241,8 +468,10 @@ final class DisplayListParserTests: XCTestCase {
         #define G_TX_WRAP (0 << 1)
         #define G_TX_MIRROR (1 << 0)
         #define G_TX_CLAMP (1 << 1)
+        #define G_TX_NOLOD 0
 
         #define G_IM_FMT_RGBA 0
+        #define G_IM_FMT_I 4
         #define G_IM_FMT_IA 3
         #define G_IM_SIZ_4b 0
         #define G_IM_SIZ_8b 1
