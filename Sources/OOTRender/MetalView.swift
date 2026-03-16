@@ -6,6 +6,7 @@ import MetalKit
 public protocol GameplayInputHandling: AnyObject {
     func handleKeyDown(_ event: NSEvent) -> Bool
     func handleKeyUp(_ event: NSEvent) -> Bool
+    func updateMovementReferenceYaw(_ yaw: Float?)
 }
 
 public struct MetalView: NSViewRepresentable {
@@ -59,6 +60,7 @@ public struct MetalView: NSViewRepresentable {
         renderer.setTimeOfDay(timeOfDay)
         renderer.configure(view)
         context.coordinator.renderer = renderer
+        inputHandler?.updateMovementReferenceYaw(renderer.currentGameplayMovementYaw())
         return view
     }
 
@@ -71,6 +73,7 @@ public struct MetalView: NSViewRepresentable {
         if let nsView = nsView as? OrbitInputMTKView {
             nsView.gameplayInputHandler = inputHandler
         }
+        inputHandler?.updateMovementReferenceYaw(context.coordinator.renderer?.currentGameplayMovementYaw())
     }
 
     public final class Coordinator {

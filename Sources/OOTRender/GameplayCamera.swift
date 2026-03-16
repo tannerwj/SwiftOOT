@@ -187,6 +187,16 @@ public final class GameplayCameraController {
             fieldOfView: currentFieldOfView
         )
     }
+
+    var movementReferenceYaw: Float? {
+        let forward = currentFocusTarget - currentEyePosition
+        let planarForward = SIMD2<Float>(forward.x, forward.z)
+        guard simd_length_squared(planarForward) > 0.0001 else {
+            return nil
+        }
+
+        return atan2(planarForward.x, -planarForward.y)
+    }
 }
 
 private extension GameplayCameraController {

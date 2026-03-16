@@ -259,6 +259,14 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         self.timeOfDay = timeOfDay
     }
 
+    public func currentGameplayMovementYaw() -> Float? {
+        guard isDebugCameraEnabled == false else {
+            return nil
+        }
+
+        return gameplayCameraController?.movementReferenceYaw
+    }
+
     public func clearColorForCurrentEnvironment() -> MTLClearColor {
         guard renderScene.environment != nil else {
             return clearColor(for: renderScene.skyColor)
