@@ -6,7 +6,7 @@ public struct OOTExtractionContext: Sendable {
     public let sceneName: String?
 
     public init(source: URL, output: URL, sceneName: String? = nil) {
-        self.source = source
+        self.source = source.resolvingSymlinksInPath().standardizedFileURL
         self.output = output
         self.sceneName = sceneName
     }

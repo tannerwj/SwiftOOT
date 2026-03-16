@@ -111,7 +111,7 @@ final class CollisionExtractorTests: XCTestCase {
             collision.bgCameras,
             [
                 CollisionBgCameraBinary(
-                    setting: 0x0012,
+                    setting: 0x0020,
                     count: 0,
                     cameraData: CollisionBgCameraDataBinary(
                         position: Vector3s(x: 120, y: 240, z: 360),
@@ -177,6 +177,63 @@ final class CollisionExtractorTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: collisionURL.path))
     }
 
+    func testExtractAllowsNullBgCamDataPointer() throws {
+        let harness = try CollisionHarness()
+        defer { harness.cleanup() }
+
+        try harness.writeSceneXML(
+            at: "assets/xml/scenes/overworld/spot04.xml",
+            contents: """
+            <Root>
+                <File Name="spot04_scene" Segment="2">
+                    <Scene Name="spot04_scene" Offset="0x0"/>
+                </File>
+                <File Name="spot04_room_0" Segment="3">
+                    <Room Name="spot04_room_0" Offset="0x0"/>
+                </File>
+            </Root>
+            """
+        )
+        try harness.writeSourceFile(
+            at: "assets/scenes/overworld/spot04/spot04_scene.c",
+            contents: collisionSceneSourceFixture.replacingOccurrences(
+                of: """
+                BgCamInfo spot04_sceneCollisionHeader_000100BgCamList[] = {
+                    { CAM_SET_START1, 0, &spot04_sceneCollisionHeader_000100BgCamData_0000 },
+                };
+                """,
+                with: """
+                BgCamInfo spot04_sceneCollisionHeader_000100BgCamList[] = {
+                    { CAM_SET_START1, 0, &spot04_sceneCollisionHeader_000100BgCamData_0000 },
+                    { CAM_SET_NONE, 0, NULL },
+                };
+                """
+            )
+        )
+
+        try CollisionExtractor().extract(using: harness.extractionContext(sceneName: "spot04"))
+
+        let collisionURL = harness.outputRoot
+            .appendingPathComponent("Scenes", isDirectory: true)
+            .appendingPathComponent("spot04", isDirectory: true)
+            .appendingPathComponent("collision.bin")
+        let collision = try CollisionExtractor.decode(
+            Data(contentsOf: collisionURL),
+            path: collisionURL.path
+        )
+
+        XCTAssertEqual(collision.bgCameras.count, 2)
+        XCTAssertEqual(
+            collision.bgCameras[1],
+            CollisionBgCameraBinary(
+                setting: 0,
+                count: 0,
+                cameraData: nil,
+                crawlspacePoints: []
+            )
+        )
+    }
+
     func testVerifyRejectsMalformedCollisionBinary() throws {
         let harness = try CollisionHarness()
         defer { harness.cleanup() }
@@ -228,10 +285,62 @@ private struct CollisionHarness {
 
         try fileManager.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
         try fileManager.createDirectory(at: outputRoot, withIntermediateDirectories: true)
+        try fileManager.createDirectory(
+            at: sourceRoot.appendingPathComponent("include", isDirectory: true),
+            withIntermediateDirectories: true
+        )
 
         self.root = root
         self.sourceRoot = sourceRoot
         self.outputRoot = outputRoot
+
+        let cameraHeader = """
+        typedef enum CameraSettingType {
+            CAM_SET_NONE,
+            CAM_SET_NORMAL0,
+            CAM_SET_NORMAL1,
+            CAM_SET_DUNGEON0,
+            CAM_SET_DUNGEON1,
+            CAM_SET_NORMAL3,
+            CAM_SET_HORSE,
+            CAM_SET_BOSS_GOHMA,
+            CAM_SET_BOSS_DODONGO,
+            CAM_SET_BOSS_BARINADE,
+            CAM_SET_BOSS_PHANTOM_GANON,
+            CAM_SET_BOSS_VOLVAGIA,
+            CAM_SET_BOSS_BONGO,
+            CAM_SET_BOSS_MORPHA,
+            CAM_SET_BOSS_TWINROVA_PLATFORM,
+            CAM_SET_BOSS_TWINROVA_FLOOR,
+            CAM_SET_BOSS_GANONDORF,
+            CAM_SET_BOSS_GANON,
+            CAM_SET_TOWER_CLIMB,
+            CAM_SET_TOWER_UNUSED,
+            CAM_SET_MARKET_BALCONY,
+            CAM_SET_CHU_BOWLING,
+            CAM_SET_PIVOT_CRAWLSPACE,
+            CAM_SET_PIVOT_SHOP_BROWSING,
+            CAM_SET_PIVOT_IN_FRONT,
+            CAM_SET_PREREND_FIXED,
+            CAM_SET_PREREND_PIVOT,
+            CAM_SET_PREREND_SIDE_SCROLL,
+            CAM_SET_DOOR0,
+            CAM_SET_DOORC,
+            CAM_SET_CRAWLSPACE, // Used in all crawlspaces, with camera rails
+            CAM_SET_START0, // Data is given in Temple of Time, but no surface uses it
+            CAM_SET_START1, // Scene/room door transitions that snap the camera to a fixed location
+        } CameraSettingType;
+        """
+        try cameraHeader.write(
+            to: sourceRoot.appendingPathComponent("camera.h"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try cameraHeader.write(
+            to: sourceRoot.appendingPathComponent("include/camera.h"),
+            atomically: true,
+            encoding: .utf8
+        )
     }
 
     var verificationContext: OOTVerificationContext {
@@ -260,6 +369,8 @@ private struct CollisionHarness {
 }
 
 private let collisionSceneSourceFixture = """
+#include "camera.h"
+
 SceneCmd spot04_sceneCommands[] = {
     SCENE_CMD_ROOM_LIST(1, spot04_sceneRoomList0x000000),
     SCENE_CMD_COL_HEADER(&spot04_sceneCollisionHeader_000100),
@@ -308,7 +419,7 @@ BgCamFuncData spot04_sceneCollisionHeader_000100BgCamData_0000[] = {
 };
 
 BgCamInfo spot04_sceneCollisionHeader_000100BgCamList[] = {
-    { 0x0012, 0, &spot04_sceneCollisionHeader_000100BgCamData_0000 },
+    { CAM_SET_START1, 0, &spot04_sceneCollisionHeader_000100BgCamData_0000 },
 };
 
 WaterBox spot04_sceneCollisionHeader_000100WaterBoxes[] = {

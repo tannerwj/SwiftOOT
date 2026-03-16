@@ -544,7 +544,7 @@ final class SceneExtractorTests: XCTestCase {
                     shape: .cullable,
                     objectIDs: [2, 3],
                     echo: 1,
-                    behavior: SceneRoomBehavior(disableWarpSongs: false, showInvisibleActors: false)
+                    behavior: SceneRoomBehavior(disableWarpSongs: false, showInvisibleActors: true)
                 )
             ]
         )
@@ -633,8 +633,8 @@ final class SceneExtractorTests: XCTestCase {
         try harness.writeSourceFile(
             at: "assets/scenes/overworld/spot04/spot04_scene.c",
             contents: sceneMetadataSourceFixture.replacingOccurrences(
-                of: "SCENE_CMD_SPAWN_LIST(spot04_sceneStartPositionList0x0000A4)",
-                with: "SCENE_CMD_SPAWN_LIST(2, spot04_sceneStartPositionList0x0000A4)"
+                of: "SCENE_CMD_SPAWN_LIST(spot04_sceneEntranceList0x00019C)",
+                with: "SCENE_CMD_SPAWN_LIST(2, spot04_sceneEntranceList0x00019C)"
             )
         )
         try harness.writeSourceFile(
@@ -694,10 +694,10 @@ final class SceneExtractorTests: XCTestCase {
                 SCENE_CMD_ROOM_LIST(1, spot04_sceneRoomList0x000184),
                 SCENE_CMD_TRANSITION_ACTOR_LIST(2, spot04_sceneTransitionActorList_000164),
                 SCENE_CMD_COL_HEADER(&spot04_sceneCollisionHeader_008918),
-                SCENE_CMD_ENTRANCE_LIST(spot04_sceneEntranceList0x00019C),
                 SCENE_CMD_SPECIAL_FILES(NAVI_QUEST_HINTS_OVERWORLD, OBJECT_GAMEPLAY_FIELD_KEEP),
                 SCENE_CMD_PATH_LIST(spot04_scenePathList_00030C),
                 SCENE_CMD_SPAWN_LIST(spot04_scene_02000070_AltHeaders_0200CC00_Cmds_0200CD70_SpawnList),
+                SCENE_CMD_PLAYER_ENTRY_LIST(ARRAY_COUNT(spot04_scenePlayerEntryList0x0000A4), spot04_scenePlayerEntryList0x0000A4),
                 SCENE_CMD_EXIT_LIST(spot04_sceneExitList_0001B4),
                 SCENE_CMD_ENV_LIGHT_SETTINGS(12, spot04_sceneLightSettings0x0001CC),
                 SCENE_CMD_END(),
@@ -727,6 +727,130 @@ final class SceneExtractorTests: XCTestCase {
 
         XCTAssertEqual(spawns.spawns.count, 2)
         XCTAssertEqual(environment.lightSettings.count, 12)
+    }
+
+    func testExtractMetadataResolvesCanonicalSymlinkedGeneratedSources() throws {
+        let harness = try SceneHarness()
+        defer { harness.cleanup() }
+
+        try harness.seedActorTableManifest()
+        try harness.seedObjectTableManifest()
+        try harness.writeSceneXML(at: "assets/xml/scenes/overworld/spot04.xml", contents: sceneXMLFixture)
+        try harness.writeSourceFile(
+            at: "extracted/ntsc-1.2/assets/scenes/overworld/spot04/spot04_scene.c",
+            contents: sceneMetadataSourceFixture
+        )
+        try harness.writeSourceFile(
+            at: "extracted/ntsc-1.2/assets/scenes/overworld/spot04/spot04_room_0.c",
+            contents: roomMetadataSourceFixture
+        )
+        try harness.writeSourceFile(
+            at: "include/tables/entrance_table.h",
+            contents: entranceTableFixture
+        )
+
+        let sourceSymlink = try harness.makeSourceSymlink(named: "canonical-source")
+        try SceneExtractor().extract(
+            using: OOTExtractionContext(source: sourceSymlink, output: harness.outputRoot, sceneName: "spot04")
+        )
+
+        let sceneDirectory = try harness.metadataDirectory()
+        let sceneHeader = try JSONDecoder().decode(
+            SceneHeaderDefinition.self,
+            from: Data(contentsOf: sceneDirectory.appendingPathComponent("scene-header.json"))
+        )
+
+        XCTAssertEqual(sceneHeader.spawns.count, 2)
+        XCTAssertEqual(sceneHeader.spawns[0].roomID, 0)
+        XCTAssertEqual(sceneHeader.spawns[1].roomID, 0)
+    }
+
+    func testExtractMetadataParsesNestedTransitionActorSides() throws {
+        let harness = try SceneHarness()
+        defer { harness.cleanup() }
+
+        try harness.seedActorTableManifest()
+        try harness.seedObjectTableManifest()
+        try harness.writeSceneXML(at: "assets/xml/scenes/overworld/spot04.xml", contents: sceneXMLFixture)
+        try harness.writeSourceFile(
+            at: "assets/scenes/overworld/spot04/spot04_scene.c",
+            contents: sceneMetadataSourceFixture.replacingOccurrences(
+                of: """
+                TransitionActorEntry spot04_sceneTransitionActorList_000164[] = {
+                    { 0, 255, 1, 255, ACTOR_DOOR_ANA, 120, 0, 320, 0X4000, 0x0000 },
+                    { 1, 255, 0, 255, ACTOR_DOOR_ANA, -240, 10, 512, 0XC000, 0x0000 },
+                };
+                """,
+                with: """
+                TransitionActorEntry spot04_sceneTransitionActorList_000164[] = {
+                    {
+                        {
+                            { 0, -1 },
+                            { 1, -1 },
+                        },
+                        ACTOR_EN_HOLL,
+                        { 120, 0, 320 },
+                        0x4000,
+                        0x0000,
+                    },
+                    {
+                        {
+                            { 1, -1 },
+                            { 0, -1 },
+                        },
+                        ACTOR_EN_HOLL,
+                        { -240, 10, 512 },
+                        0xC000,
+                        0x0000,
+                    },
+                };
+                """
+            )
+        )
+        try harness.writeSourceFile(
+            at: "assets/scenes/overworld/spot04/spot04_room_0.c",
+            contents: roomMetadataSourceFixture
+        )
+        try harness.writeSourceFile(
+            at: "include/tables/entrance_table.h",
+            contents: entranceTableFixture
+        )
+
+        try SceneExtractor().extract(using: harness.extractionContext(sceneName: "spot04"))
+
+        let sceneDirectory = try harness.metadataDirectory()
+        let sceneHeader = try JSONDecoder().decode(
+            SceneHeaderDefinition.self,
+            from: Data(contentsOf: sceneDirectory.appendingPathComponent("scene-header.json"))
+        )
+
+        XCTAssertEqual(
+            sceneHeader.transitionTriggers,
+            [
+                SceneTransitionTrigger(
+                    id: 0,
+                    kind: .loadingZone,
+                    roomID: 0,
+                    destinationRoomID: 1,
+                    effect: .fade,
+                    volume: SceneTriggerVolume(
+                        minimum: Vector3s(x: 120, y: 0, z: 320),
+                        maximum: Vector3s(x: 120, y: 0, z: 320)
+                    )
+                ),
+                SceneTransitionTrigger(
+                    id: 1,
+                    kind: .loadingZone,
+                    roomID: 1,
+                    destinationRoomID: 0,
+                    effect: .fade,
+                    volume: SceneTriggerVolume(
+                        minimum: Vector3s(x: -240, y: 10, z: 512),
+                        maximum: Vector3s(x: -240, y: 10, z: 512)
+                    )
+                ),
+            ]
+        )
     }
 
     func testVerifyRoundTripsSceneMetadataJSON() throws {
@@ -783,6 +907,12 @@ private struct SceneHarness {
 
     func extractionContext(sceneName: String?) -> OOTExtractionContext {
         OOTExtractionContext(source: sourceRoot, output: outputRoot, sceneName: sceneName)
+    }
+
+    func makeSourceSymlink(named name: String) throws -> URL {
+        let symlinkURL = root.appendingPathComponent(name, isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: symlinkURL, withDestinationURL: sourceRoot)
+        return symlinkURL
     }
 
     func writeSceneXML(at relativePath: String, contents: String) throws {
@@ -1036,6 +1166,10 @@ private struct SceneHarness {
     private func writeCommonHeaders() throws {
         let includeDirectory = sourceRoot.appendingPathComponent("include/ultra64", isDirectory: true)
         try FileManager.default.createDirectory(at: includeDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: sourceRoot.appendingPathComponent("include", isDirectory: true),
+            withIntermediateDirectories: true
+        )
 
         try "".write(
             to: includeDirectory.appendingPathComponent("gbi.h"),
@@ -1046,6 +1180,83 @@ private struct SceneHarness {
         #include "ultra64/gbi.h"
         """.write(
             to: sourceRoot.appendingPathComponent("gfx.h"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try """
+        typedef enum NatureAmbienceId {
+            NATURE_ID_GENERAL_NIGHT,
+            NATURE_ID_MARKET_ENTRANCE,
+            NATURE_ID_KAKARIKO_REGION,
+            NATURE_ID_MARKET_RUINS,
+            NATURE_ID_KOKIRI_REGION,
+        } NatureAmbienceId;
+
+        typedef enum {
+            NA_BGM_GENERAL_SFX,
+            NA_BGM_NATURE_AMBIENCE,
+            NA_BGM_FIELD_LOGIC,
+            NA_BGM_FIELD_INIT,
+            NA_BGM_FIELD_DEFAULT_1,
+            NA_BGM_FIELD_DEFAULT_2,
+            NA_BGM_FIELD_DEFAULT_3,
+            NA_BGM_FIELD_DEFAULT_4,
+            NA_BGM_FIELD_DEFAULT_5,
+            NA_BGM_FIELD_DEFAULT_6,
+            NA_BGM_FIELD_DEFAULT_7,
+            NA_BGM_FIELD_DEFAULT_8,
+            NA_BGM_FIELD_DEFAULT_9,
+            NA_BGM_FIELD_DEFAULT_A,
+            NA_BGM_FIELD_DEFAULT_B,
+            NA_BGM_FIELD_ENEMY_INIT,
+            NA_BGM_FIELD_ENEMY_1,
+            NA_BGM_FIELD_ENEMY_2,
+            NA_BGM_FIELD_ENEMY_3,
+            NA_BGM_FIELD_ENEMY_4,
+            NA_BGM_FIELD_STILL_1,
+            NA_BGM_FIELD_STILL_2,
+            NA_BGM_FIELD_STILL_3,
+            NA_BGM_FIELD_STILL_4,
+            NA_BGM_DUNGEON,
+            NA_BGM_KAKARIKO_ADULT,
+            NA_BGM_ENEMY,
+            NA_BGM_BOSS,
+            NA_BGM_INSIDE_DEKU_TREE,
+            NA_BGM_MARKET,
+            NA_BGM_TITLE,
+            NA_BGM_LINK_HOUSE,
+            NA_BGM_GAME_OVER,
+            NA_BGM_BOSS_CLEAR,
+            NA_BGM_ITEM_GET,
+            NA_BGM_OPENING_GANON,
+            NA_BGM_HEART_GET,
+            NA_BGM_OCA_LIGHT,
+            NA_BGM_JABU_JABU,
+            NA_BGM_KAKARIKO_KID,
+            NA_BGM_GREAT_FAIRY,
+            NA_BGM_ZELDA_THEME,
+            NA_BGM_FIRE_TEMPLE,
+            NA_BGM_OPEN_TRE_BOX,
+            NA_BGM_FOREST_TEMPLE,
+            NA_BGM_COURTYARD,
+            NA_BGM_GANON_TOWER,
+            NA_BGM_LONLON,
+            NA_BGM_GORON_CITY,
+            NA_BGM_FIELD_MORNING,
+            NA_BGM_SPIRITUAL_STONE,
+            NA_BGM_OCA_BOLERO,
+            NA_BGM_OCA_MINUET,
+            NA_BGM_OCA_SERENADE,
+            NA_BGM_OCA_REQUIEM,
+            NA_BGM_OCA_NOCTURNE,
+            NA_BGM_MINI_BOSS,
+            NA_BGM_SMALL_ITEM_GET,
+            NA_BGM_TEMPLE_OF_TIME,
+            NA_BGM_EVENT_CLEAR,
+            NA_BGM_KOKIRI,
+        } NA_BGM;
+        """.write(
+            to: sourceRoot.appendingPathComponent("include/sequence.h"),
             atomically: true,
             encoding: .utf8
         )
@@ -1068,15 +1279,15 @@ private let sceneMetadataSourceFixture = """
 
 SceneCmd spot04_sceneCommands[] = {
     SCENE_CMD_ALTERNATE_HEADER_LIST(spot04_sceneAlternateHeaders0x000070),
-    SCENE_CMD_SOUND_SETTINGS(1, 4, 60),
+    SCENE_CMD_SOUND_SETTINGS(1, NATURE_ID_KOKIRI_REGION, NA_BGM_KOKIRI),
     SCENE_CMD_ROOM_LIST(1, spot04_sceneRoomList0x000184),
     SCENE_CMD_TRANSITION_ACTOR_LIST(2, spot04_sceneTransitionActorList_000164),
     SCENE_CMD_MISC_SETTINGS(0x00, 0x00000004),
     SCENE_CMD_COL_HEADER(&spot04_sceneCollisionHeader_008918),
-    SCENE_CMD_ENTRANCE_LIST(spot04_sceneEntranceList0x00019C),
     SCENE_CMD_SPECIAL_FILES(NAVI_QUEST_HINTS_OVERWORLD, OBJECT_GAMEPLAY_FIELD_KEEP),
     SCENE_CMD_PATH_LIST(spot04_scenePathList_00030C),
-    SCENE_CMD_SPAWN_LIST(spot04_sceneStartPositionList0x0000A4),
+    SCENE_CMD_SPAWN_LIST(spot04_sceneEntranceList0x00019C),
+    SCENE_CMD_PLAYER_ENTRY_LIST(ARRAY_COUNT(spot04_sceneStartPositionList0x0000A4), spot04_sceneStartPositionList0x0000A4),
     SCENE_CMD_SKYBOX_SETTINGS(29, 0, false),
     SCENE_CMD_EXIT_LIST(spot04_sceneExitList_0001B4),
     SCENE_CMD_ENV_LIGHT_SETTINGS(12, spot04_sceneLightSettings0x0001CC),
@@ -1171,7 +1382,7 @@ private let roomMetadataSourceFixture = """
 SceneCmd spot04_room_0Commands[] = {
     SCENE_CMD_ALTERNATE_HEADER_LIST(spot04_room_0AlternateHeaders0x000048),
     SCENE_CMD_ECHO_SETTINGS(1),
-    SCENE_CMD_ROOM_BEHAVIOR(0x00, 0x00, false, false),
+    SCENE_CMD_ROOM_BEHAVIOR(ROOM_TYPE_NORMAL, ROOM_ENV_DEFAULT, LENS_MODE_SHOW_ACTORS, false),
     SCENE_CMD_SKYBOX_DISABLES(false, false),
     SCENE_CMD_TIME_SETTINGS(255, 255, 0),
     SCENE_CMD_ROOM_SHAPE(&spot04_room_0RoomShapeCullable_000580),
