@@ -256,9 +256,24 @@ enum SceneRenderPayloadBuilder {
         scene: LoadedScene,
         playerState: PlayerState?,
         combatState: GameplayCombatState? = nil,
-        itemGetSequence: ItemGetSequenceState? = nil
+        itemGetSequence: ItemGetSequenceState? = nil,
+        itemAimYaw: Float? = nil,
+        itemAimPitch: Float? = nil
     ) -> GameplayCameraConfiguration? {
         if let playerState {
+            let presentationOverride: GameplayCameraPresentationOverride? = if let itemGetSequence {
+                GameplayCameraPresentationOverride.itemGet(
+                    itemPosition: itemGetSequence.itemWorldPosition.simd,
+                    playerYaw: playerState.facingRadians
+                )
+            } else if let itemAimYaw {
+                GameplayCameraPresentationOverride.firstPersonAim(
+                    playerYaw: itemAimYaw,
+                    pitch: itemAimPitch ?? 0
+                )
+            } else {
+                nil
+            }
             return GameplayCameraConfiguration(
                 playerPosition: SIMD3<Float>(
                     playerState.position.x,
@@ -267,12 +282,7 @@ enum SceneRenderPayloadBuilder {
                 ),
                 playerYaw: playerState.facingRadians,
                 lockOnTargetPosition: combatState?.lockOnTarget?.focusPoint.simd,
-                presentationOverride: itemGetSequence.map {
-                    GameplayCameraPresentationOverride.itemGet(
-                        itemPosition: $0.itemWorldPosition.simd,
-                        playerYaw: playerState.facingRadians
-                    )
-                },
+                presentationOverride: presentationOverride,
                 collision: scene.collision
             )
         }

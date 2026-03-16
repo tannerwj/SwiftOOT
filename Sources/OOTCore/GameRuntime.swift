@@ -215,7 +215,10 @@ public enum GameplayHUDButtonItem: String, Codable, Sendable, Equatable {
     case bow
     case bomb
     case boomerang
+    case dekuStick
+    case dekuNut
     case ocarina
+    case bottle
     case none
 
     public var actionLabel: String {
@@ -231,9 +234,15 @@ public enum GameplayHUDButtonItem: String, Codable, Sendable, Equatable {
         case .bomb:
             return "Bomb"
         case .boomerang:
-            return "Return"
+            return "Throw"
+        case .dekuStick:
+            return "Stick"
+        case .dekuNut:
+            return "Throw"
         case .ocarina:
             return "Play"
+        case .bottle:
+            return "Use"
         case .none:
             return "Action"
         }
@@ -248,6 +257,7 @@ public struct GameplayHUDState: Codable, Sendable, Equatable {
     public var rupees: Int
     public var smallKeyCount: Int?
     public var bButtonItem: GameplayHUDButtonItem
+    public var cButtons: GameplayHUDCButtonState
     public var actionLabelOverride: String?
 
     public init(
@@ -258,6 +268,7 @@ public struct GameplayHUDState: Codable, Sendable, Equatable {
         rupees: Int = 0,
         smallKeyCount: Int? = nil,
         bButtonItem: GameplayHUDButtonItem = .sword,
+        cButtons: GameplayHUDCButtonState = GameplayHUDCButtonState(),
         actionLabelOverride: String? = nil
     ) {
         let normalizedMaximumHealthUnits = max(2, maximumHealthUnits)
@@ -269,6 +280,7 @@ public struct GameplayHUDState: Codable, Sendable, Equatable {
         self.rupees = max(0, rupees)
         self.smallKeyCount = smallKeyCount.map { max(0, $0) }
         self.bButtonItem = bButtonItem
+        self.cButtons = cButtons
         self.actionLabelOverride = actionLabelOverride
     }
 
@@ -282,6 +294,7 @@ public struct GameplayHUDState: Codable, Sendable, Equatable {
             rupees: 0,
             smallKeyCount: nil,
             bButtonItem: .sword,
+            cButtons: GameplayHUDCButtonState(),
             actionLabelOverride: nil
         )
     }
@@ -612,6 +625,12 @@ public final class GameRuntime {
 
     @ObservationIgnored
     var bButtonChargeFrames = 0
+
+    @ObservationIgnored
+    var activeSlingshotAimState: SlingshotAimState?
+
+    @ObservationIgnored
+    var activeDekuStickState: EquippedDekuStickState?
 
     public init(
         currentState: GameState = .boot,
@@ -1264,6 +1283,7 @@ public final class GameRuntime {
             )
         }
 
+        updateGameplayItemState(currentInput: playerInput)
         updateCombatStateBeforeActorStep(currentInput: playerInput)
         advanceItemGetSequenceIfNeeded()
 
@@ -1371,6 +1391,11 @@ public final class GameRuntime {
         defer {
             previousControllerInputState = currentInput
         }
+
+        handleGameplayItemButtons(
+            currentInput: currentInput,
+            previousInput: previousInput
+        )
 
         if allowPrimaryAction, currentInput.aPressed, previousInput.aPressed == false {
             handlePrimaryGameplayInput()
@@ -1516,12 +1541,22 @@ public final class GameRuntime {
         hudState.currentHealthUnits = inventoryState.currentHealthUnits
         hudState.maximumHealthUnits = inventoryState.maximumHealthUnits
         hudState.smallKeyCount = inventoryState.smallKeyCount(for: currentSceneIdentity)
-        if inventoryState.hasSlingshot {
-            hudState.bButtonItem = .slingshot
+        hudState.bButtonItem = .sword
+
+        for button in GameplayCButton.allCases {
+            if let item = inventoryState.cButtonLoadout[button] {
+                hudState.cButtons[button] = GameplayHUDButtonState(
+                    item: item.hudButtonItem,
+                    ammoCount: inventoryState.ammoCount(for: item),
+                    isEnabled: inventoryState.canUse(item)
+                )
+            } else {
+                hudState.cButtons[button] = .empty
+            }
         }
     }
 
-    private func persistActiveSaveSlotState(sceneName: String? = nil) {
+    func persistActiveSaveSlotState(sceneName: String? = nil) {
         guard let playState else {
             return
         }

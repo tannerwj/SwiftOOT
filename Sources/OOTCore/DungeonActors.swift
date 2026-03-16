@@ -2,8 +2,16 @@ import Foundation
 import simd
 
 @MainActor
-public final class TorchActor: BaseActor, TalkRequestingActor {
+public final class TorchActor: BaseActor, TalkRequestingActor, FireSourceActor, FireInteractableActor {
     private var isLit = false
+
+    var providesFireSource: Bool {
+        true
+    }
+
+    var isIgnited: Bool {
+        isLit
+    }
 
     public var talkPrompt: String {
         "Light"
@@ -33,6 +41,18 @@ public final class TorchActor: BaseActor, TalkRequestingActor {
         playState.markDungeonEventTriggered(eventKey)
         isLit = true
         return true
+    }
+
+    func ignite(playState: PlayState) {
+        guard
+            isLit == false,
+            let eventKey = dungeonEventKey(kind: .torchLit, playState: playState)
+        else {
+            return
+        }
+
+        playState.markDungeonEventTriggered(eventKey)
+        isLit = true
     }
 }
 
@@ -71,8 +91,12 @@ public final class DungeonSwitchActor: BaseActor, TalkRequestingActor {
 }
 
 @MainActor
-public final class BurnableWebActor: BaseActor, TalkRequestingActor {
+public final class BurnableWebActor: BaseActor, TalkRequestingActor, FireInteractableActor {
     private var isBurned = false
+
+    var isIgnited: Bool {
+        isBurned
+    }
 
     public var talkPrompt: String {
         "Burn"
@@ -106,6 +130,19 @@ public final class BurnableWebActor: BaseActor, TalkRequestingActor {
         isBurned = true
         playState.requestDestroy(self)
         return true
+    }
+
+    func ignite(playState: PlayState) {
+        guard
+            isBurned == false,
+            let eventKey = dungeonEventKey(kind: .webBurned, playState: playState)
+        else {
+            return
+        }
+
+        playState.markDungeonEventTriggered(eventKey)
+        isBurned = true
+        playState.requestDestroy(self)
     }
 }
 
@@ -256,7 +293,7 @@ public final class DekuScrubActor: CombatantBaseActor {
     }
 
     public override func combatDidBlockHit(_ hit: CombatHit, playState: PlayState) {
-        guard hit.element == .projectile else {
+        guard hit.element.canBeBlockedAsProjectile || hit.element == .flash else {
             return
         }
 

@@ -58,7 +58,7 @@ extension GameRuntime {
     }
 
     func movementInputState(for input: ControllerInputState) -> ControllerInputState {
-        guard activePlayerAttackState != nil else {
+        if activePlayerAttackState == nil, isGameplayItemAimActive == false {
             return input
         }
 
@@ -66,6 +66,9 @@ extension GameRuntime {
             stick: .zero,
             aPressed: false,
             bPressed: input.bPressed,
+            cLeftPressed: input.cLeftPressed,
+            cDownPressed: input.cDownPressed,
+            cRightPressed: input.cRightPressed,
             zPressed: input.zPressed,
             startPressed: input.startPressed
         )
@@ -96,6 +99,9 @@ extension GameRuntime {
         if activePlayerAttackState != nil {
             return false
         }
+        if isGameplayItemAimActive {
+            return false
+        }
         if canBeginJumpAttack(with: input) {
             return false
         }
@@ -115,6 +121,7 @@ extension GameRuntime {
         currentInput: ControllerInputState
     ) {
         resolvePlayerAttackHits(playState: playState)
+        resolvePlayerItemEffects(playState: playState)
         resolveIncomingActorAttacks(playState: playState)
         advanceActivePlayerAttack()
         updateLockOnState(currentInput: currentInput)
@@ -605,7 +612,7 @@ private extension GameRuntime {
         }
 
         let facingAlignment = simd_dot(playerForward, simd_normalize(incomingOffset))
-        if attack.isProjectile {
+        if attack.element.canBeBlockedAsProjectile || attack.isProjectile {
             return facingAlignment >= 0.1
         }
         return facingAlignment >= -0.05

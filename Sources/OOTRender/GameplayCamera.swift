@@ -38,6 +38,7 @@ public struct GameplayCameraConfiguration: Sendable, Equatable {
 
 public enum GameplayCameraPresentationOverride: Sendable, Equatable {
     case itemGet(itemPosition: SIMD3<Float>, playerYaw: Float)
+    case firstPersonAim(playerYaw: Float, pitch: Float)
 }
 
 struct GameplayCameraSnapshot: Sendable, Equatable {
@@ -312,6 +313,26 @@ private extension GameplayCameraController {
                     focusTarget: itemPosition,
                     orientation: orientation,
                     fieldOfView: Float.pi / 4.4
+                )
+            case .firstPersonAim(let playerYaw, let pitch):
+                let eye = configuration.playerPosition + SIMD3<Float>(0, configuration.headHeight * 0.92, 0)
+                let horizontal = cos(pitch)
+                let forward = SIMD3<Float>(
+                    sin(playerYaw) * horizontal,
+                    sin(pitch),
+                    -cos(playerYaw) * horizontal
+                )
+                let focusTarget = eye + (forward * 72)
+                let orientation = gameplayLookRotationQuaternion(
+                    eye: eye,
+                    center: focusTarget
+                )
+                return DesiredPose(
+                    mode: .normal,
+                    eyePosition: eye,
+                    focusTarget: focusTarget,
+                    orientation: orientation,
+                    fieldOfView: Float.pi / 3.8
                 )
             }
         }

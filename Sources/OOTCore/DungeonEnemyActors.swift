@@ -143,7 +143,7 @@ public final class DekuBabaActor: CombatantBaseActor, SkeletonRenderableActor {
         }
     }
 
-    public func combatHitResolution(
+    public override func combatHitResolution(
         for hit: CombatHit,
         attackerPosition _: Vec3f?,
         playState _: PlayState
@@ -157,7 +157,7 @@ public final class DekuBabaActor: CombatantBaseActor, SkeletonRenderableActor {
             return effect.damage > 0 ? .apply(effect) : .ignore
         }
 
-        if hit.element == .projectile || hit.element.isMelee {
+        if hit.element.isProjectileLike || hit.element == .flash || hit.element.isMelee {
             enterStunned()
         }
         return .ignore
@@ -181,7 +181,7 @@ public final class DekuBabaActor: CombatantBaseActor, SkeletonRenderableActor {
     private func grantReward(playState: PlayState) {
         grantedReward = true
         let reward: ActorReward
-        if killingElement == .projectile {
+        if killingElement == .projectile || killingElement == .explosion {
             reward = .chest(.dekuNuts(5))
         } else {
             reward = .chest(.dekuSticks(1))
@@ -353,7 +353,7 @@ public final class SkulltulaActor: CombatantBaseActor, SkeletonRenderableActor {
         }
     }
 
-    public func combatHitResolution(
+    public override func combatHitResolution(
         for hit: CombatHit,
         attackerPosition: Vec3f?,
         playState: PlayState
@@ -572,7 +572,7 @@ public final class GohmaLarvaActor: CombatantBaseActor, SkeletonRenderableActor 
         }
     }
 
-    public func combatHitResolution(
+    public override func combatHitResolution(
         for hit: CombatHit,
         attackerPosition: Vec3f?,
         playState: PlayState
@@ -581,7 +581,7 @@ public final class GohmaLarvaActor: CombatantBaseActor, SkeletonRenderableActor 
             return .ignore
         }
 
-        if hit.element == .projectile {
+        if hit.element.isProjectileLike || hit.element == .flash {
             state = .stunned
             stateTimer = 0
             return .ignore
@@ -814,7 +814,7 @@ public final class QueenGohmaActor: CombatantBaseActor, SkeletonRenderableActor 
         }
     }
 
-    public func combatHitResolution(
+    public override func combatHitResolution(
         for hit: CombatHit,
         attackerPosition: Vec3f?,
         playState: PlayState
@@ -823,7 +823,7 @@ public final class QueenGohmaActor: CombatantBaseActor, SkeletonRenderableActor 
             return .ignore
         }
 
-        if hit.element == .projectile {
+        if hit.element.isProjectileLike || hit.element == .flash {
             if state == .ceilingPrepareSpawn {
                 state = .falling
                 stateTimer = 0
