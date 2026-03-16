@@ -67,6 +67,7 @@ public struct SceneManager: Sendable {
         actorTable: [ActorTableEntry],
         entranceTable: [EntranceTableEntry] = [],
         entranceIndex: Int? = nil,
+        spawnIndex: Int? = nil,
         activeRoomIDs: Set<Int>? = nil
     ) {
         self.scene = scene
@@ -81,6 +82,7 @@ public struct SceneManager: Sendable {
             scene: scene,
             entranceTableByIndex: entranceTableByIndex,
             entranceIndex: entranceIndex,
+            spawnIndex: spawnIndex,
             activeRoomIDs: activeRoomIDs
         )
         let objectSlots = SceneManager.resolveObjectSlots(
@@ -198,6 +200,7 @@ private extension SceneManager {
         scene: LoadedScene,
         entranceTableByIndex: [Int: EntranceTableEntry],
         entranceIndex: Int?,
+        spawnIndex: Int?,
         activeRoomIDs: Set<Int>?
     ) -> EntryResolution {
         if let activeRoomIDs, activeRoomIDs.isEmpty == false {
@@ -214,8 +217,11 @@ private extension SceneManager {
         }
 
         let entrance = sceneHeader.entrances.first { $0.index == entranceIndex } ?? sceneHeader.entrances.first
-        let spawnIndex = entranceTableByIndex[entranceIndex ?? -1]?.spawnIndex ?? entrance?.spawnIndex
-        let spawn = sceneHeader.spawns.first { $0.index == spawnIndex } ?? sceneHeader.spawns.first
+        let resolvedSpawnIndex =
+            spawnIndex ??
+            entranceTableByIndex[entranceIndex ?? -1]?.spawnIndex ??
+            entrance?.spawnIndex
+        let spawn = sceneHeader.spawns.first { $0.index == resolvedSpawnIndex } ?? sceneHeader.spawns.first
         let roomID = spawn?.roomID ?? fallbackRoomID(in: scene)
 
         return EntryResolution(

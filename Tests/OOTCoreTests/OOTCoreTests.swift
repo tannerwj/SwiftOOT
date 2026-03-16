@@ -639,6 +639,71 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLoadScenePrefersExplicitSpawnOverrideOverEntranceSpawn() throws {
+        let scene = makeScene(
+            roomSpawns: [
+                0: [],
+                1: [],
+            ],
+            entrances: [SceneEntranceDefinition(index: 5, spawnIndex: 0)],
+            spawns: [
+                SceneSpawnPoint(
+                    index: 0,
+                    roomID: 0,
+                    position: Vector3s(x: 10, y: 0, z: 0),
+                    rotation: Vector3s(x: 0, y: 0, z: 0)
+                ),
+                SceneSpawnPoint(
+                    index: 1,
+                    roomID: 1,
+                    position: Vector3s(x: 40, y: 0, z: -20),
+                    rotation: Vector3s(x: 0, y: 0x4000, z: 0)
+                ),
+            ]
+        )
+        let fixture = RuntimeFixture(scene: scene, actorTable: [])
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55, entranceIndex: 5, spawnIndex: 1)
+
+        XCTAssertEqual(runtime.playState?.currentEntranceIndex, 5)
+        XCTAssertEqual(runtime.playState?.currentSpawnIndex, 1)
+        XCTAssertEqual(runtime.playState?.currentRoomID, 1)
+        XCTAssertEqual(runtime.playerState?.position, Vec3f(x: 40, y: 0, z: -20))
+        XCTAssertEqual(Double(try XCTUnwrap(runtime.playerState?.facingRadians)), .pi / 2, accuracy: 0.000_1)
+    }
+
+    @MainActor
+    func testLaunchDeveloperSceneResolvesSceneNameAndLocksTimeOfDay() async throws {
+        let runtime = GameRuntime(
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try await runtime.launchDeveloperScene(
+            DeveloperSceneLaunchConfiguration(
+                scene: .name("spot01"),
+                fixedTimeOfDay: 18.25
+            )
+        )
+
+        XCTAssertEqual(runtime.currentState, .gameplay)
+        XCTAssertEqual(runtime.playState?.currentSceneID, 0x01)
+        XCTAssertEqual(runtime.playState?.currentSceneName, "spot01")
+        XCTAssertEqual(runtime.gameTime.timeOfDay, 18.25, accuracy: 0.000_1)
+
+        runtime.updateFrame()
+        XCTAssertEqual(runtime.gameTime.timeOfDay, 18.25, accuracy: 0.000_1)
+
+        runtime.advanceGameTime(byRealSeconds: 5)
+        XCTAssertEqual(runtime.gameTime.timeOfDay, 18.25, accuracy: 0.000_1)
+    }
+
+    @MainActor
     func testDoorTransitionKeepsAtMostTwoRoomsActiveAndReloadsObjects() throws {
         let scene = makeScene(
             roomSpawns: [
@@ -1318,6 +1383,7 @@ private func makeScene(
         ),
         collision: collision,
         actors: actors,
+        spawns: SceneSpawnsFile(sceneName: sceneName, spawns: spawns),
         exits: SceneExitsFile(sceneName: sceneName, exits: exits),
         sceneHeader: SceneHeaderDefinition(
             sceneName: sceneName,

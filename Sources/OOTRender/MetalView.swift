@@ -3,7 +3,12 @@ import AppKit
 import MetalKit
 
 @MainActor
-public protocol GameplayInputHandling: AnyObject {
+public protocol GameplayInputSyncing: AnyObject {
+    func sync(frame: Int)
+}
+
+@MainActor
+public protocol GameplayInputHandling: GameplayInputSyncing {
     func handleKeyDown(_ event: NSEvent) -> Bool
     func handleKeyUp(_ event: NSEvent) -> Bool
     func updateMovementReferenceYaw(_ yaw: Float?)

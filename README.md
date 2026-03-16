@@ -120,6 +120,46 @@ that runs the current M0 unit test bundles. If you use `mise`, `mise install
 tuist` reads the pinned version from `.tool-versions`; otherwise install Tuist
 4.158.2 manually before running the commands above.
 
+## Deterministic Developer Harness
+
+`OOTMac` now supports a developer-only harness for deterministic scene launch,
+scripted controller input, and capture export. The harness stays dormant unless
+you set one or more of these environment variables before launching the app:
+
+- `SWIFTOOT_SCENE`: scene name like `spot04` or scene id like `0x55`
+- `SWIFTOOT_ENTRANCE`: optional entrance index override
+- `SWIFTOOT_SPAWN`: optional spawn index override
+- `SWIFTOOT_TIME_OF_DAY`: optional fixed hour value such as `18.5`
+- `SWIFTOOT_INPUT_SCRIPT`: optional JSON script path
+- `SWIFTOOT_CAPTURE_FRAME`: optional PNG output path
+- `SWIFTOOT_CAPTURE_STATE`: optional JSON output path
+- `SWIFTOOT_CAPTURE_VIEWPORT`: optional capture size such as `960x540`
+
+The script format is a top-level JSON array. Each step must define exactly one
+of `duration` or `frameRange`, and may set `stick`, `aPressed`, `bPressed`,
+`zPressed`, and `startPressed`. See
+[`docs/developer-harness-script.example.json`](docs/developer-harness-script.example.json)
+for a checked-in example.
+
+For a reproducible local capture, build the app into a known derived-data path
+and launch the resulting binary with the harness variables:
+
+```bash
+xcodebuild -workspace SwiftOOT.xcworkspace -scheme OOTMac -destination 'platform=macOS' -derivedDataPath .build/xcode CODE_SIGNING_ALLOWED=NO build
+SWIFTOOT_CONTENT_ROOT=/absolute/path/to/Content/OOT \
+SWIFTOOT_SCENE=spot04 \
+SWIFTOOT_TIME_OF_DAY=18.5 \
+SWIFTOOT_INPUT_SCRIPT=$PWD/docs/developer-harness-script.example.json \
+SWIFTOOT_CAPTURE_FRAME=$PWD/tmp/harness/frame.png \
+SWIFTOOT_CAPTURE_STATE=$PWD/tmp/harness/state.json \
+SWIFTOOT_CAPTURE_VIEWPORT=960x540 \
+.build/xcode/Build/Products/Debug/OOTMac.app/Contents/MacOS/OOTMac
+```
+
+When `SWIFTOOT_CAPTURE_FRAME` or `SWIFTOOT_CAPTURE_STATE` is set, the harness
+launches straight into gameplay, replays the scripted input, writes the
+requested outputs, and terminates the app automatically.
+
 When validating extractor work against the real `Vendor/oot` tree, use the
 exact issue command. For example, the current scoped extraction smoke test is:
 

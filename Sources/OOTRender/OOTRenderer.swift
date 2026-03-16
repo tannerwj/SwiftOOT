@@ -32,6 +32,25 @@ public struct SceneFrameStats: Sendable, Equatable {
     }
 }
 
+public struct RenderedSceneCapture: Sendable, Equatable {
+    public var width: Int
+    public var height: Int
+    public var pixelsBGRA: [UInt8]
+    public var frameStats: SceneFrameStats
+
+    public init(
+        width: Int,
+        height: Int,
+        pixelsBGRA: [UInt8],
+        frameStats: SceneFrameStats
+    ) {
+        self.width = width
+        self.height = height
+        self.pixelsBGRA = pixelsBGRA
+        self.frameStats = frameStats
+    }
+}
+
 public final class OOTRenderer: NSObject, MTKViewDelegate {
     public static let preferredFramesPerSecond = 60
     public static let depthPixelFormat: MTLPixelFormat = .depth32Float
@@ -314,6 +333,57 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         } catch {
             commandBuffer.commit()
         }
+    }
+
+    public func captureCurrentScene(size: CGSize) throws -> RenderedSceneCapture {
+        let width = max(Int(size.width.rounded()), 1)
+        let height = max(Int(size.height.rounded()), 1)
+        let viewportSize = CGSize(width: width, height: height)
+        orbitCameraController.updateViewportSize(viewportSize)
+        gameplayCameraController?.updateViewportSize(viewportSize)
+
+        let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm,
+            width: width,
+            height: height,
+            mipmapped: false
+        )
+        textureDescriptor.usage = [.renderTarget, .shaderRead]
+        textureDescriptor.storageMode = .shared
+
+        guard let renderTarget = device.makeTexture(descriptor: textureDescriptor) else {
+            throw OOTRendererError.metalUnavailable
+        }
+
+        var capturedStats = SceneFrameStats()
+        let previousFrameStatsHandler = frameStatsHandler
+        frameStatsHandler = { stats in
+            capturedStats = stats
+            previousFrameStatsHandler(stats)
+        }
+        defer {
+            frameStatsHandler = previousFrameStatsHandler
+        }
+
+        try renderCurrentSceneToTexture(
+            renderTarget,
+            frameUniforms: activeFrameUniforms()
+        )
+
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        renderTarget.getBytes(
+            &pixels,
+            bytesPerRow: width * 4,
+            from: MTLRegionMake2D(0, 0, width, height),
+            mipmapLevel: 0
+        )
+
+        return RenderedSceneCapture(
+            width: width,
+            height: height,
+            pixelsBGRA: pixels,
+            frameStats: capturedStats
+        )
     }
 
     func renderToTexture(_ texture: MTLTexture) {
