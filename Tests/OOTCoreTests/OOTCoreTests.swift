@@ -691,6 +691,47 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLoadSceneUsesResolvedSpawnPointToPlacePlayerOnGroundWhenNoPlayerActorExists() throws {
+        let scene = makeScene(
+            roomSpawns: [0: []],
+            entrances: [SceneEntranceDefinition(index: 5, spawnIndex: 1)],
+            spawns: [
+                SceneSpawnPoint(
+                    index: 0,
+                    roomID: 0,
+                    position: Vector3s(x: 1, y: 99, z: 1),
+                    rotation: Vector3s(x: 0, y: 0, z: 0)
+                ),
+                SceneSpawnPoint(
+                    index: 1,
+                    roomID: 0,
+                    position: Vector3s(x: 8, y: 99, z: 2),
+                    rotation: Vector3s(x: 0, y: 0x2000, z: 0)
+                ),
+            ],
+            collision: fixtureCollisionMesh()
+        )
+        let fixture = RuntimeFixture(scene: scene, actorTable: [])
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55, entranceIndex: 5)
+
+        let playerState = try XCTUnwrap(runtime.playerState)
+
+        XCTAssertEqual(runtime.playState?.currentSpawnIndex, 1)
+        XCTAssertEqual(playerState.position.x, 8, accuracy: 0.001)
+        XCTAssertEqual(playerState.position.z, 2, accuracy: 0.001)
+        XCTAssertEqual(playerState.position.y, 0, accuracy: 0.001)
+        XCTAssertTrue(playerState.isGrounded)
+        XCTAssertEqual(playerState.locomotionState, .idle)
+        XCTAssertEqual(playerState.facingRadians, .pi / 4, accuracy: 0.001)
+    }
+
+    @MainActor
     func testSceneManagerCapsLoadedObjectSlotsAtNineteen() throws {
         let scene = makeScene(
             roomSpawns: [0: []],
@@ -1164,7 +1205,8 @@ private func makeScene(
     entrances: [SceneEntranceDefinition] = [],
     spawns: [SceneSpawnPoint] = [],
     transitionTriggers: [SceneTransitionTrigger] = [],
-    exits: [SceneExitDefinition] = []
+    exits: [SceneExitDefinition] = [],
+    collision: CollisionMesh? = nil
 ) -> LoadedScene {
     let sortedRooms = roomSpawns.keys.sorted()
     let manifestRooms = sortedRooms.map { roomID in
@@ -1198,6 +1240,7 @@ private func makeScene(
             rooms: manifestRooms,
             actorsPath: "Manifests/scenes/test_scene/actors.json"
         ),
+        collision: collision,
         actors: actors,
         exits: SceneExitsFile(sceneName: sceneName, exits: exits),
         sceneHeader: SceneHeaderDefinition(
