@@ -464,6 +464,413 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLoadSceneSpawnsDekuTreeActorsUsingDefaultRegistry() throws {
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(id: 10, name: "ACTOR_OBJ_SWITCH", position: Vector3s(x: 0, y: 0, z: -24)),
+                        makeSpawn(id: 20, name: "ACTOR_BG_YDAN_SP", position: Vector3s(x: 20, y: 0, z: -24)),
+                        makeSpawn(id: 30, name: "ACTOR_EN_HINTNUTS", position: Vector3s(x: -20, y: 0, z: -24)),
+                        makeSpawn(id: 40, name: "ACTOR_OBJ_SYOKUDAI", position: Vector3s(x: 40, y: 0, z: -24)),
+                        makeSpawn(id: 50, name: "ACTOR_OBJ_OSHIHIKI", position: Vector3s(x: 60, y: 0, z: -24)),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 10, name: "ACTOR_OBJ_SWITCH", category: .switchActor),
+                makeActorTableEntry(id: 20, name: "ACTOR_BG_YDAN_SP", category: .bg),
+                makeActorTableEntry(id: 30, name: "ACTOR_EN_HINTNUTS", category: .enemy),
+                makeActorTableEntry(id: 40, name: "ACTOR_OBJ_SYOKUDAI", category: .prop),
+                makeActorTableEntry(id: 50, name: "ACTOR_OBJ_OSHIHIKI", category: .prop),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+
+        XCTAssertEqual(
+            runtime.actors.map { String(describing: type(of: $0)) },
+            [
+                "DungeonSwitchActor",
+                "BurnableWebActor",
+                "DekuScrubActor",
+                "TorchActor",
+                "PushableBlockActor",
+            ]
+        )
+    }
+
+    @MainActor
+    func testContinueResolvesDungeonSceneNameFromSceneTable() async throws {
+        let dungeonScene = makeScene(
+            sceneID: 0x00,
+            sceneName: "ydan",
+            roomSpawns: [0: []],
+            spawns: [
+                SceneSpawnPoint(
+                    index: 0,
+                    roomID: 0,
+                    position: Vector3s(x: 0, y: 0, z: 0),
+                    rotation: Vector3s(x: 0, y: 0, z: 0)
+                ),
+            ]
+        )
+        let fixture = RuntimeFixture(scene: dungeonScene, actorTable: [])
+        let sceneLoader = ConfigurableSceneLoader(
+            sceneEntries: [
+                SceneTableEntry(index: 0x00, segmentName: "ydan_scene", enumName: "SCENE_DEKU_TREE"),
+            ],
+            scenesByID: [0x00: dungeonScene]
+        )
+        let runtime = makeRuntime(
+            saveContext: SaveContext(
+                slots: [
+                    SaveSlot(
+                        id: 0,
+                        playerName: "Link",
+                        locationName: "ydan",
+                        hearts: 3,
+                        hasSaveData: true
+                    ),
+                    .empty(id: 1),
+                    .empty(id: 2),
+                ]
+            ),
+            contentLoader: fixture.contentLoader,
+            sceneLoader: sceneLoader,
+            suspender: { _ in }
+        )
+
+        await runtime.start()
+        runtime.chooseTitleOption(.continueGame)
+        runtime.confirmSelectedSaveSlot()
+
+        XCTAssertEqual(runtime.currentState, .gameplay)
+        XCTAssertEqual(runtime.playState?.currentSceneID, 0x00)
+        XCTAssertEqual(runtime.loadedScene?.manifest.name, "ydan")
+    }
+
+    @MainActor
+    func testDungeonSwitchPersistsPressedStateAcrossReload() throws {
+        let switchActorID = 10
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(
+                            id: switchActorID,
+                            name: "ACTOR_OBJ_SWITCH",
+                            position: Vector3s(x: 0, y: 0, z: -36)
+                        ),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: switchActorID, name: "ACTOR_OBJ_SWITCH", category: .switchActor),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+        XCTAssertEqual(runtime.gameplayActionLabel, "Press")
+
+        runtime.handlePrimaryGameplayInput()
+
+        XCTAssertEqual(runtime.inventoryState.triggeredDungeonEventFlags.count, 1)
+        XCTAssertNil(runtime.gameplayActionLabel)
+
+        try runtime.loadScene(id: 0x55)
+
+        XCTAssertEqual(runtime.inventoryState.triggeredDungeonEventFlags.count, 1)
+        XCTAssertNil(runtime.gameplayActionLabel)
+    }
+
+    @MainActor
+    func testBurnableWebPersistsDestroyedStateAcrossReload() throws {
+        let webActorID = 10
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(
+                            id: webActorID,
+                            name: "ACTOR_BG_YDAN_SP",
+                            position: Vector3s(x: 0, y: 0, z: -36)
+                        ),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: webActorID, name: "ACTOR_BG_YDAN_SP", category: .bg),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+        runtime.inventoryState.dekuStickCount = 1
+        XCTAssertEqual(runtime.gameplayActionLabel, "Burn")
+
+        runtime.handlePrimaryGameplayInput()
+        runtime.updateFrame()
+
+        XCTAssertEqual(runtime.inventoryState.triggeredDungeonEventFlags.count, 1)
+        XCTAssertEqual(runtime.actors.count, 0)
+
+        try runtime.loadScene(id: 0x55)
+
+        XCTAssertEqual(runtime.inventoryState.triggeredDungeonEventFlags.count, 1)
+        XCTAssertEqual(runtime.actors.count, 0)
+        XCTAssertNil(runtime.gameplayActionLabel)
+    }
+
+    @MainActor
+    func testTorchPersistsLitStateAcrossReload() throws {
+        let torchActorID = 10
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(
+                            id: torchActorID,
+                            name: "ACTOR_OBJ_SYOKUDAI",
+                            position: Vector3s(x: 0, y: 0, z: -36)
+                        ),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: torchActorID, name: "ACTOR_OBJ_SYOKUDAI", category: .prop),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+        runtime.inventoryState.dekuStickCount = 1
+        XCTAssertEqual(runtime.gameplayActionLabel, "Light")
+
+        runtime.handlePrimaryGameplayInput()
+
+        XCTAssertEqual(runtime.inventoryState.triggeredDungeonEventFlags.count, 1)
+        XCTAssertNil(runtime.gameplayActionLabel)
+
+        try runtime.loadScene(id: 0x55)
+
+        XCTAssertEqual(runtime.inventoryState.triggeredDungeonEventFlags.count, 1)
+        XCTAssertNil(runtime.gameplayActionLabel)
+    }
+
+    @MainActor
+    func testPushableBlockPersistsMovedStateAcrossReload() throws {
+        let blockActorID = 10
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(
+                            id: blockActorID,
+                            name: "ACTOR_OBJ_OSHIHIKI",
+                            position: Vector3s(x: 0, y: 0, z: -36)
+                        ),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: blockActorID, name: "ACTOR_OBJ_OSHIHIKI", category: .prop),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+        let initialPosition = try XCTUnwrap((runtime.actors.first as? PushableBlockActor)?.position)
+        XCTAssertEqual(runtime.gameplayActionLabel, "Push")
+
+        runtime.handlePrimaryGameplayInput()
+
+        let movedPosition = try XCTUnwrap((runtime.actors.first as? PushableBlockActor)?.position)
+        XCTAssertNotEqual(movedPosition, initialPosition)
+        XCTAssertEqual(runtime.inventoryState.triggeredDungeonEventFlags.count, 1)
+        XCTAssertNil(runtime.gameplayActionLabel)
+
+        try runtime.loadScene(id: 0x55)
+
+        let reloadedPosition = try XCTUnwrap((runtime.actors.first as? PushableBlockActor)?.position)
+        XCTAssertNotEqual(reloadedPosition, initialPosition)
+        XCTAssertEqual(runtime.inventoryState.triggeredDungeonEventFlags.count, 1)
+        XCTAssertNil(runtime.gameplayActionLabel)
+    }
+
+    @MainActor
+    func testAutomaticDoorTriggerTransitionsWhenPlayerIsNearDoorPoint() throws {
+        let scene = makeScene(
+            roomSpawns: [
+                0: [],
+                1: [],
+            ],
+            entrances: [SceneEntranceDefinition(index: 0, spawnIndex: 0)],
+            spawns: [
+                SceneSpawnPoint(
+                    index: 0,
+                    roomID: 0,
+                    position: Vector3s(x: 0, y: 0, z: 0),
+                    rotation: Vector3s(x: 0, y: 0, z: 0)
+                ),
+            ],
+            transitionTriggers: [
+                SceneTransitionTrigger(
+                    id: 77,
+                    kind: .door,
+                    roomID: 0,
+                    destinationRoomID: 1,
+                    effect: .fade,
+                    volume: SceneTriggerVolume(
+                        minimum: Vector3s(x: 0, y: 0, z: 0),
+                        maximum: Vector3s(x: 0, y: 0, z: 0)
+                    )
+                ),
+            ]
+        )
+        let fixture = RuntimeFixture(scene: scene, actorTable: [])
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+        runtime.playerState = PlayerState(
+            position: Vec3f(x: 0, y: 0, z: 0),
+            facingRadians: 0,
+            isGrounded: true,
+            floorHeight: 0
+        )
+
+        runtime.updateFrame()
+
+        XCTAssertEqual(runtime.playState?.currentRoomID, 1)
+        XCTAssertEqual(runtime.playState?.activeRoomIDs, [0, 1])
+    }
+
+    @MainActor
+    func testDekuScrubProjectileCanBeBlockedAndDefeatPersistsAcrossReload() throws {
+        let scrubActorID = 10
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(
+                            id: scrubActorID,
+                            name: "ACTOR_EN_HINTNUTS",
+                            position: Vector3s(x: 0, y: 0, z: -40),
+                            rotation: Vector3s(x: 0, y: Int16.min, z: 0)
+                        ),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: scrubActorID, name: "ACTOR_EN_HINTNUTS", category: .enemy),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+        let scrub = try XCTUnwrap(runtime.actors.first as? DekuScrubActor)
+        let playState = try XCTUnwrap(runtime.playState)
+
+        scrub.combatDidBlockHit(
+            CombatHit(
+                source: .player,
+                element: .projectile,
+                direction: Vec3f(x: 0, y: 0, z: 1),
+                effect: DamageEffect(damage: 0, knockbackDistance: 0),
+                wasBlocked: true
+            ),
+            playState: playState
+        )
+        runtime.updateFrame()
+
+        XCTAssertEqual(runtime.inventoryState.triggeredDungeonEventFlags.count, 1)
+        XCTAssertEqual(runtime.actors.count, 0)
+
+        try runtime.loadScene(id: 0x55)
+
+        XCTAssertEqual(runtime.inventoryState.triggeredDungeonEventFlags.count, 1)
+        XCTAssertEqual(runtime.actors.count, 0)
+    }
+
+    @MainActor
     func testUpdateCycleRespectsCategoryOrderAndDestroysActorsOnce() throws {
         let recorder = EventRecorder()
         var registry = ActorRegistry()
@@ -2067,6 +2474,73 @@ private struct MockSceneLoader: SceneLoading {
 
     func loadObject(named name: String) throws -> LoadedObject {
         throw ContentLoaderError.sceneLoadingUnavailable
+    }
+
+    func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh? {
+        nil
+    }
+
+    func loadRoomDisplayList(for room: RoomManifest) throws -> [F3DEX2Command] {
+        []
+    }
+
+    func loadRoomVertexData(for room: RoomManifest) throws -> Data {
+        Data()
+    }
+}
+
+private struct ConfigurableSceneLoader: SceneLoading {
+    let sceneEntries: [SceneTableEntry]
+    let scenesByID: [Int: LoadedScene]
+
+    func loadSceneTableEntries() throws -> [SceneTableEntry] {
+        sceneEntries
+    }
+
+    func resolveSceneDirectory(for sceneID: Int) throws -> URL {
+        URL(fileURLWithPath: "/tmp/config-scene-\(sceneID)", isDirectory: true)
+    }
+
+    func loadScene(id: Int) throws -> LoadedScene {
+        guard let scene = scenesByID[id] else {
+            throw ContentLoaderError.sceneLoadingUnavailable
+        }
+        return scene
+    }
+
+    func loadScene(named name: String) throws -> LoadedScene {
+        guard let scene = scenesByID.values.first(where: { $0.manifest.name == name }) else {
+            throw ContentLoaderError.sceneLoadingUnavailable
+        }
+        return scene
+    }
+
+    func loadTextureAssetURLs(for scene: LoadedScene) throws -> [UInt32: URL] {
+        [:]
+    }
+
+    func loadSceneManifest(id: Int) throws -> SceneManifest {
+        try loadScene(id: id).manifest
+    }
+
+    func loadSceneManifest(named name: String) throws -> SceneManifest {
+        try loadScene(named: name).manifest
+    }
+
+    func loadActorTable() throws -> [ActorTableEntry] {
+        []
+    }
+
+    func loadObjectTable() throws -> [ObjectTableEntry] {
+        []
+    }
+
+    func loadObject(named name: String) throws -> LoadedObject {
+        throw ContentLoaderError.sceneLoadingUnavailable
+    }
+
+    func loadEntranceTable() throws -> [EntranceTableEntry] {
+        []
     }
 
     func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh? {
