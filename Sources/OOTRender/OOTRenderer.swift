@@ -64,6 +64,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     private let fallbackTexture: MTLTexture
     private let opaqueDepthStencilState: MTLDepthStencilState
     private let translucentDepthStencilState: MTLDepthStencilState
+    private let skyboxDepthStencilState: MTLDepthStencilState
     private let sceneVertices: [N64Vertex]
     private let inFlightSemaphore = DispatchSemaphore(value: OOTRenderer.inFlightFrameCount)
     private var environmentRenderer: EnvironmentRenderer
@@ -127,6 +128,12 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
             depthWriteEnabled: false,
             label: "OOTDepthTranslucent"
         )
+        let skyboxDepthStencilState = try Self.makeDepthStencilState(
+            device: device,
+            compareFunction: .always,
+            depthWriteEnabled: false,
+            label: "OOTDepthSkybox"
+        )
         let frameUniformBuffers = try Self.makeFrameUniformBuffers(device: device)
         let sceneBounds = renderScene.sceneBounds
 
@@ -144,6 +151,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         self.fallbackTexture = fallbackTexture
         self.opaqueDepthStencilState = opaqueDepthStencilState
         self.translucentDepthStencilState = translucentDepthStencilState
+        self.skyboxDepthStencilState = skyboxDepthStencilState
         self.frameUniformBuffers = frameUniformBuffers
         self.renderPipelineCache = [:]
         self.frameStatsHandler = frameStatsHandler
@@ -278,7 +286,8 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         MainActor.assumeIsolated {
             frameTickHandler()
         }
-        let frameUniforms = activeFrameUniforms()
+        let cameraMatrices = activeCameraMatrices()
+        let frameUniforms = FrameUniforms(mvp: cameraMatrices.viewProjectionMatrix)
             .withEnvironment(environmentRenderer.currentState(timeOfDay: timeOfDay))
         advanceFrameUniformBuffer(with: frameUniforms)
         renderPassDescriptor.colorAttachments[0].clearColor = clearColorForCurrentEnvironment()
@@ -289,7 +298,8 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
                 with: commandBuffer,
                 renderPassDescriptor: renderPassDescriptor,
                 viewportSize: view.drawableSize,
-                frameUniforms: frameUniforms
+                frameUniforms: frameUniforms,
+                skyboxViewProjection: makeSkyboxViewProjection(from: cameraMatrices)
             )
             commandBuffer.present(drawable)
             commandBuffer.commit()
@@ -372,7 +382,8 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
 
     func renderCurrentSceneToTexture(
         _ texture: MTLTexture,
-        frameUniforms: FrameUniforms = FrameUniforms.identity
+        frameUniforms: FrameUniforms = FrameUniforms.identity,
+        skyboxViewProjection: simd_float4x4? = nil
     ) throws {
         inFlightSemaphore.wait()
         defer { inFlightSemaphore.signal() }
@@ -401,7 +412,8 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
             with: commandBuffer,
             renderPassDescriptor: renderPassDescriptor,
             viewportSize: CGSize(width: texture.width, height: texture.height),
-            frameUniforms: frameUniforms
+            frameUniforms: frameUniforms,
+            skyboxViewProjection: skyboxViewProjection
         )
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
@@ -520,12 +532,19 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     }
 }
 
+extension OOTRenderer {
+    func skyboxViewProjection(from cameraMatrices: CameraMatrices) -> simd_float4x4 {
+        makeSkyboxViewProjection(from: cameraMatrices)
+    }
+}
+
 private extension OOTRenderer {
     func encodeSceneFrame(
         with commandBuffer: MTLCommandBuffer,
         renderPassDescriptor: MTLRenderPassDescriptor,
         viewportSize: CGSize,
-        frameUniforms: FrameUniforms
+        frameUniforms: FrameUniforms,
+        skyboxViewProjection: simd_float4x4? = nil
     ) throws {
         guard let renderCommandEncoder = commandBuffer.makeRenderCommandEncoder(
             descriptor: renderPassDescriptor
@@ -556,6 +575,11 @@ private extension OOTRenderer {
             currentFrameUniformBuffer,
             offset: 0,
             index: OOTRenderBufferIndex.frameUniforms.rawValue
+        )
+        encodeSkyboxIfNeeded(
+            with: renderCommandEncoder,
+            frameUniforms: frameUniforms,
+            skyboxViewProjection: skyboxViewProjection
         )
         let drawBatchResources = makeDrawBatchResources()
         let environmentState = environmentRenderer.currentState(timeOfDay: timeOfDay)
@@ -661,6 +685,80 @@ private extension OOTRenderer {
             vertexCount: vertices.count
         )
         renderCommandEncoder.endEncoding()
+    }
+
+    func encodeSkyboxIfNeeded(
+        with renderCommandEncoder: MTLRenderCommandEncoder,
+        frameUniforms: FrameUniforms,
+        skyboxViewProjection: simd_float4x4?
+    ) {
+        let selector = SceneSkyboxSelector(skybox: renderScene.environment?.resolvedSkybox)
+        guard let selection = selector.selection(timeOfDay: timeOfDay) else {
+            return
+        }
+
+        var skyboxFrameUniforms = FrameUniforms(
+            mvp: skyboxViewProjection ?? frameUniforms.mvp
+        )
+        var combinerUniforms = Self.skyboxCombinerUniforms
+
+        renderCommandEncoder.setRenderPipelineState(renderPipelineState)
+        renderCommandEncoder.setDepthStencilState(skyboxDepthStencilState)
+        renderCommandEncoder.setVertexBytes(
+            &skyboxFrameUniforms,
+            length: MemoryLayout<FrameUniforms>.stride,
+            index: OOTRenderBufferIndex.frameUniforms.rawValue
+        )
+        renderCommandEncoder.setFragmentBytes(
+            &skyboxFrameUniforms,
+            length: MemoryLayout<FrameUniforms>.stride,
+            index: OOTRenderBufferIndex.frameUniforms.rawValue
+        )
+        renderCommandEncoder.setVertexBytes(
+            &combinerUniforms,
+            length: MemoryLayout<CombinerUniforms>.stride,
+            index: OOTRenderBufferIndex.combinerUniforms.rawValue
+        )
+        renderCommandEncoder.setFragmentBytes(
+            &combinerUniforms,
+            length: MemoryLayout<CombinerUniforms>.stride,
+            index: OOTRenderBufferIndex.combinerUniforms.rawValue
+        )
+        renderCommandEncoder.setFragmentTexture(
+            fallbackTexture,
+            index: OOTRenderTextureIndex.texel1.rawValue
+        )
+
+        for face in Self.skyboxFaceDrawOrder {
+            guard
+                let assetID = selection.assetIDsByFace[face],
+                let texture = textureBindings[assetID]
+            else {
+                continue
+            }
+
+            let vertices = Self.skyboxVertices(for: face)
+            vertices.withUnsafeBytes { bytes in
+                guard let baseAddress = bytes.baseAddress else {
+                    return
+                }
+
+                renderCommandEncoder.setVertexBytes(
+                    baseAddress,
+                    length: bytes.count,
+                    index: OOTRenderBufferIndex.vertices.rawValue
+                )
+            }
+            renderCommandEncoder.setFragmentTexture(
+                texture,
+                index: OOTRenderTextureIndex.texel0.rawValue
+            )
+            renderCommandEncoder.drawPrimitives(
+                type: .triangle,
+                vertexStart: 0,
+                vertexCount: vertices.count
+            )
+        }
     }
 
     func advanceFrameUniformBuffer(with frameUniforms: FrameUniforms) {
@@ -797,12 +895,127 @@ private extension OOTRenderer {
         mvp: simd_float4x4(diagonal: SIMD4<Float>(0.5, 0.5, 1.0, 1.0))
     )
 
-    func activeFrameUniforms() -> FrameUniforms {
+    static let skyboxCombinerUniforms = CombinerUniforms(
+        cycle1ColorSelectors: SIMD4<UInt32>(
+            CombinerSourceSelector.texel0.rawValue,
+            CombinerSourceSelector.zero.rawValue,
+            CombinerSourceSelector.one.rawValue,
+            CombinerSourceSelector.zero.rawValue
+        ),
+        cycle1AlphaSelectors: SIMD4<UInt32>(
+            CombinerSourceSelector.texel0.rawValue,
+            CombinerSourceSelector.zero.rawValue,
+            CombinerSourceSelector.one.rawValue,
+            CombinerSourceSelector.zero.rawValue
+        ),
+        cycle2ColorSelectors: SIMD4<UInt32>(
+            CombinerSourceSelector.combined.rawValue,
+            CombinerSourceSelector.zero.rawValue,
+            CombinerSourceSelector.one.rawValue,
+            CombinerSourceSelector.zero.rawValue
+        ),
+        cycle2AlphaSelectors: SIMD4<UInt32>(
+            CombinerSourceSelector.combined.rawValue,
+            CombinerSourceSelector.zero.rawValue,
+            CombinerSourceSelector.one.rawValue,
+            CombinerSourceSelector.zero.rawValue
+        )
+    )
+
+    static let skyboxFaceDrawOrder: [SceneSkyboxFace] = [.front, .right, .back, .left, .top]
+
+    func activeCameraMatrices() -> CameraMatrices {
         if let gameplayCameraController, isDebugCameraEnabled == false {
-            return gameplayCameraController.frameUniforms()
+            return gameplayCameraController.cameraMatrices()
         }
 
-        return orbitCameraController.frameUniforms()
+        return orbitCameraController.cameraMatrices()
+    }
+
+    func activeFrameUniforms() -> FrameUniforms {
+        FrameUniforms(mvp: activeCameraMatrices().viewProjectionMatrix)
+    }
+
+    func makeSkyboxViewProjection(from cameraMatrices: CameraMatrices) -> simd_float4x4 {
+        var rotationOnlyView = cameraMatrices.viewMatrix
+        rotationOnlyView.columns.3 = SIMD4<Float>(0.0, 0.0, 0.0, 1.0)
+        return cameraMatrices.projectionMatrix * rotationOnlyView
+    }
+
+    static func skyboxVertices(for face: SceneSkyboxFace) -> [N64Vertex] {
+        let size: Int16 = 64
+        switch face {
+        case .front:
+            return makeSkyboxQuad(
+                bottomLeft: (-size, -size, -size),
+                bottomRight: (size, -size, -size),
+                topRight: (size, size, -size),
+                topLeft: (-size, size, -size)
+            )
+        case .right:
+            return makeSkyboxQuad(
+                bottomLeft: (size, -size, -size),
+                bottomRight: (size, -size, size),
+                topRight: (size, size, size),
+                topLeft: (size, size, -size)
+            )
+        case .back:
+            return makeSkyboxQuad(
+                bottomLeft: (size, -size, size),
+                bottomRight: (-size, -size, size),
+                topRight: (-size, size, size),
+                topLeft: (size, size, size)
+            )
+        case .left:
+            return makeSkyboxQuad(
+                bottomLeft: (-size, -size, size),
+                bottomRight: (-size, -size, -size),
+                topRight: (-size, size, -size),
+                topLeft: (-size, size, size)
+            )
+        case .top:
+            return makeSkyboxQuad(
+                bottomLeft: (-size, size, size),
+                bottomRight: (size, size, size),
+                topRight: (size, size, -size),
+                topLeft: (-size, size, -size)
+            )
+        case .bottom:
+            return makeSkyboxQuad(
+                bottomLeft: (-size, -size, -size),
+                bottomRight: (size, -size, -size),
+                topRight: (size, -size, size),
+                topLeft: (-size, -size, size)
+            )
+        }
+    }
+
+    static func makeSkyboxQuad(
+        bottomLeft: (Int16, Int16, Int16),
+        bottomRight: (Int16, Int16, Int16),
+        topRight: (Int16, Int16, Int16),
+        topLeft: (Int16, Int16, Int16)
+    ) -> [N64Vertex] {
+        [
+            skyboxVertex(position: bottomLeft, texCoord: (0, 1)),
+            skyboxVertex(position: bottomRight, texCoord: (1, 1)),
+            skyboxVertex(position: topRight, texCoord: (1, 0)),
+            skyboxVertex(position: bottomLeft, texCoord: (0, 1)),
+            skyboxVertex(position: topRight, texCoord: (1, 0)),
+            skyboxVertex(position: topLeft, texCoord: (0, 0)),
+        ]
+    }
+
+    static func skyboxVertex(
+        position: (Int16, Int16, Int16),
+        texCoord: (Int16, Int16)
+    ) -> N64Vertex {
+        N64Vertex(
+            position: Vector3s(x: position.0, y: position.1, z: position.2),
+            flag: 0,
+            textureCoordinate: Vector2s(x: texCoord.0, y: texCoord.1),
+            colorOrNormal: RGBA8(red: 255, green: 255, blue: 255, alpha: 255)
+        )
     }
 }
 

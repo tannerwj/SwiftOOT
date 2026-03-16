@@ -3,6 +3,7 @@ import Metal
 import OOTContent
 import OOTCore
 import OOTDataModel
+import simd
 @testable import OOTRender
 @testable import OOTUI
 
@@ -262,6 +263,111 @@ final class OOTUITests: XCTestCase {
             expectedSceneName: sceneName(for: alternateScene)
         )
     }
+
+    func testRealExtractedSpot02RendersTexturedSkyboxWhenConfigured() throws {
+        guard let contentRootPath = ProcessInfo.processInfo.environment["SWIFTOOT_REAL_CONTENT_ROOT"] else {
+            throw XCTSkip("Set SWIFTOOT_REAL_CONTENT_ROOT to run the real-content skybox validation.")
+        }
+        guard MTLCreateSystemDefaultDevice() != nil else {
+            throw XCTSkip("Metal is unavailable on this host")
+        }
+
+        let contentRoot = URL(fileURLWithPath: contentRootPath, isDirectory: true)
+        let sceneLoader = SceneLoader(contentRoot: contentRoot)
+        let contentLoader = ContentLoader(contentRoot: contentRoot)
+        let scene = try sceneLoader.loadScene(named: "spot02")
+        let textureAssetURLs = try sceneLoader.loadTextureAssetURLs(for: scene)
+
+        XCTAssertEqual(scene.environment?.skybox.skyboxID, 1)
+        XCTAssertEqual(scene.environment?.skybox.skyboxConfig, 1)
+        XCTAssertEqual(scene.environment?.skybox.environmentLightingMode, "LIGHT_MODE_TIME")
+        XCTAssertEqual(
+            scene.environment?.resolvedSkybox?.states.first(where: { $0.id == "day-overcast" })?.faces.first?.assetName,
+            "gDayOvercastSkybox1Tex"
+        )
+        XCTAssertNotNil(textureAssetURLs[OOTAssetID.stableID(for: "gDayOvercastSkybox1Tex")])
+
+        let payload = try SceneRenderPayloadBuilder.makePayload(
+            scene: scene,
+            textureAssetURLs: textureAssetURLs,
+            contentLoader: contentLoader
+        )
+
+        var renderScene = SceneRenderPayloadBuilder.renderScene(from: payload, playerState: nil)
+        let renderer = try OOTRenderer(
+            scene: renderScene,
+            textureBindings: payload.textureBindings,
+            gameplayCameraConfiguration: payload.gameplayCameraConfiguration
+        )
+        let renderTarget = try makeRenderTargetTexture(device: renderer.device)
+        let viewportSize = CGSize(width: renderTarget.width, height: renderTarget.height)
+        let frameUniforms: FrameUniforms
+        let skyboxViewProjection: simd_float4x4
+        if let gameplayCameraController = renderer.gameplayCameraController {
+            gameplayCameraController.updateViewportSize(viewportSize)
+            frameUniforms = gameplayCameraController.frameUniforms()
+            skyboxViewProjection = renderer.skyboxViewProjection(
+                from: gameplayCameraController.cameraMatrices()
+            )
+        } else {
+            renderer.orbitCameraController.updateViewportSize(viewportSize)
+            frameUniforms = renderer.orbitCameraController.frameUniforms()
+            skyboxViewProjection = renderer.skyboxViewProjection(
+                from: renderer.orbitCameraController.cameraMatrices()
+            )
+        }
+        renderer.setTimeOfDay(12.0)
+
+        try renderer.renderCurrentSceneToTexture(
+            renderTarget,
+            frameUniforms: frameUniforms,
+            skyboxViewProjection: skyboxViewProjection
+        )
+
+        renderScene.environment?.resolvedSkybox = nil
+        let noSkyboxRenderer = try OOTRenderer(
+            scene: renderScene,
+            textureBindings: payload.textureBindings,
+            gameplayCameraConfiguration: payload.gameplayCameraConfiguration
+        )
+        let noSkyboxRenderTarget = try makeRenderTargetTexture(device: noSkyboxRenderer.device)
+        let noSkyboxViewportSize = CGSize(width: noSkyboxRenderTarget.width, height: noSkyboxRenderTarget.height)
+        let noSkyboxFrameUniforms: FrameUniforms
+        let noSkyboxViewProjection: simd_float4x4
+        if let gameplayCameraController = noSkyboxRenderer.gameplayCameraController {
+            gameplayCameraController.updateViewportSize(noSkyboxViewportSize)
+            noSkyboxFrameUniforms = gameplayCameraController.frameUniforms()
+            noSkyboxViewProjection = noSkyboxRenderer.skyboxViewProjection(
+                from: gameplayCameraController.cameraMatrices()
+            )
+        } else {
+            noSkyboxRenderer.orbitCameraController.updateViewportSize(noSkyboxViewportSize)
+            noSkyboxFrameUniforms = noSkyboxRenderer.orbitCameraController.frameUniforms()
+            noSkyboxViewProjection = noSkyboxRenderer.skyboxViewProjection(
+                from: noSkyboxRenderer.orbitCameraController.cameraMatrices()
+            )
+        }
+        noSkyboxRenderer.setTimeOfDay(12.0)
+
+        try noSkyboxRenderer.renderCurrentSceneToTexture(
+            noSkyboxRenderTarget,
+            frameUniforms: noSkyboxFrameUniforms,
+            skyboxViewProjection: noSkyboxViewProjection
+        )
+
+        let differingUpperBandSamples = countDifferingPixels(
+            lhs: renderTarget,
+            rhs: noSkyboxRenderTarget,
+            widthStride: 16,
+            heightStride: 8,
+            maxY: renderTarget.height / 3
+        )
+
+        XCTAssertTrue(
+            differingUpperBandSamples > 0,
+            "Expected the real spot02 render to change upper-frame pixels when resolved skybox textures are enabled."
+        )
+    }
 }
 
 private extension OOTUITests {
@@ -407,6 +513,44 @@ private extension OOTUITests {
         }
 
         return false
+    }
+
+    func pixel(in texture: MTLTexture, x: Int, y: Int) -> [UInt8] {
+        var bytes = [UInt8](repeating: 0, count: 4)
+        texture.getBytes(
+            &bytes,
+            bytesPerRow: 4,
+            from: MTLRegionMake2D(x, y, 1, 1),
+            mipmapLevel: 0
+        )
+        return bytes
+    }
+
+    func bgraBytes(_ color: MTLClearColor) -> [UInt8] {
+        [
+            UInt8((color.blue * 255.0).rounded()),
+            UInt8((color.green * 255.0).rounded()),
+            UInt8((color.red * 255.0).rounded()),
+            UInt8((color.alpha * 255.0).rounded()),
+        ]
+    }
+
+    func countDifferingPixels(
+        lhs: MTLTexture,
+        rhs: MTLTexture,
+        widthStride: Int,
+        heightStride: Int,
+        maxY: Int
+    ) -> Int {
+        var count = 0
+        for y in stride(from: 0, to: maxY, by: heightStride) {
+            for x in stride(from: 0, to: lhs.width, by: widthStride) {
+                if pixel(in: lhs, x: x, y: y) != pixel(in: rhs, x: x, y: y) {
+                    count += 1
+                }
+            }
+        }
+        return count
     }
 
     func makeKeyEvent(type: NSEvent.EventType, character: String, keyCode: UInt16) throws -> NSEvent {

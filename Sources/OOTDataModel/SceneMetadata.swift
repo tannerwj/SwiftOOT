@@ -130,6 +130,69 @@ public struct SceneSkyboxSettings: Codable, Sendable, Equatable {
     }
 }
 
+public enum SceneSkyboxFace: String, Codable, Sendable, Equatable {
+    case front
+    case right
+    case back
+    case left
+    case top
+    case bottom
+}
+
+public struct SceneSkyboxFaceAsset: Codable, Sendable, Equatable {
+    public var face: SceneSkyboxFace
+    public var assetName: String
+
+    public init(face: SceneSkyboxFace, assetName: String) {
+        self.face = face
+        self.assetName = assetName
+    }
+}
+
+public struct SceneSkyboxAssetState: Codable, Sendable, Equatable {
+    public var id: String
+    public var sourceName: String
+    public var faces: [SceneSkyboxFaceAsset]
+
+    public init(
+        id: String,
+        sourceName: String,
+        faces: [SceneSkyboxFaceAsset]
+    ) {
+        self.id = id
+        self.sourceName = sourceName
+        self.faces = faces
+    }
+}
+
+public struct SceneSkyboxScheduleEntry: Codable, Sendable, Equatable {
+    public var startMinute: Int
+    public var endMinute: Int
+    public var stateID: String
+
+    public init(startMinute: Int, endMinute: Int, stateID: String) {
+        self.startMinute = startMinute
+        self.endMinute = endMinute
+        self.stateID = stateID
+    }
+}
+
+public struct SceneResolvedSkybox: Codable, Sendable, Equatable {
+    public var textureDirectories: [String]
+    public var states: [SceneSkyboxAssetState]
+    public var schedule: [SceneSkyboxScheduleEntry]
+
+    public init(
+        textureDirectories: [String],
+        states: [SceneSkyboxAssetState],
+        schedule: [SceneSkyboxScheduleEntry] = []
+    ) {
+        self.textureDirectories = textureDirectories
+        self.states = states
+        self.schedule = schedule
+    }
+}
+
 public struct SceneLightSetting: Codable, Sendable, Equatable {
     public var ambientColor: RGB8
     public var light1Direction: Vector3b
@@ -169,17 +232,20 @@ public struct SceneEnvironmentFile: Codable, Sendable, Equatable {
     public var time: SceneTimeSettings
     public var skybox: SceneSkyboxSettings
     public var lightSettings: [SceneLightSetting]
+    public var resolvedSkybox: SceneResolvedSkybox?
 
     public init(
         sceneName: String,
         time: SceneTimeSettings,
         skybox: SceneSkyboxSettings,
-        lightSettings: [SceneLightSetting]
+        lightSettings: [SceneLightSetting],
+        resolvedSkybox: SceneResolvedSkybox? = nil
     ) {
         self.sceneName = sceneName
         self.time = time
         self.skybox = skybox
         self.lightSettings = lightSettings
+        self.resolvedSkybox = resolvedSkybox
     }
 }
 

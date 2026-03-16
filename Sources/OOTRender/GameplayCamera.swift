@@ -118,7 +118,7 @@ public final class GameplayCameraController {
         isParallelSnapActive = true
     }
 
-    public func frameUniforms() -> FrameUniforms {
+    func cameraMatrices() -> CameraMatrices {
         let snapshot = advance()
         let aspectRatio = if viewportSize.width > 0, viewportSize.height > 0 {
             Float(viewportSize.width / viewportSize.height)
@@ -134,14 +134,19 @@ public final class GameplayCameraController {
         let nearPlane = max(10.0, min(simd_distance(snapshot.eyePosition, snapshot.focusTarget) * 0.1, 40.0))
         let farPlane = max(sceneBounds.radius * 8.0, 2_000.0)
 
-        return FrameUniforms(
-            mvp: gameplayMakePerspectiveMatrix(
+        return CameraMatrices(
+            viewMatrix: viewMatrix,
+            projectionMatrix: gameplayMakePerspectiveMatrix(
                 verticalFieldOfView: snapshot.fieldOfView,
                 aspectRatio: aspectRatio,
                 nearPlane: nearPlane,
                 farPlane: farPlane
-            ) * viewMatrix
+            )
         )
+    }
+
+    public func frameUniforms() -> FrameUniforms {
+        FrameUniforms(mvp: cameraMatrices().viewProjectionMatrix)
     }
 
     @discardableResult

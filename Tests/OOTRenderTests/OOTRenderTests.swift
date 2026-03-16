@@ -343,6 +343,71 @@ final class OOTRenderTests: XCTestCase {
         assertPixel(in: texture, x: 4, y: 4, equals: [102, 102, 102, 255], accuracy: 4)
     }
 
+    func testRendererDrawsResolvedSkyboxTexturesBehindSceneGeometry() throws {
+        guard MTLCreateSystemDefaultDevice() != nil else {
+            throw XCTSkip("Metal is unavailable on this host")
+        }
+
+        let environment = SceneEnvironmentFile(
+            sceneName: "spot02",
+            time: SceneTimeSettings(hour: 255, minute: 255, timeSpeed: 0),
+            skybox: SceneSkyboxSettings(
+                skyboxID: 1,
+                skyboxConfig: 1,
+                environmentLightingMode: "LIGHT_MODE_TIME",
+                skyboxDisabled: false,
+                sunMoonDisabled: false
+            ),
+            lightSettings: [makeLightSetting(ambient: 0, light: 0, fog: 0)],
+            resolvedSkybox: SceneResolvedSkybox(
+                textureDirectories: ["Textures/vr_cloud1_static"],
+                states: [
+                    SceneSkyboxAssetState(
+                        id: "day-overcast",
+                        sourceName: "vr_cloud1_static",
+                        faces: [
+                            SceneSkyboxFaceAsset(face: .front, assetName: "gDayOvercastSkybox1Tex"),
+                        ]
+                    )
+                ]
+            )
+        )
+        let scene = OOTRenderScene(rooms: [], environment: environment)
+        let renderer = try OOTRenderer(scene: scene)
+        let skyboxTexture = try makeSolidColorTexture(
+            renderer: renderer,
+            color: [32, 160, 224, 255]
+        )
+        let texture = try makeRenderTargetTexture(renderer: renderer)
+        let camera = OrbitCamera(
+            sceneBounds: SceneBounds(
+                minimum: SIMD3<Float>(-1, -1, -1),
+                maximum: SIMD3<Float>(1, 1, 1)
+            ),
+            azimuth: 0,
+            elevation: 0
+        )
+
+        renderer.updateScene(
+            scene,
+            textureBindings: [
+                OOTAssetID.stableID(for: "gDayOvercastSkybox1Tex"): skyboxTexture
+            ]
+        )
+        try renderer.renderCurrentSceneToTexture(
+            texture,
+            frameUniforms: camera.frameUniforms(aspectRatio: 1.0),
+            skyboxViewProjection: renderer.skyboxViewProjection(
+                from: CameraMatrices(
+                    viewMatrix: camera.viewMatrix,
+                    projectionMatrix: camera.projectionMatrix(aspectRatio: 1.0)
+                )
+            )
+        )
+
+        assertPixel(in: texture, x: 32, y: 32, equals: [224, 160, 32, 255], accuracy: 2)
+    }
+
     func testRendererReportsSceneFrameStats() throws {
         guard MTLCreateSystemDefaultDevice() != nil else {
             throw XCTSkip("Metal is unavailable on this host")
