@@ -4,6 +4,7 @@
 xcuserdata/
 Derived/
 DerivedData/
+.derived*/
 build/
 *.pbxuser
 *.mode1v3

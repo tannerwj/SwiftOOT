@@ -1,12 +1,17 @@
 import SwiftUI
-import OOTCore
 import OOTUI
 
 struct OOTMacRootView: View {
     @State
-    private var runtime = GameRuntime()
+    private var bootstrapModel = OOTContentBootstrapModel()
 
     var body: some View {
-        OOTAppView(runtime: runtime)
+        Group {
+            if let runtime = bootstrapModel.runtime {
+                OOTAppView(runtime: runtime)
+            } else {
+                OOTContentBootstrapView(model: bootstrapModel)
+            }
+        }
     }
 }
