@@ -155,12 +155,15 @@ extension SceneExtractor {
                 ),
                 to: metadataDirectory.appendingPathComponent("spawns.json")
             )
+            var environment = try Self.parseEnvironment(
+                sceneName: scene.name,
+                source: sceneSource,
+                commands: sceneCommands,
+                integerConstantByName: metadataReferences.integerConstantByName
+            )
+            environment.resolvedSkybox = Self.resolveSkyboxAssets(for: environment.skybox)
             try Self.writeJSON(
-                try Self.parseEnvironment(
-                    sceneName: scene.name,
-                    source: sceneSource,
-                    commands: sceneCommands
-                ),
+                environment,
                 to: metadataDirectory.appendingPathComponent("environment.json")
             )
             try Self.writeJSON(
@@ -199,6 +202,12 @@ extension SceneExtractor {
         if skippedScenes > 0 {
             print("[\(name)] skipped \(skippedScenes) scene(s) with missing source data")
         }
+    }
+
+    static func resolvedSkyboxAssets(
+        for settings: SceneSkyboxSettings
+    ) -> SceneResolvedSkybox? {
+        resolveSkyboxAssets(for: settings)
     }
 
     public func verify(using context: OOTVerificationContext) throws {
@@ -1073,6 +1082,12 @@ private extension SceneExtractor {
         let sequenceHeaderURL = sourceRoot
             .appendingPathComponent("include", isDirectory: true)
             .appendingPathComponent("sequence.h")
+        let environmentHeaderURL = sourceRoot
+            .appendingPathComponent("include", isDirectory: true)
+            .appendingPathComponent("environment.h")
+        let skyboxHeaderURL = sourceRoot
+            .appendingPathComponent("include", isDirectory: true)
+            .appendingPathComponent("skybox.h")
         let cameraHeaderURL = sourceRoot
             .appendingPathComponent("include", isDirectory: true)
             .appendingPathComponent("camera.h")
@@ -1086,6 +1101,12 @@ private extension SceneExtractor {
         }
         if let bgmConstants = try? loadEnumConstants(from: sequenceHeaderURL, typeName: "NA_BGM") {
             constants.merge(bgmConstants) { _, new in new }
+        }
+        if let lightModeConstants = try? loadEnumConstants(from: environmentHeaderURL, typeName: "LightMode") {
+            constants.merge(lightModeConstants) { _, new in new }
+        }
+        if let skyboxConstants = try? loadEnumConstants(from: skyboxHeaderURL, typeName: "SkyboxId") {
+            constants.merge(skyboxConstants) { _, new in new }
         }
         if let cameraSettings = try? loadEnumConstants(from: cameraHeaderURL, typeName: "CameraSettingType") {
             constants.merge(cameraSettings) { _, new in new }
@@ -1450,7 +1471,8 @@ private extension SceneExtractor {
     static func parseEnvironment(
         sceneName: String,
         source: String,
-        commands: [ParsedCommand]
+        commands: [ParsedCommand],
+        integerConstantByName: [String: Int64]
     ) throws -> SceneEnvironmentFile {
         guard let lightInvocation = commands.first(where: { $0.name == "SCENE_CMD_ENV_LIGHT_SETTINGS" }) else {
             throw SceneExtractorError.missingCommand("SCENE_CMD_ENV_LIGHT_SETTINGS")
@@ -1479,7 +1501,8 @@ private extension SceneExtractor {
             time: time,
             skybox: try parseSkyboxSettings(
                 skyboxInvocation: skyboxInvocation,
-                skyboxDisableInvocation: skyboxDisableInvocation
+                skyboxDisableInvocation: skyboxDisableInvocation,
+                integerConstantByName: integerConstantByName
             ),
             lightSettings: lightSettings
         )
@@ -2156,7 +2179,8 @@ private extension SceneExtractor {
 
     static func parseSkyboxSettings(
         skyboxInvocation: ParsedCommand?,
-        skyboxDisableInvocation: ParsedCommand?
+        skyboxDisableInvocation: ParsedCommand?,
+        integerConstantByName: [String: Int64]
     ) throws -> SceneSkyboxSettings {
         let skyboxID: Int
         let skyboxConfig: Int
@@ -2164,8 +2188,18 @@ private extension SceneExtractor {
 
         if let skyboxInvocation {
             try skyboxInvocation.requireCount(3)
-            skyboxID = Int((try? parseUnsigned8Expression(skyboxInvocation.arguments[0])) ?? 0)
-            skyboxConfig = Int((try? parseUnsigned8Expression(skyboxInvocation.arguments[1])) ?? 0)
+            skyboxID = Int(
+                (try? parseUnsigned8Expression(
+                    skyboxInvocation.arguments[0],
+                    integerConstantByName: integerConstantByName
+                )) ?? 0
+            )
+            skyboxConfig = Int(
+                (try? parseUnsigned8Expression(
+                    skyboxInvocation.arguments[1],
+                    integerConstantByName: integerConstantByName
+                )) ?? 0
+            )
             environmentLightingMode = trimExpression(skyboxInvocation.arguments[2])
         } else {
             skyboxID = 0
@@ -2192,6 +2226,110 @@ private extension SceneExtractor {
             sunMoonDisabled: sunMoonDisabled
         )
     }
+
+    static func resolveSkyboxAssets(
+        for settings: SceneSkyboxSettings
+    ) -> SceneResolvedSkybox? {
+        guard settings.skyboxDisabled == false, settings.skyboxID == 1 else {
+            return nil
+        }
+
+        let stateDefinitions = Self.normalSkyboxStateDefinitions
+        guard
+            Self.supportedTimeBasedSkyboxSchedules.indices.contains(settings.skyboxConfig)
+        else {
+            return nil
+        }
+
+        let scheduleDefinitions = Self.supportedTimeBasedSkyboxSchedules[settings.skyboxConfig]
+        let stateIndices = Array(Set(scheduleDefinitions.map(\.stateIndex))).sorted()
+        let states = stateIndices.map { stateIndex in
+            let definition = stateDefinitions[stateIndex]
+            return SceneSkyboxAssetState(
+                id: definition.id,
+                sourceName: definition.sourceName,
+                faces: Self.normalSkyboxFaces.map { face, textureIndex in
+                    SceneSkyboxFaceAsset(
+                        face: face,
+                        assetName: "\(definition.assetPrefix)\(textureIndex)Tex"
+                    )
+                }
+            )
+        }
+        let stateIDByIndex = Dictionary(
+            uniqueKeysWithValues: stateIndices.map { index in
+                (index, stateDefinitions[index].id)
+            }
+        )
+        let schedule = scheduleDefinitions.map { entry in
+            SceneSkyboxScheduleEntry(
+                startMinute: entry.startMinute,
+                endMinute: entry.endMinute,
+                stateID: stateIDByIndex[entry.stateIndex] ?? stateDefinitions[entry.stateIndex].id
+            )
+        }
+
+        return SceneResolvedSkybox(
+            textureDirectories: Array(Set(states.map { "Textures/\($0.sourceName)" })).sorted(),
+            states: states,
+            schedule: schedule
+        )
+    }
+
+    static let normalSkyboxFaces: [(SceneSkyboxFace, Int)] = [
+        (.front, 1),
+        (.right, 2),
+        (.back, 3),
+        (.left, 4),
+        (.top, 5),
+    ]
+
+    static let normalSkyboxStateDefinitions: [(id: String, sourceName: String, assetPrefix: String)] = [
+        ("sunrise", "vr_fine0_static", "gSunriseSkybox"),
+        ("day", "vr_fine1_static", "gDaySkybox"),
+        ("sunset", "vr_fine2_static", "gSunsetSkybox"),
+        ("night", "vr_fine3_static", "gNightSkybox"),
+        ("sunrise-overcast", "vr_cloud0_static", "gSunriseOvercastSkybox"),
+        ("day-overcast", "vr_cloud1_static", "gDayOvercastSkybox"),
+        ("sunset-overcast", "vr_cloud2_static", "gSunsetOvercastSkybox"),
+        ("night-overcast", "vr_cloud3_static", "gNightOvercastSkybox"),
+    ]
+
+    static let supportedTimeBasedSkyboxSchedules: [[(startMinute: Int, endMinute: Int, stateIndex: Int)]] = [
+        [
+            (0, 241, 3),
+            (241, 301, 3),
+            (301, 360, 0),
+            (360, 481, 0),
+            (481, 960, 1),
+            (960, 1_021, 1),
+            (1_021, 1_081, 2),
+            (1_081, 1_141, 2),
+            (1_141, 1_440, 3),
+        ],
+        [
+            (0, 241, 7),
+            (241, 301, 7),
+            (301, 360, 4),
+            (360, 481, 4),
+            (481, 960, 5),
+            (960, 1_021, 5),
+            (1_021, 1_081, 6),
+            (1_081, 1_141, 6),
+            (1_141, 1_440, 7),
+        ],
+        [
+            (0, 121, 3),
+            (121, 241, 3),
+            (241, 481, 0),
+            (481, 600, 0),
+            (600, 841, 1),
+            (841, 960, 1),
+            (960, 1_201, 2),
+            (1_201, 1_320, 2),
+            (1_320, 1_440, 3),
+        ],
+    ]
 
     static func sceneCommands(sceneName: String, in source: String) throws -> [ParsedCommand] {
         let preferredName = "\(sceneName)_sceneCommands"

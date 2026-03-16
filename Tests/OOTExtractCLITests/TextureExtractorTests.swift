@@ -171,6 +171,64 @@ final class TextureExtractorTests: XCTestCase {
         )
     }
 
+    func testExtractIncludesSkyboxTextureCatalogsDuringSceneScopedRuns() throws {
+        let harness = try TextureHarness()
+        defer { harness.cleanup() }
+
+        try harness.writeXML(
+            at: "assets/xml/textures/skyboxes.xml",
+            contents: """
+            <Root>
+                <File Name="vr_cloud1_static">
+                    <Texture Name="gDayOvercastSkybox1Tex" Format="ci8" Width="1" Height="1" Offset="0x0"/>
+                </File>
+                <File Name="vr_cloud1_pal_static">
+                    <Texture Name="gDayOvercastSkyboxTLUT" Format="rgba16" Width="16" Height="8" Offset="0x0"/>
+                </File>
+            </Root>
+            """
+        )
+        try harness.writeSource(
+            at: "extracted/ntsc-1.2/assets/textures/skyboxes/vr_cloud1_static.c",
+            contents: """
+            #include "vr_cloud1_static.h"
+
+            u64 gDayOvercastSkybox1Tex[TEX_LEN(u64, gDayOvercastSkybox1Tex_WIDTH, gDayOvercastSkybox1Tex_HEIGHT, 8)] = {
+            #include "assets/textures/skyboxes/gDayOvercastSkybox1Tex.ci8.split_hi.tlut_gDayOvercastSkyboxTLUT.inc.c"
+            };
+            """
+        )
+        try harness.writeSource(
+            at: "extracted/ntsc-1.2/assets/textures/skyboxes/vr_cloud1_static.h",
+            contents: """
+            #include "tex_len.h"
+            #define gDayOvercastSkybox1Tex_WIDTH 1
+            #define gDayOvercastSkybox1Tex_HEIGHT 1
+            extern u64 gDayOvercastSkybox1Tex[TEX_LEN(u64, gDayOvercastSkybox1Tex_WIDTH, gDayOvercastSkybox1Tex_HEIGHT, 8)];
+            """
+        )
+        try harness.writePNG(
+            at: "extracted/ntsc-1.2/assets/textures/skyboxes/gDayOvercastSkybox1Tex.ci8.split_hi.tlut_gDayOvercastSkyboxTLUT.png"
+        )
+
+        try TextureExtractor().extract(using: harness.extractionContext(sceneName: "spot04"))
+
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: harness.outputRoot
+                    .appendingPathComponent("Textures/vr_cloud1_static/gDayOvercastSkybox1Tex.tex.bin")
+                    .path
+            )
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: harness.outputRoot
+                    .appendingPathComponent("Textures/vr_cloud1_pal_static/gDayOvercastSkyboxTLUT.tex.bin")
+                    .path
+            )
+        )
+    }
+
     func testExtractFallsBackToRealSceneSourceShapeWhenXMLOmitsTextureDeclarations() throws {
         let harness = try TextureHarness()
         defer { harness.cleanup() }
@@ -397,6 +455,13 @@ private struct TextureHarness {
         try writeFile(at: relativePath, contents: contents)
     }
 
+    func writePNG(at relativePath: String) throws {
+        let data = try XCTUnwrap(
+            Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jxkAAAAAASUVORK5CYII=")
+        )
+        try writeData(at: relativePath, data: data)
+    }
+
     func cleanup() {
         try? FileManager.default.removeItem(at: root)
     }
@@ -408,5 +473,14 @@ private struct TextureHarness {
             withIntermediateDirectories: true
         )
         try contents.write(to: fileURL, atomically: true, encoding: .utf8)
+    }
+
+    private func writeData(at relativePath: String, data: Data) throws {
+        let fileURL = sourceRoot.appendingPathComponent(relativePath)
+        try FileManager.default.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try data.write(to: fileURL, options: [.atomic])
     }
 }

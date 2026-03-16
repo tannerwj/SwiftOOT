@@ -103,14 +103,23 @@ extension TextureExtractor {
                     tlutFormat = nil
                 }
 
-                let decoded = try decoder.decode(
-                    format: texture.format,
-                    width: texture.width,
-                    height: texture.height,
-                    texelData: textureArray.dataSource,
-                    tlutData: tlutDataSource,
-                    tlutFormat: tlutFormat
-                )
+                let decoded: DecodedN64Texture
+                do {
+                    decoded = try decoder.decode(
+                        format: texture.format,
+                        width: texture.width,
+                        height: texture.height,
+                        texelData: textureArray.dataSource,
+                        tlutData: tlutDataSource,
+                        tlutFormat: tlutFormat
+                    )
+                } catch {
+                    throw TextureExtractorError.textureDecodingFailed(
+                        texture.name,
+                        sourceGroup.sourceName,
+                        error.localizedDescription
+                    )
+                }
 
                 var binaryData = decoded.texelData
                 if let tlutData = decoded.tlutData {
@@ -235,6 +244,7 @@ private extension TextureExtractor {
     enum AssetKind {
         case object
         case scene
+        case textureCatalog
     }
 
     enum IntegerArrayElementKind: String {
@@ -348,7 +358,7 @@ private extension TextureExtractor {
         pattern: #"#define\s+([A-Za-z_][A-Za-z0-9_]*)_(WIDTH|HEIGHT)\s+([0-9]+)"#
     )
     static let textureIncludeWithTLUTExpression = try! NSRegularExpression(
-        pattern: #"^(?:.+)\.([A-Za-z0-9]+)\.tlut_([A-Za-z_][A-Za-z0-9_]*)\.inc\.c$"#
+        pattern: #"^(?:.+)\.([A-Za-z0-9]+)(?:\.[A-Za-z0-9_]+)*\.tlut_([A-Za-z_][A-Za-z0-9_]*)\.inc\.c$"#
     )
     static let tlutIncludeExpression = try! NSRegularExpression(
         pattern: #"^(?:.+)\.tlut\.([A-Za-z0-9]+)\.inc\.c$"#
@@ -381,6 +391,15 @@ private extension TextureExtractor {
             assetSubdirectory: "assets/scenes",
             kind: .scene,
             sceneName: sceneName,
+            fileManager: fileManager
+        ))
+
+        groups.append(contentsOf: try loadTextureSourceGroups(
+            in: sourceRoot,
+            xmlSubdirectory: "assets/xml/textures",
+            assetSubdirectory: "assets/textures",
+            kind: .textureCatalog,
+            sceneName: nil,
             fileManager: fileManager
         ))
 
@@ -423,11 +442,15 @@ private extension TextureExtractor {
             if let sceneName, kind == .scene, xmlURL.deletingPathExtension().lastPathComponent != sceneName {
                 continue
             }
+            if kind == .textureCatalog, xmlURL.deletingPathExtension().lastPathComponent != "skyboxes" {
+                continue
+            }
 
             groups.append(contentsOf: try parseTextureSourceGroups(
                 from: xmlURL,
                 xmlRoot: xmlRoot,
                 assetSubdirectory: assetSubdirectory,
+                kind: kind,
                 sourceRoot: sourceRoot,
                 fileManager: fileManager
             ))
@@ -440,6 +463,7 @@ private extension TextureExtractor {
         from xmlURL: URL,
         xmlRoot: URL,
         assetSubdirectory: String,
+        kind: AssetKind,
         sourceRoot: URL,
         fileManager: FileManager
     ) throws -> [TextureSourceGroup] {
@@ -463,6 +487,22 @@ private extension TextureExtractor {
         let assetDirectory = [assetSubdirectory, xmlRelativeDirectory, defaultSourceName]
             .filter { $0.isEmpty == false }
             .joined(separator: "/")
+
+        if kind == .textureCatalog {
+            let sourceNames = delegate.sourceNames.isEmpty ? [defaultSourceName] : delegate.sourceNames
+            let sourceBackedGroups = try parseSourceBackedTextureSourceGroups(
+                sourceNames: sourceNames,
+                xmlURL: xmlURL,
+                assetDirectory: assetDirectory,
+                sourceRoot: sourceRoot,
+                fileManager: fileManager
+            )
+
+            if sourceBackedGroups.isEmpty == false {
+                return sourceBackedGroups.sorted { $0.sourceName < $1.sourceName }
+            }
+        }
+
         var groups: [TextureSourceGroup] = []
         for (sourceName, textures) in delegate.groupedTextures {
             let tluts = delegate.groupedTLUTs[sourceName] ?? []
@@ -1511,6 +1551,7 @@ private extension TextureExtractor {
 }
 
 private enum TextureExtractorError: LocalizedError {
+    case textureDecodingFailed(String, String, String)
     case invalidBinarySize(String, expected: Int, actual: Int)
     case invalidIntegerLiteral(String)
     case invalidMetadataDimensions(Int, Int)
@@ -1528,6 +1569,8 @@ private enum TextureExtractorError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .textureDecodingFailed(let textureName, let sourceName, let message):
+            return "Failed to decode texture '\(textureName)' from source '\(sourceName)': \(message)"
         case .invalidBinarySize(let path, let expected, let actual):
             return "Texture binary '\(path)' has size \(actual), expected \(expected) bytes."
         case .invalidIntegerLiteral(let literal):

@@ -524,7 +524,8 @@ private extension SceneLoader {
 
     func textureDirectories(for scene: LoadedScene) -> [String] {
         let roomDirectories = scene.rooms.flatMap(\.manifest.textureDirectories)
-        return Array(Set(scene.manifest.textureDirectories + roomDirectories)).sorted()
+        let skyboxDirectories = scene.environment?.resolvedSkybox?.textureDirectories ?? []
+        return Array(Set(scene.manifest.textureDirectories + roomDirectories + skyboxDirectories)).sorted()
     }
 
     func textureBinaryURLs(in directory: URL) throws -> [URL] {
