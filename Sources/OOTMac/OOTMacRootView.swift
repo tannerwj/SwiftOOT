@@ -8,7 +8,10 @@ struct OOTMacRootView: View {
     var body: some View {
         Group {
             if let runtime = bootstrapModel.runtime {
-                OOTAppView(runtime: runtime)
+                OOTAppView(
+                    runtime: runtime,
+                    developerHarness: bootstrapModel.developerHarnessConfiguration
+                )
             } else {
                 OOTContentBootstrapView(model: bootstrapModel)
             }

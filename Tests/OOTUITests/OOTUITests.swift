@@ -101,6 +101,99 @@ final class OOTUITests: XCTestCase {
         XCTAssertFalse(runtime.controllerInputState.zPressed)
     }
 
+    func testDeveloperInputScriptSupportsDurationsAndExplicitFrameRanges() throws {
+        let script = try DeveloperInputScript(
+            steps: [
+                DeveloperInputStep(
+                    duration: 3,
+                    stick: DeveloperInputVector(x: 0, y: 1)
+                ),
+                DeveloperInputStep(
+                    frameRange: DeveloperInputFrameRange(start: 5, end: 6),
+                    aPressed: true,
+                    zPressed: true
+                ),
+            ]
+        )
+
+        XCTAssertEqual(script.totalFrameCount, 7)
+        XCTAssertEqual(script.inputState(for: 0).stick, StickInput(x: 0, y: 1))
+        XCTAssertEqual(script.inputState(for: 2).stick, StickInput(x: 0, y: 1))
+        XCTAssertEqual(script.inputState(for: 3), ControllerInputState())
+        XCTAssertEqual(
+            script.inputState(for: 5),
+            ControllerInputState(aPressed: true, zPressed: true)
+        )
+    }
+
+    func testDeveloperInputScriptCombinesOverlappingMovementAndButtonSteps() throws {
+        let script = try DeveloperInputScript(
+            steps: [
+                DeveloperInputStep(
+                    duration: 10,
+                    stick: DeveloperInputVector(x: 0, y: 1)
+                ),
+                DeveloperInputStep(
+                    frameRange: DeveloperInputFrameRange(start: 4, end: 6),
+                    aPressed: true
+                ),
+            ]
+        )
+
+        XCTAssertEqual(
+            script.inputState(for: 5),
+            ControllerInputState(
+                stick: StickInput(x: 0, y: 1),
+                aPressed: true
+            )
+        )
+    }
+
+    func testDeveloperHarnessConfigurationLoadsEnvironmentAndScriptFile() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString,
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let scriptURL = directory.appendingPathComponent("script.json")
+        let scriptData = try JSONEncoder().encode([
+            DeveloperInputStep(duration: 4, bPressed: true),
+        ])
+        try scriptData.write(to: scriptURL)
+
+        let configuration = try XCTUnwrap(
+            DeveloperHarnessConfiguration.load(
+                from: [
+                    DeveloperHarnessConfiguration.sceneEnvironmentVariable: "0x55",
+                    DeveloperHarnessConfiguration.entranceEnvironmentVariable: "3",
+                    DeveloperHarnessConfiguration.spawnEnvironmentVariable: "1",
+                    DeveloperHarnessConfiguration.timeOfDayEnvironmentVariable: "18.5",
+                    DeveloperHarnessConfiguration.inputScriptEnvironmentVariable: "script.json",
+                    DeveloperHarnessConfiguration.captureFrameEnvironmentVariable: "captures/frame.png",
+                    DeveloperHarnessConfiguration.captureStateEnvironmentVariable: "captures/state.json",
+                    DeveloperHarnessConfiguration.captureViewportEnvironmentVariable: "640x360",
+                ],
+                currentDirectoryURL: directory
+            )
+        )
+
+        XCTAssertEqual(
+            configuration.launchConfiguration,
+            DeveloperSceneLaunchConfiguration(
+                scene: .id(0x55),
+                entranceIndex: 3,
+                spawnIndex: 1,
+                fixedTimeOfDay: 18.5
+            )
+        )
+        XCTAssertEqual(configuration.inputScript?.totalFrameCount, 4)
+        XCTAssertEqual(configuration.captureViewport, DeveloperHarnessViewport(width: 640, height: 360))
+        XCTAssertEqual(configuration.captureFrameURL?.path, directory.appendingPathComponent("captures/frame.png").path)
+        XCTAssertEqual(configuration.captureStateURL?.path, directory.appendingPathComponent("captures/state.json").path)
+    }
+
     func testGameplayCameraConfigurationUsesPlayerStateAndFallsBackToFirstSpawn() throws {
         let scene = makeLoadedScene()
         let playerState = PlayerState(
@@ -261,6 +354,90 @@ final class OOTUITests: XCTestCase {
             payload: alternatePayload,
             expectedSceneName: sceneName(for: alternateScene)
         )
+    }
+
+    func testDeveloperHarnessProducesRealContentCaptureWhenConfigured() async throws {
+        guard let contentRootPath = ProcessInfo.processInfo.environment["SWIFTOOT_REAL_CONTENT_ROOT"] else {
+            throw XCTSkip("Set SWIFTOOT_REAL_CONTENT_ROOT to run the real-content harness validation.")
+        }
+
+        let repoRoot = URL(fileURLWithPath: #filePath, isDirectory: false)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let scriptURL = repoRoot.appendingPathComponent("docs/developer-harness-script.example.json")
+        let outputDirectory = repoRoot.appendingPathComponent("tmp/harness-test", isDirectory: true)
+        try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
+
+        let configuration = try XCTUnwrap(
+            DeveloperHarnessConfiguration.load(
+                from: [
+                    DeveloperHarnessConfiguration.sceneEnvironmentVariable: "spot04",
+                    DeveloperHarnessConfiguration.spawnEnvironmentVariable: "0",
+                    DeveloperHarnessConfiguration.timeOfDayEnvironmentVariable: "18.5",
+                    DeveloperHarnessConfiguration.inputScriptEnvironmentVariable: scriptURL.path,
+                    DeveloperHarnessConfiguration.captureFrameEnvironmentVariable: "tmp/harness-test/frame.png",
+                    DeveloperHarnessConfiguration.captureStateEnvironmentVariable: "tmp/harness-test/state.json",
+                    DeveloperHarnessConfiguration.captureViewportEnvironmentVariable: "960x540",
+                ],
+                currentDirectoryURL: repoRoot
+            )
+        )
+
+        let contentRoot = URL(fileURLWithPath: contentRootPath, isDirectory: true)
+        let runtime = GameRuntime(
+            contentLoader: ContentLoader(contentRoot: contentRoot),
+            sceneLoader: SceneLoader(contentRoot: contentRoot),
+            suspender: { _ in }
+        )
+
+        try await runtime.launchDeveloperScene(configuration.launchConfiguration)
+        while runtime.gameTime.frameCount < configuration.captureTriggerFrame {
+            runtime.setControllerInput(configuration.inputScript?.inputState(for: runtime.gameTime.frameCount) ?? ControllerInputState())
+            runtime.updateFrame()
+        }
+
+        let loadedScene = try XCTUnwrap(runtime.loadedScene)
+        let renderPayload = try SceneRenderPayloadBuilder.makePayload(
+            scene: loadedScene,
+            textureAssetURLs: runtime.textureAssetURLs,
+            contentLoader: runtime.contentLoader
+        )
+        let renderer = try OOTRenderer(
+            scene: SceneRenderPayloadBuilder.renderScene(
+                from: renderPayload,
+                playerState: runtime.playerState
+            ),
+            textureBindings: renderPayload.textureBindings,
+            gameplayCameraConfiguration: SceneRenderPayloadBuilder.makeGameplayCameraConfiguration(
+                scene: loadedScene,
+                playerState: runtime.playerState
+            )
+        )
+        renderer.setTimeOfDay(runtime.gameTime.timeOfDay)
+
+        let renderCapture = try renderer.captureCurrentScene(size: configuration.captureViewport.size)
+        let runtimeSnapshot = runtime.developerRuntimeStateSnapshot()
+
+        let frameURL = try XCTUnwrap(configuration.captureFrameURL)
+        let stateURL = try XCTUnwrap(configuration.captureStateURL)
+        try DeveloperHarnessCaptureWriter.writeFrameCapture(renderCapture, to: frameURL)
+        try DeveloperHarnessCaptureWriter.writeStateCapture(
+            runtimeSnapshot: runtimeSnapshot,
+            renderCapture: renderCapture,
+            to: stateURL
+        )
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: frameURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: stateURL.path))
+        XCTAssertGreaterThan(renderCapture.frameStats.drawCallCount, 0)
+
+        let capturedState = try JSONDecoder().decode(
+            DeveloperHarnessStateCapture.self,
+            from: Data(contentsOf: stateURL)
+        )
+        XCTAssertEqual(capturedState.runtime.sceneID, runtime.playState?.currentSceneID)
+        XCTAssertGreaterThan(capturedState.render.drawCallCount, 0)
     }
 }
 

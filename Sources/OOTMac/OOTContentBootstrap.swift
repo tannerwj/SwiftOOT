@@ -3,6 +3,7 @@ import Foundation
 import Observation
 import OOTContent
 import OOTCore
+import OOTUI
 import SwiftUI
 
 @MainActor
@@ -12,11 +13,16 @@ final class OOTContentBootstrapModel {
 
     private let userDefaults: UserDefaults
     private let environment: [String: String]
+    private let developerHarnessConfigurationResult: Result<DeveloperHarnessConfiguration?, Error>
 
     var configuredContentRoot: URL?
     var runtime: GameRuntime?
     var errorMessage: String?
     var startupHint: String?
+
+    var developerHarnessConfiguration: DeveloperHarnessConfiguration? {
+        try? developerHarnessConfigurationResult.get()
+    }
 
     init(
         userDefaults: UserDefaults = .standard,
@@ -24,6 +30,9 @@ final class OOTContentBootstrapModel {
     ) {
         self.userDefaults = userDefaults
         self.environment = environment
+        developerHarnessConfigurationResult = Result {
+            try DeveloperHarnessConfiguration.load(from: environment)
+        }
         restoreConfiguration()
     }
 
@@ -33,10 +42,18 @@ final class OOTContentBootstrapModel {
         errorMessage = nil
         startupHint = nil
 
+        if case .failure(let error) = developerHarnessConfigurationResult {
+            errorMessage = error.localizedDescription
+            return
+        }
+
         if let configuredPath = environment[ContentRootConfiguration.contentRootEnvironmentVariable] {
             let configuredURL = URL(fileURLWithPath: configuredPath, isDirectory: true)
             if applyConfiguredRoot(configuredURL, persistSelection: false) {
                 startupHint = "Using content root from \(ContentRootConfiguration.contentRootEnvironmentVariable)."
+                if developerHarnessConfiguration?.isEnabled == true {
+                    startupHint?.append(" Developer harness enabled.")
+                }
                 return
             }
 
@@ -54,6 +71,9 @@ final class OOTContentBootstrapModel {
         let storedURL = URL(fileURLWithPath: storedPath, isDirectory: true)
         if applyConfiguredRoot(storedURL, persistSelection: false) {
             startupHint = "Using saved content root."
+            if developerHarnessConfiguration?.isEnabled == true {
+                startupHint?.append(" Developer harness enabled.")
+            }
             return
         }
 
@@ -69,6 +89,11 @@ final class OOTContentBootstrapModel {
         _ selectedURL: URL,
         persistSelection: Bool = true
     ) -> Bool {
+        if case .failure(let error) = developerHarnessConfigurationResult {
+            errorMessage = error.localizedDescription
+            return false
+        }
+
         guard let resolvedContentRoot = ContentRootConfiguration.resolveConfiguredContentRoot(from: selectedURL) else {
             errorMessage = """
             SwiftOOT could not find extracted content there.

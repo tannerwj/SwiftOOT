@@ -1,3 +1,5 @@
+import AppKit
+import Foundation
 import SwiftUI
 import OOTCore
 import OOTRender
@@ -12,9 +14,14 @@ enum OOTRootViewState: Equatable {
 
 public struct OOTAppView: View {
     let runtime: GameRuntime
+    let developerHarness: DeveloperHarnessConfiguration?
 
-    public init(runtime: GameRuntime) {
+    public init(
+        runtime: GameRuntime,
+        developerHarness: DeveloperHarnessConfiguration? = nil
+    ) {
         self.runtime = runtime
+        self.developerHarness = developerHarness
     }
 
     nonisolated static func rootViewState(for state: GameState) -> OOTRootViewState {
@@ -54,8 +61,135 @@ public struct OOTAppView: View {
             }
         }
         .task {
-            await runtime.start()
+            do {
+                if let developerHarness, developerHarness.isEnabled {
+                    try await runDeveloperHarness(developerHarness)
+                } else {
+                    await runtime.start()
+                }
+            } catch {
+                runtime.errorMessage = error.localizedDescription
+                writeHarnessFailureToStderr(error.localizedDescription)
+                if developerHarness?.captureRequested == true {
+                    NSApplication.shared.terminate(nil)
+                }
+            }
         }
+    }
+}
+
+private extension OOTAppView {
+    @MainActor
+    func runDeveloperHarness(_ harness: DeveloperHarnessConfiguration) async throws {
+        writeHarnessNoteToStderr("starting developer harness")
+        try await runtime.launchDeveloperScene(harness.launchConfiguration)
+        writeHarnessNoteToStderr("developer scene launched")
+
+        guard harness.inputScript != nil || harness.captureRequested else {
+            return
+        }
+
+        while runtime.gameTime.frameCount < harness.captureTriggerFrame {
+            runtime.setControllerInput(harness.inputScript?.inputState(for: runtime.gameTime.frameCount) ?? ControllerInputState())
+            runtime.updateFrame()
+            await Task.yield()
+        }
+        runtime.setControllerInput(ControllerInputState())
+        writeHarnessNoteToStderr("scripted frames completed at frame \(runtime.gameTime.frameCount)")
+
+        guard harness.captureRequested else {
+            return
+        }
+
+        try captureHarnessOutputs(harness)
+        writeHarnessNoteToStderr("capture outputs written")
+        NSApplication.shared.terminate(nil)
+    }
+
+    @MainActor
+    func captureHarnessOutputs(_ harness: DeveloperHarnessConfiguration) throws {
+        guard
+            let loadedScene = runtime.loadedScene
+        else {
+            throw DeveloperHarnessCaptureError.invalidRuntimeState("No scene is loaded for capture.")
+        }
+
+        let renderPayload = try SceneRenderPayloadBuilder.makePayload(
+            scene: loadedScene,
+            textureAssetURLs: runtime.textureAssetURLs,
+            contentLoader: runtime.contentLoader
+        )
+        let renderScene = SceneRenderPayloadBuilder.renderScene(
+            from: renderPayload,
+            playerState: runtime.playerState
+        )
+        let renderer = try OOTRenderer(
+            scene: renderScene,
+            textureBindings: renderPayload.textureBindings,
+            gameplayCameraConfiguration: SceneRenderPayloadBuilder.makeGameplayCameraConfiguration(
+                scene: loadedScene,
+                playerState: runtime.playerState
+            )
+        )
+        renderer.setTimeOfDay(runtime.gameTime.timeOfDay)
+
+        let renderCapture = try renderer.captureCurrentScene(size: harness.captureViewport.size)
+        let runtimeSnapshot = runtime.developerRuntimeStateSnapshot()
+
+        if let frameURL = harness.captureFrameURL {
+            try DeveloperHarnessCaptureWriter.writeFrameCapture(
+                renderCapture,
+                to: frameURL
+            )
+        }
+
+        if let stateURL = harness.captureStateURL {
+            try DeveloperHarnessCaptureWriter.writeStateCapture(
+                runtimeSnapshot: runtimeSnapshot,
+                renderCapture: renderCapture,
+                to: stateURL
+            )
+        }
+    }
+
+    func writeHarnessFailureToStderr(_ message: String) {
+        let line = "SwiftOOT harness failed: \(message)\n"
+        guard let data = line.data(using: .utf8) else {
+            return
+        }
+        try? FileHandle.standardError.write(contentsOf: data)
+        appendHarnessTrace(line)
+    }
+
+    func writeHarnessNoteToStderr(_ message: String) {
+        let line = "SwiftOOT harness: \(message)\n"
+        guard let data = line.data(using: .utf8) else {
+            return
+        }
+        try? FileHandle.standardError.write(contentsOf: data)
+        appendHarnessTrace(line)
+    }
+
+    func appendHarnessTrace(_ line: String) {
+        guard
+            let directory = (developerHarness?.captureStateURL ?? developerHarness?.captureFrameURL)?
+                .deletingLastPathComponent()
+        else {
+            return
+        }
+
+        let fileManager = FileManager.default
+        let logURL = directory.appendingPathComponent("harness.log")
+        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
+
+        if let handle = try? FileHandle(forWritingTo: logURL) {
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: Data(line.utf8))
+            try? handle.close()
+            return
+        }
+
+        try? Data(line.utf8).write(to: logURL, options: .atomic)
     }
 }
 
@@ -320,7 +454,7 @@ private struct GameplayShellView: View {
             }
 
             while !Task.isCancelled && runtime.currentState == .gameplay {
-                inputManager?.sync()
+                inputManager?.sync(frame: runtime.gameTime.frameCount)
                 runtime.updateFrame()
                 try? await Task.sleep(for: .milliseconds(16))
             }

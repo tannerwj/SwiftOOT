@@ -33,7 +33,7 @@ final class InputManager: NSObject, GameplayInputHandling {
         NotificationCenter.default.removeObserver(self)
     }
 
-    func sync() {
+    func sync(frame: Int) {
         publishState()
     }
 
