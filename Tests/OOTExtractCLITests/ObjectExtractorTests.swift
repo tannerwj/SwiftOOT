@@ -4,6 +4,206 @@ import XCTest
 @testable import OOTExtractSupport
 
 final class ObjectExtractorTests: XCTestCase {
+    func testSceneScopedExtractionIncludesRequiredObjectsForSelectedSceneSet() throws {
+        let harness = try ObjectHarness()
+        defer { harness.cleanup() }
+
+        func writeMinimalObject(named name: String, symbolPrefix: String) throws {
+            try harness.writeFile(
+                at: "assets/xml/objects/\(name).xml",
+                contents: """
+                <Root>
+                    <File Name="\(name)" Segment="6">
+                        <Array Name="\(symbolPrefix)MeshVtx" Count="3" Offset="0x20">
+                            <Vtx/>
+                        </Array>
+                        <DList Name="\(symbolPrefix)MeshDL" Offset="0x80"/>
+                        <Limb Name="\(symbolPrefix)RootLimb" LimbType="Standard" Offset="0xA0"/>
+                        <Skeleton Name="\(symbolPrefix)Skel" Type="Normal" LimbType="Standard" Offset="0xC0"/>
+                    </File>
+                </Root>
+                """
+            )
+            try harness.writeFile(
+                at: "assets/objects/\(name)/\(name).c",
+                contents: """
+                Vtx \(symbolPrefix)MeshVtx[] = {
+                #include "assets/objects/\(name)/\(symbolPrefix)MeshVtx.inc.c"
+                };
+
+                Gfx \(symbolPrefix)MeshDL[] = {
+                #include "assets/objects/\(name)/\(symbolPrefix)MeshDL.inc.c"
+                };
+
+                StandardLimb \(symbolPrefix)RootLimb = {
+                #include "assets/objects/\(name)/\(symbolPrefix)RootLimb.inc.c"
+                };
+
+                void* \(symbolPrefix)Limbs[] = {
+                #include "assets/objects/\(name)/\(symbolPrefix)Limbs.inc.c"
+                };
+
+                SkeletonHeader \(symbolPrefix)Skel = {
+                #include "assets/objects/\(name)/\(symbolPrefix)Skel.inc.c"
+                };
+                """
+            )
+            try harness.writeFile(
+                at: "assets/objects/\(name)/\(symbolPrefix)MeshVtx.inc.c",
+                contents: """
+                VTX(0, 0, 0, 0, 0, 0, 255, 0, 0),
+                VTX(10, 0, 0, 0, 32, 0, 0, 255, 0),
+                VTX(0, 10, 0, 0, 0, 32, 0, 0, 255),
+                """
+            )
+            try harness.writeFile(
+                at: "assets/objects/\(name)/\(symbolPrefix)MeshDL.inc.c",
+                contents: """
+                gsSPVertex(\(symbolPrefix)MeshVtx, 3, 0),
+                gsSP1Triangle(0, 1, 2, 0),
+                gsSPEndDisplayList(),
+                """
+            )
+            try harness.writeFile(
+                at: "assets/objects/\(name)/\(symbolPrefix)RootLimb.inc.c",
+                contents: "{ 0, 0, 0 }, 255, 255, \(symbolPrefix)MeshDL\n"
+            )
+            try harness.writeFile(
+                at: "assets/objects/\(name)/\(symbolPrefix)Limbs.inc.c",
+                contents: "&\(symbolPrefix)RootLimb,\n"
+            )
+            try harness.writeFile(
+                at: "assets/objects/\(name)/\(symbolPrefix)Skel.inc.c",
+                contents: "\(symbolPrefix)Limbs, 1\n"
+            )
+        }
+
+        try writeMinimalObject(named: "object_link_boy", symbolPrefix: "gLinkBoy")
+        try writeMinimalObject(named: "object_required_a", symbolPrefix: "gRequiredA")
+        try writeMinimalObject(named: "object_required_b", symbolPrefix: "gRequiredB")
+        try writeMinimalObject(named: "object_unused", symbolPrefix: "gUnused")
+
+        let encoder = JSONEncoder()
+        let tablesDirectory = harness.outputRoot
+            .appendingPathComponent("Manifests/tables", isDirectory: true)
+        try FileManager.default.createDirectory(at: tablesDirectory, withIntermediateDirectories: true)
+
+        try encoder.encode([
+            ObjectTableEntry(id: 101, enumName: "OBJECT_REQUIRED_A", assetPath: "Objects/object_required_a"),
+            ObjectTableEntry(id: 102, enumName: "OBJECT_REQUIRED_B", assetPath: "Objects/object_required_b"),
+            ObjectTableEntry(id: 103, enumName: "OBJECT_UNUSED", assetPath: "Objects/object_unused"),
+        ]).write(to: tablesDirectory.appendingPathComponent("object-table.json"))
+
+        try encoder.encode([
+            ActorTableEntry(
+                id: 11,
+                enumName: "ACTOR_REQUIRED_A",
+                profile: ActorProfile(id: 11, category: 4, flags: 0, objectID: 101)
+            ),
+            ActorTableEntry(
+                id: 12,
+                enumName: "ACTOR_UNUSED",
+                profile: ActorProfile(id: 12, category: 4, flags: 0, objectID: 103)
+            ),
+        ]).write(to: tablesDirectory.appendingPathComponent("actor-table.json"))
+
+        let spot00Directory = harness.outputRoot
+            .appendingPathComponent("Manifests/scenes/overworld/spot00", isDirectory: true)
+        let spot01Directory = harness.outputRoot
+            .appendingPathComponent("Manifests/scenes/overworld/spot01", isDirectory: true)
+        let spot02Directory = harness.outputRoot
+            .appendingPathComponent("Manifests/scenes/overworld/spot02", isDirectory: true)
+        try FileManager.default.createDirectory(at: spot00Directory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: spot01Directory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: spot02Directory, withIntermediateDirectories: true)
+
+        try encoder.encode(
+            SceneHeaderDefinition(
+                sceneName: "spot00",
+                rooms: [SceneRoomDefinition(id: 0, shape: .normal)]
+            )
+        ).write(to: spot00Directory.appendingPathComponent("scene-header.json"))
+        try encoder.encode(
+            SceneActorsFile(
+                sceneName: "spot00",
+                rooms: [
+                    RoomActorSpawns(
+                        roomName: "spot00_room_0",
+                        actors: [
+                            SceneActorSpawn(
+                                actorID: 11,
+                                actorName: "ACTOR_REQUIRED_A",
+                                position: .init(x: 0, y: 0, z: 0),
+                                rotation: .init(x: 0, y: 0, z: 0),
+                                params: 0
+                            ),
+                        ]
+                    ),
+                ]
+            )
+        ).write(to: spot00Directory.appendingPathComponent("actors.json"))
+
+        try encoder.encode(
+            SceneHeaderDefinition(
+                sceneName: "spot01",
+                rooms: [SceneRoomDefinition(id: 0, shape: .normal, objectIDs: [102])]
+            )
+        ).write(to: spot01Directory.appendingPathComponent("scene-header.json"))
+        try encoder.encode(
+            SceneActorsFile(sceneName: "spot01", rooms: [])
+        ).write(to: spot01Directory.appendingPathComponent("actors.json"))
+
+        try encoder.encode(
+            SceneHeaderDefinition(
+                sceneName: "spot02",
+                rooms: [SceneRoomDefinition(id: 0, shape: .normal)]
+            )
+        ).write(to: spot02Directory.appendingPathComponent("scene-header.json"))
+        try encoder.encode(
+            SceneActorsFile(
+                sceneName: "spot02",
+                rooms: [
+                    RoomActorSpawns(
+                        roomName: "spot02_room_0",
+                        actors: [
+                            SceneActorSpawn(
+                                actorID: 12,
+                                actorName: "ACTOR_UNUSED",
+                                position: .init(x: 0, y: 0, z: 0),
+                                rotation: .init(x: 0, y: 0, z: 0),
+                                params: 0
+                            ),
+                        ]
+                    ),
+                ]
+            )
+        ).write(to: spot02Directory.appendingPathComponent("actors.json"))
+
+        try ObjectExtractor().extract(using: harness.extractionContext(sceneNames: ["spot00", "spot01"]))
+
+        let objectsRoot = harness.outputRoot.appendingPathComponent("Objects", isDirectory: true)
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: objectsRoot.appendingPathComponent("object_link_boy/object_manifest.json").path
+            )
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: objectsRoot.appendingPathComponent("object_required_a/object_manifest.json").path
+            )
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: objectsRoot.appendingPathComponent("object_required_b/object_manifest.json").path
+            )
+        )
+        XCTAssertFalse(
+            FileManager.default.fileExists(
+                atPath: objectsRoot.appendingPathComponent("object_unused/object_manifest.json").path
+            )
+        )
+    }
+
     func testExtractWritesManifestSkeletonAnimationMeshAndCopiedTextures() throws {
         let harness = try ObjectHarness()
         defer { harness.cleanup() }
@@ -645,6 +845,10 @@ private struct ObjectHarness {
 
     var extractionContext: OOTExtractionContext {
         OOTExtractionContext(source: sourceRoot, output: outputRoot)
+    }
+
+    func extractionContext(sceneNames: [String]) -> OOTExtractionContext {
+        OOTExtractionContext(source: sourceRoot, output: outputRoot, sceneNames: sceneNames)
     }
 
     var verificationContext: OOTVerificationContext {

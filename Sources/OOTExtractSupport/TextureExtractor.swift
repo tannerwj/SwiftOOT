@@ -8,37 +8,48 @@ extension TextureExtractor {
         let fileManager = FileManager.default
         let sourceGroups = try Self.loadTextureSourceGroups(
             in: context.source,
-            sceneName: context.sceneName,
+            outputRoot: context.output,
+            sceneNames: context.sceneNames,
             fileManager: fileManager
         )
         let decoder = N64TextureDecoder()
         var emittedTextures = 0
 
         for sourceGroup in sourceGroups {
-            let sourceFile = try Self.resolveSourceFile(
-                for: sourceGroup,
-                sourceRoot: context.source,
-                fileManager: fileManager
-            )
+            let pngFallbackTLUTNames = Self.pngFallbackTLUTNames(in: sourceGroup)
             let arrayBackedTextures = sourceGroup.textures.filter { $0.pngURL == nil }
             let requiredArrayNames = Set(
                 arrayBackedTextures.map(\.name)
                     + arrayBackedTextures.compactMap(\.tlutName)
-                    + arrayBackedTextures.compactMap(\.tlutOffset).compactMap { sourceGroup.tlutByOffset[$0]?.name }
+                    + arrayBackedTextures.compactMap(\.tlutOffset).compactMap {
+                        Self.tlutDefinition(forOffset: $0, in: sourceGroup)?.name
+                    }
             )
             let arrays: [String: ParsedTextureArray]
+            let sourceFilePath: String
             if requiredArrayNames.isEmpty {
                 arrays = [:]
+                sourceFilePath = sourceGroup.xmlURL.path
             } else {
-                let expandedSource = try CMacroPreprocessor().preprocess(
-                    fileURL: sourceFile,
-                    sourceRoot: context.source
+                let sourceFiles = try Self.resolveSourceFiles(
+                    for: sourceGroup,
+                    requiredSymbols: requiredArrayNames,
+                    sourceRoot: context.source,
+                    fileManager: fileManager
                 )
-                arrays = try Self.parseTextureArrays(
-                    in: expandedSource,
-                    sourceFile: sourceFile,
-                    requiredArrayNames: requiredArrayNames
-                )
+                sourceFilePath = sourceFiles.map(\.path).joined(separator: ", ")
+                arrays = try sourceFiles.reduce(into: [:]) { result, sourceFile in
+                    let expandedSource = try CMacroPreprocessor().preprocess(
+                        fileURL: sourceFile,
+                        sourceRoot: context.source
+                    )
+                    let parsedArrays = try Self.parseTextureArrays(
+                        in: expandedSource,
+                        sourceFile: sourceFile,
+                        requiredArrayNames: requiredArrayNames.subtracting(result.keys)
+                    )
+                    result.merge(parsedArrays) { current, _ in current }
+                }
             }
             let outputDirectory = context.output
                 .appendingPathComponent("Textures", isDirectory: true)
@@ -46,6 +57,9 @@ extension TextureExtractor {
             try fileManager.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
 
             for texture in sourceGroup.textures {
+                if Self.shouldSkipOrphanedTLUT(texture, in: sourceGroup) {
+                    continue
+                }
                 if let pngURL = texture.pngURL {
                     let binaryData = try Self.loadPNGTextureData(
                         from: pngURL,
@@ -65,7 +79,13 @@ extension TextureExtractor {
                 }
 
                 guard let textureArray = arrays[texture.name] else {
-                    throw TextureExtractorError.missingArray(texture.name, sourceFile.path)
+                    if pngFallbackTLUTNames.contains(texture.name) {
+                        continue
+                    }
+                    throw TextureExtractorError.missingArray(texture.name, sourceFilePath)
+                }
+                if pngFallbackTLUTNames.contains(texture.name), Self.isEmpty(textureArray.dataSource) {
+                    continue
                 }
 
                 let tlutDataSource: N64TextureDataSource?
@@ -79,13 +99,13 @@ extension TextureExtractor {
                         )
                     }
                     guard let tlutArray = arrays[tlut.name] else {
-                        throw TextureExtractorError.missingArray(tlut.name, sourceFile.path)
+                        throw TextureExtractorError.missingArray(tlut.name, sourceFilePath)
                     }
 
                     tlutDataSource = tlutArray.dataSource
                     tlutFormat = tlut.format
                 } else if let tlutOffset = texture.tlutOffset {
-                    guard let tlut = sourceGroup.tlutByOffset[tlutOffset] else {
+                    guard let tlut = Self.tlutDefinition(forOffset: tlutOffset, in: sourceGroup) else {
                         throw TextureExtractorError.missingTLUTDefinition(
                             texture.name,
                             tlutOffset,
@@ -93,7 +113,7 @@ extension TextureExtractor {
                         )
                     }
                     guard let tlutArray = arrays[tlut.name] else {
-                        throw TextureExtractorError.missingArray(tlut.name, sourceFile.path)
+                        throw TextureExtractorError.missingArray(tlut.name, sourceFilePath)
                     }
 
                     tlutDataSource = tlutArray.dataSource
@@ -213,6 +233,7 @@ private extension TextureExtractor {
         let tlutOffset: Int?
         let tlutName: String?
         let pngURL: URL?
+        let ignoreIfOrphanedTLUT: Bool
     }
 
     struct TLUTDefinition: Sendable {
@@ -232,6 +253,12 @@ private extension TextureExtractor {
         let height: Int
         let order: Int
         let tlutName: String?
+        let pngURL: URL?
+        let usesMissingIncludeFallback: Bool
+    }
+
+    struct SourceBackedTextureFallbackDeclaration: Sendable {
+        let name: String
         let pngURL: URL?
         let usesMissingIncludeFallback: Bool
     }
@@ -257,6 +284,62 @@ private extension TextureExtractor {
         case u32
         case s64
         case u64
+    }
+
+    static func pngFallbackTLUTNames(in sourceGroup: TextureSourceGroup) -> Set<String> {
+        Set(
+            sourceGroup.textures.compactMap { texture in
+                guard texture.pngURL != nil else {
+                    return nil
+                }
+                if let tlutName = texture.tlutName {
+                    return tlutName
+                }
+                if let tlutOffset = texture.tlutOffset {
+                    return tlutDefinition(forOffset: tlutOffset, in: sourceGroup)?.name
+                }
+                return nil
+            }
+        )
+    }
+
+    static func tlutDefinition(
+        forOffset offset: Int,
+        in sourceGroup: TextureSourceGroup
+    ) -> TLUTDefinition? {
+        if let tlut = sourceGroup.tlutByOffset[offset] {
+            return tlut
+        }
+
+        guard let texture = sourceGroup.textures.first(where: {
+            $0.offset == offset && $0.format == .rgba16
+        }) else {
+            return nil
+        }
+
+        return TLUTDefinition(name: texture.name, format: .rgba16, offset: texture.offset)
+    }
+
+    static func isEmpty(_ dataSource: N64TextureDataSource) -> Bool {
+        switch dataSource {
+        case .bytes(let bytes):
+            return bytes.isEmpty
+        case .words(let words):
+            return words.isEmpty
+        }
+    }
+
+    static func shouldSkipOrphanedTLUT(_ texture: TextureDefinition, in sourceGroup: TextureSourceGroup) -> Bool {
+        guard texture.ignoreIfOrphanedTLUT else {
+            return false
+        }
+
+        return sourceGroup.textures.contains { candidate in
+            guard candidate.name != texture.name else {
+                return false
+            }
+            return candidate.tlutName == texture.name || candidate.tlutOffset == texture.offset
+        } == false
     }
 
     final class TextureXMLParserDelegate: NSObject, XMLParserDelegate {
@@ -304,7 +387,8 @@ private extension TextureExtractor {
                         offset: offset,
                         tlutOffset: Self.parseInteger(attributeDict["TlutOffset"]),
                         tlutName: nil,
-                        pngURL: nil
+                        pngURL: nil,
+                        ignoreIfOrphanedTLUT: attributeDict["HackMode"] == "ignore_orphaned_tlut"
                     )
                 )
             case "TLUT":
@@ -359,29 +443,33 @@ private extension TextureExtractor {
         pattern: #"#define\s+([A-Za-z_][A-Za-z0-9_]*)_(WIDTH|HEIGHT)\s+([0-9]+)"#
     )
     static let textureIncludeWithTLUTExpression = try! NSRegularExpression(
-        pattern: #"^(?:.+)\.([A-Za-z0-9]+)(?:\.[A-Za-z0-9_]+)*\.tlut_([A-Za-z_][A-Za-z0-9_]*)\.inc\.c$"#
+        pattern: #"^[^.]+\.([A-Za-z0-9]+)(?:\.[A-Za-z0-9_]+)*\.tlut_([A-Za-z_][A-Za-z0-9_]*?)(?:_(?:u8|u16|u32|u64))?(?:\.[A-Za-z0-9_]+)*\.inc\.c$"#
     )
     static let tlutIncludeExpression = try! NSRegularExpression(
-        pattern: #"^(?:.+)\.tlut\.([A-Za-z0-9]+)\.inc\.c$"#
+        pattern: #"^[^.]+\.tlut\.([A-Za-z0-9]+)(?:\.[A-Za-z0-9_]+)*\.inc\.c$"#
     )
     static let textureIncludeExpression = try! NSRegularExpression(
-        pattern: #"^(?:.+)\.([A-Za-z0-9]+)\.inc\.c$"#
+        pattern: #"^[^.]+\.([A-Za-z0-9]+)(?:\.[A-Za-z0-9_]+)*\.inc\.c$"#
     )
 
     static func loadTextureSourceGroups(
         in sourceRoot: URL,
-        sceneName: String?,
+        outputRoot: URL,
+        sceneNames: Set<String>?,
         fileManager: FileManager
     ) throws -> [TextureSourceGroup] {
         var groups: [TextureSourceGroup] = []
+        let requiredObjectNames =
+            try sceneNames.map { try SceneSelection.requiredObjectNames(for: $0, outputRoot: outputRoot, fileManager: fileManager) }
 
-        if sceneName == nil {
+        if sceneNames == nil || requiredObjectNames?.isEmpty == false {
             groups.append(contentsOf: try loadTextureSourceGroups(
                 in: sourceRoot,
                 xmlSubdirectory: "assets/xml/objects",
                 assetSubdirectory: "assets/objects",
                 kind: .object,
-                sceneName: nil,
+                sceneNames: nil,
+                objectNames: requiredObjectNames,
                 fileManager: fileManager
             ))
         }
@@ -391,7 +479,8 @@ private extension TextureExtractor {
             xmlSubdirectory: "assets/xml/scenes",
             assetSubdirectory: "assets/scenes",
             kind: .scene,
-            sceneName: sceneName,
+            sceneNames: sceneNames,
+            objectNames: nil,
             fileManager: fileManager
         ))
 
@@ -400,7 +489,8 @@ private extension TextureExtractor {
             xmlSubdirectory: "assets/xml/textures",
             assetSubdirectory: "assets/textures",
             kind: .textureCatalog,
-            sceneName: nil,
+            sceneNames: nil,
+            objectNames: nil,
             fileManager: fileManager
         ))
 
@@ -417,7 +507,8 @@ private extension TextureExtractor {
         xmlSubdirectory: String,
         assetSubdirectory: String,
         kind: AssetKind,
-        sceneName: String?,
+        sceneNames: Set<String>?,
+        objectNames: Set<String>?,
         fileManager: FileManager
     ) throws -> [TextureSourceGroup] {
         let xmlRoot = sourceRoot.appendingPathComponent(xmlSubdirectory, isDirectory: true)
@@ -440,10 +531,14 @@ private extension TextureExtractor {
             guard values.isRegularFile == true, xmlURL.pathExtension == "xml" else {
                 continue
             }
-            if let sceneName, kind == .scene, xmlURL.deletingPathExtension().lastPathComponent != sceneName {
+            let sourceName = xmlURL.deletingPathExtension().lastPathComponent
+            if kind == .scene, SceneSelection.includes(sourceName, in: sceneNames) == false {
                 continue
             }
-            if kind == .textureCatalog, xmlURL.deletingPathExtension().lastPathComponent != "skyboxes" {
+            if let objectNames, kind == .object, objectNames.contains(sourceName) == false {
+                continue
+            }
+            if kind == .textureCatalog, sourceName != "skyboxes" {
                 continue
             }
 
@@ -553,14 +648,11 @@ private extension TextureExtractor {
         sourceRoot: URL,
         fileManager: FileManager
     ) throws -> URL? {
-        let directDirectories =
-            [
-                sourceRoot.appendingPathComponent("build", isDirectory: true).appendingPathComponent(assetDirectory, isDirectory: true),
-                sourceRoot.appendingPathComponent(assetDirectory, isDirectory: true),
-            ]
-            + extractedRoots(in: sourceRoot, fileManager: fileManager).map {
-                $0.appendingPathComponent(assetDirectory, isDirectory: true)
-            }
+        let directDirectories = directAssetDirectories(
+            assetDirectory: assetDirectory,
+            sourceRoot: sourceRoot,
+            fileManager: fileManager
+        )
 
         for directory in directDirectories where fileManager.fileExists(atPath: directory.path) {
             for fileExtension in preferredExtensions {
@@ -590,6 +682,22 @@ private extension TextureExtractor {
         }
 
         return nil
+    }
+
+    static func directAssetDirectories(
+        assetDirectory: String,
+        sourceRoot: URL,
+        fileManager: FileManager
+    ) -> [URL] {
+        (
+            [
+                sourceRoot.appendingPathComponent("build", isDirectory: true).appendingPathComponent(assetDirectory, isDirectory: true),
+                sourceRoot.appendingPathComponent(assetDirectory, isDirectory: true),
+            ]
+            + extractedRoots(in: sourceRoot, fileManager: fileManager).map {
+                $0.appendingPathComponent(assetDirectory, isDirectory: true)
+            }
+        ).filter { fileManager.fileExists(atPath: $0.path) }
     }
 
     static func extractedRoots(in sourceRoot: URL, fileManager: FileManager) -> [URL] {
@@ -679,7 +787,8 @@ private extension TextureExtractor {
                     offset: $0.order,
                     tlutOffset: nil,
                     tlutName: $0.tlutName,
-                    pngURL: $0.pngURL
+                    pngURL: $0.pngURL,
+                    ignoreIfOrphanedTLUT: false
                 )
             }.sorted {
                 if $0.offset == $1.offset {
@@ -854,6 +963,45 @@ private extension TextureExtractor {
         )
     }
 
+    static func parseSourceBackedTextureFallbackDeclaration(
+        symbol: String,
+        includePath: String,
+        sourceFile: URL,
+        sourceRoot: URL,
+        fileManager: FileManager
+    ) -> SourceBackedTextureFallbackDeclaration? {
+        let basename = URL(fileURLWithPath: includePath).lastPathComponent
+        guard firstMatch(in: basename, expression: tlutIncludeExpression) == nil else {
+            return nil
+        }
+
+        guard
+            firstMatch(in: basename, expression: textureIncludeWithTLUTExpression) != nil ||
+                firstMatch(in: basename, expression: textureIncludeExpression) != nil
+        else {
+            return nil
+        }
+
+        let includeURL = sourceBackedIncludeURL(
+            forIncludePath: includePath,
+            sourceFile: sourceFile,
+            sourceRoot: sourceRoot,
+            fileManager: fileManager
+        )
+        let pngURL = sourceBackedPNGURL(
+            forIncludePath: includePath,
+            sourceFile: sourceFile,
+            sourceRoot: sourceRoot,
+            fileManager: fileManager
+        )
+
+        return SourceBackedTextureFallbackDeclaration(
+            name: symbol,
+            pngURL: pngURL,
+            usesMissingIncludeFallback: includeURL == nil && pngURL != nil
+        )
+    }
+
     static func sourceBackedIncludeURL(
         forIncludePath includePath: String,
         sourceFile: URL,
@@ -862,7 +1010,8 @@ private extension TextureExtractor {
     ) -> URL? {
         for root in sourceBackedSearchRoots(
             for: sourceFile,
-            sourceRoot: sourceRoot
+            sourceRoot: sourceRoot,
+            fileManager: fileManager
         ) {
             let candidate = root.appendingPathComponent(includePath)
             if fileManager.fileExists(atPath: candidate.path) {
@@ -886,7 +1035,8 @@ private extension TextureExtractor {
         let pngPath = String(includePath.dropLast(".inc.c".count)) + ".png"
         for root in sourceBackedSearchRoots(
             for: sourceFile,
-            sourceRoot: sourceRoot
+            sourceRoot: sourceRoot,
+            fileManager: fileManager
         ) {
             let candidate = root.appendingPathComponent(pngPath)
             if fileManager.fileExists(atPath: candidate.path) {
@@ -899,14 +1049,18 @@ private extension TextureExtractor {
 
     static func sourceBackedSearchRoots(
         for sourceFile: URL,
-        sourceRoot: URL
+        sourceRoot: URL,
+        fileManager: FileManager
     ) -> [URL] {
-        [
-            assetRoot(for: sourceFile),
-            sourceRoot.appendingPathComponent("build", isDirectory: true),
-            sourceRoot,
-            sourceFile.deletingLastPathComponent(),
-        ].compactMap { $0 }
+        var roots: [URL] = []
+        if let assetRoot = assetRoot(for: sourceFile) {
+            roots.append(assetRoot)
+        }
+        roots.append(sourceRoot.appendingPathComponent("build", isDirectory: true))
+        roots.append(contentsOf: extractedRoots(in: sourceRoot, fileManager: fileManager))
+        roots.append(sourceRoot)
+        roots.append(sourceFile.deletingLastPathComponent())
+        return roots
     }
 
     static func assetRoot(for fileURL: URL) -> URL? {
@@ -1027,6 +1181,24 @@ private extension TextureExtractor {
         throw TextureExtractorError.missingSourceFile(sourceGroup.sourceName, sourceGroup.xmlURL.path)
     }
 
+    static func resolveSourceFiles(
+        for sourceGroup: TextureSourceGroup,
+        requiredSymbols: Set<String>,
+        sourceRoot: URL,
+        fileManager: FileManager
+    ) throws -> [URL] {
+        let sourceFiles = try sourceFilesDeclaringSymbols(
+            for: sourceGroup,
+            requiredSymbols: requiredSymbols,
+            sourceRoot: sourceRoot,
+            fileManager: fileManager
+        )
+        guard sourceFiles.isEmpty == false else {
+            throw TextureExtractorError.missingSourceFile(sourceGroup.sourceName, sourceGroup.xmlURL.path)
+        }
+        return sourceFiles
+    }
+
     static func parseTextureArrays(
         in source: String,
         sourceFile: URL,
@@ -1082,8 +1254,7 @@ private extension TextureExtractor {
                 fallbackURLs = cached
             } else {
                 let resolved = try missingIncludePNGFallbacksByTextureName(
-                    for: group.sourceName,
-                    assetDirectory: group.assetDirectory,
+                    for: group,
                     sourceRoot: sourceRoot,
                     fileManager: fileManager
                 )
@@ -1112,7 +1283,8 @@ private extension TextureExtractor {
                     offset: texture.offset,
                     tlutOffset: texture.tlutOffset,
                     tlutName: texture.tlutName,
-                    pngURL: pngURL
+                    pngURL: pngURL,
+                    ignoreIfOrphanedTLUT: texture.ignoreIfOrphanedTLUT
                 )
             }
 
@@ -1133,54 +1305,147 @@ private extension TextureExtractor {
     }
 
     static func missingIncludePNGFallbacksByTextureName(
-        for sourceName: String,
-        assetDirectory: String,
+        for sourceGroup: TextureSourceGroup,
         sourceRoot: URL,
         fileManager: FileManager
     ) throws -> [String: URL] {
-        guard let sourceFile = try locateSourceFile(
-            named: sourceName,
-            preferredExtensions: ["c", "inc.c"],
-            assetDirectory: assetDirectory,
-            sourceRoot: sourceRoot,
-            fileManager: fileManager
-        ) else {
-            return [:]
-        }
-
-        let headerFile = try locateSourceFile(
-            named: sourceName,
-            preferredExtensions: ["h"],
-            assetDirectory: assetDirectory,
-            sourceRoot: sourceRoot,
-            fileManager: fileManager
-        )
-        let sourceContents = try String(contentsOf: sourceFile, encoding: .utf8)
-        let headerContents = if let headerFile {
-            try String(contentsOf: headerFile, encoding: .utf8)
-        } else {
-            ""
-        }
-
-        let dimensionsByName = parseTextureDimensions(in: headerContents)
-        let declarations = parseSourceBackedTextureDeclarations(
-            in: sourceContents,
-            dimensionsByName: dimensionsByName,
-            sourceFile: sourceFile,
+        let sourceFiles = try sourceFilesDeclaringSymbols(
+            for: sourceGroup,
+            requiredSymbols: Set(sourceGroup.textures.map(\.name)),
             sourceRoot: sourceRoot,
             fileManager: fileManager
         )
 
-        return declarations.textures.reduce(into: [:]) { result, texture in
-            guard
-                texture.usesMissingIncludeFallback,
-                let pngURL = texture.pngURL
-            else {
-                return
+        return try sourceFiles.reduce(into: [:]) { result, sourceFile in
+            let sourceContents = try String(contentsOf: sourceFile, encoding: .utf8)
+            let range = NSRange(sourceContents.startIndex..<sourceContents.endIndex, in: sourceContents)
+
+            for match in sourceBackedTextureDefinitionExpression.matches(in: sourceContents, range: range) {
+                let symbol = substring(in: sourceContents, range: match.range(at: 1))
+                let includePath = substring(in: sourceContents, range: match.range(at: 2))
+                guard
+                    let texture = parseSourceBackedTextureFallbackDeclaration(
+                        symbol: symbol,
+                        includePath: includePath,
+                        sourceFile: sourceFile,
+                        sourceRoot: sourceRoot,
+                        fileManager: fileManager
+                    ),
+                    texture.usesMissingIncludeFallback,
+                    let pngURL = texture.pngURL
+                else {
+                    continue
+                }
+
+                result[texture.name] = pngURL
+            }
+        }
+    }
+
+    static func firstSourceContainingRequiredTextureSymbolsInSourceRoot(
+        for sourceGroup: TextureSourceGroup,
+        sourceRoot: URL,
+        fileManager: FileManager
+    ) -> URL? {
+        let searchRoots =
+            [sourceRoot.appendingPathComponent("build", isDirectory: true)]
+            + extractedRoots(in: sourceRoot, fileManager: fileManager)
+            + [sourceRoot]
+
+        for root in searchRoots where fileManager.fileExists(atPath: root.path) {
+            if let match = try? firstSourceContainingRequiredTextureSymbols(
+                for: sourceGroup,
+                in: root,
+                fileManager: fileManager
+            ) {
+                guard match.pathExtension != "h" else {
+                    continue
+                }
+                return match
+            }
+        }
+
+        return nil
+    }
+
+    static func sourceFilesDeclaringSymbols(
+        for sourceGroup: TextureSourceGroup,
+        requiredSymbols: Set<String>,
+        sourceRoot: URL,
+        fileManager: FileManager
+    ) throws -> [URL] {
+        guard requiredSymbols.isEmpty == false else {
+            return []
+        }
+
+        let directMatches = try findSourceFilesDeclaringTextureSymbols(
+            in: directAssetDirectories(
+                assetDirectory: sourceGroup.assetDirectory,
+                sourceRoot: sourceRoot,
+                fileManager: fileManager
+            ),
+            requiredSymbols: requiredSymbols,
+            fileManager: fileManager
+        )
+        if directMatches.isEmpty == false {
+            return directMatches
+        }
+
+        let searchRoots =
+            [sourceRoot.appendingPathComponent("build", isDirectory: true)]
+            + extractedRoots(in: sourceRoot, fileManager: fileManager)
+            + [sourceRoot]
+
+        return try findSourceFilesDeclaringTextureSymbols(
+            in: searchRoots,
+            requiredSymbols: requiredSymbols,
+            fileManager: fileManager
+        )
+    }
+
+    static func findSourceFilesDeclaringTextureSymbols(
+        in searchRoots: [URL],
+        requiredSymbols: Set<String>,
+        fileManager: FileManager
+    ) throws -> [URL] {
+        var matches: [URL] = []
+        var seenPaths: Set<String> = []
+
+        for root in searchRoots where fileManager.fileExists(atPath: root.path) {
+            guard let enumerator = fileManager.enumerator(
+                at: root,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                continue
             }
 
-            result[texture.name] = pngURL
+            for case let fileURL as URL in enumerator {
+                let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
+                guard values.isRegularFile == true else {
+                    continue
+                }
+                guard isCandidateTextureSourceFile(fileURL) else {
+                    continue
+                }
+                guard seenPaths.insert(fileURL.standardizedFileURL.path).inserted else {
+                    continue
+                }
+                guard let contents = try? String(contentsOf: fileURL, encoding: .utf8) else {
+                    continue
+                }
+                guard requiredSymbols.contains(where: contents.contains) else {
+                    continue
+                }
+                guard declaredTextureSymbols(in: contents).intersection(requiredSymbols).isEmpty == false else {
+                    continue
+                }
+
+                matches.append(fileURL)
+            }
         }
+
+        return matches.sorted { $0.path < $1.path }
     }
 
     static func dataSource(
@@ -1442,6 +1707,9 @@ private extension TextureExtractor {
             guard requiredSymbols.allSatisfy(contents.contains) else {
                 return nil
             }
+            guard declaredTextureSymbols(in: contents).contains(where: requiredSymbols.contains) else {
+                return nil
+            }
 
             var score = 0
             if preferredFilenames.contains(fileURL.lastPathComponent) {
@@ -1479,6 +1747,21 @@ private extension TextureExtractor {
         default:
             return false
         }
+    }
+
+    static func declaredTextureSymbols(in source: String) -> Set<String> {
+        let sanitized = stripLineComments(from: source)
+        let sourceRange = NSRange(source.startIndex..<source.endIndex, in: source)
+        let sanitizedRange = NSRange(sanitized.startIndex..<sanitized.endIndex, in: sanitized)
+
+        let includeBackedSymbols = sourceBackedTextureDefinitionExpression.matches(in: source, range: sourceRange).map {
+            substring(in: source, range: $0.range(at: 1))
+        }
+        let inlineArraySymbols = arrayExpression.matches(in: sanitized, range: sanitizedRange).map {
+            substring(in: sanitized, range: $0.range(at: 2))
+        }
+
+        return Set(includeBackedSymbols + inlineArraySymbols)
     }
 
     static func matchingBraceRange(in source: String, openingBraceLocation: Int) throws -> NSRange {

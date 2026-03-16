@@ -13,13 +13,21 @@ public final class OOTContentExtractor {
     }
 
     public func extract(from source: URL, to output: URL, scene: String? = nil) throws {
+        try extract(
+            from: source,
+            to: output,
+            scenes: scene.map { [$0] }
+        )
+    }
+
+    public func extract(from source: URL, to output: URL, scenes: [String]? = nil) throws {
         guard fileManager.fileExists(atPath: source.path) else {
             throw OOTContentExtractorError.missingPath(source.path)
         }
 
         try fileManager.createDirectory(at: output, withIntermediateDirectories: true)
 
-        let context = OOTExtractionContext(source: source, output: output, sceneName: scene)
+        let context = OOTExtractionContext(source: source, output: output, sceneNames: scenes)
         print("Starting extraction pipeline")
 
         for component in pipeline {
@@ -47,8 +55,8 @@ public final class OOTContentExtractor {
     private static func makeDefaultPipeline() -> [any OOTExtractionPipelineComponent] {
         [
             TableExtractor(),
-            TextureExtractor(),
             SceneExtractor(),
+            TextureExtractor(),
             ObjectExtractor(),
             ActorExtractor(),
             AudioExtractor(),

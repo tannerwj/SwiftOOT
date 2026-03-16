@@ -3,13 +3,11 @@ import OOTDataModel
 
 extension ObjectExtractor {
     public func extract(using context: OOTExtractionContext) throws {
-        guard context.sceneName == nil else {
-            print("[\(name)] skipped object extraction for scene-scoped run")
-            return
-        }
-
         let fileManager = FileManager.default
+        let selectedObjectNames =
+            try context.sceneNames.map { try SceneSelection.requiredObjectNames(for: $0, outputRoot: context.output, fileManager: fileManager) }
         let objects = try Self.loadObjects(in: context.source, fileManager: fileManager)
+            .filter { selectedObjectNames?.contains($0.name) ?? true }
         let vertexParser = VertexParser()
         let displayListParser = DisplayListParser()
         var extractedObjects = 0
