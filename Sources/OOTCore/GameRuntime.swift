@@ -491,6 +491,9 @@ public final class GameRuntime {
     private var previousControllerInputState = ControllerInputState()
 
     @ObservationIgnored
+    private var movementReferenceYaw: Float?
+
+    @ObservationIgnored
     private var sceneManager: SceneManager?
 
     @ObservationIgnored
@@ -518,7 +521,7 @@ public final class GameRuntime {
         contentLoader: (any ContentLoading)? = nil,
         sceneLoader: (any SceneLoading)? = nil,
         telemetryPublisher: (any TelemetryPublishing)? = nil,
-        timeSystem: TimeSystem = TimeSystem(),
+        timeSystem: TimeSystem = TimeSystem(gameMinutesPerRealSecond: 0.1),
         actorRegistry: ActorRegistry? = nil,
         movementConfiguration: PlayerMovementConfiguration = PlayerMovementConfiguration(),
         bootDuration: Duration = .milliseconds(250),
@@ -843,6 +846,10 @@ public final class GameRuntime {
         controllerInputState = input
     }
 
+    public func setMovementReferenceYaw(_ yaw: Float?) {
+        movementReferenceYaw = yaw
+    }
+
     private func openFileSelect(
         mode: FileSelectMode,
         preferredSlot: Int
@@ -956,7 +963,7 @@ public final class GameRuntime {
         self.playerState = makeInitialPlayerState(
             for: loadedScene,
             actorTable: actorTable,
-            spawnIndex: manager.state.currentSpawnIndex
+            preferredSpawnIndex: manager.state.currentSpawnIndex
         )
         self.actorContext = actorContext
         sceneManager = manager
@@ -1070,6 +1077,7 @@ public final class GameRuntime {
         if let playerState {
             self.playerState = playerState.updating(
                 input: playerInput,
+                movementReferenceYaw: movementReferenceYaw,
                 collisionSystem: collisionSystem,
                 configuration: movementConfiguration
             )
@@ -1338,12 +1346,20 @@ public final class GameRuntime {
     private func makeInitialPlayerState(
         for scene: LoadedScene,
         actorTable: [Int: ActorTableEntry],
-        spawnIndex: Int?
+        preferredSpawnIndex: Int?
     ) -> PlayerState {
-        let fallbackPosition = defaultPlayerSpawn(in: scene)
-        let configuredSpawn = spawnIndex.flatMap { index in
-            scene.spawns?.spawns.first(where: { $0.index == index })
+        let preferredSceneSpawn = preferredSpawnIndex.flatMap { index in
+            let spawns = scene.spawns?.spawns ?? scene.sceneHeader?.spawns ?? []
+            return spawns.first(where: { $0.index == index })
         }
+        let defaultSceneSpawn = resolvedSceneSpawn(
+            in: scene,
+            preferredSpawnIndex: nil
+        )
+        let fallbackPosition = defaultPlayerSpawn(
+            in: scene,
+            preferredSpawnPosition: (preferredSceneSpawn ?? defaultSceneSpawn).map { Vec3f($0.position).simd }
+        )
         let playerSpawn = scene.actors?.rooms
             .flatMap(\.actors)
             .first { spawn in
@@ -1357,8 +1373,9 @@ public final class GameRuntime {
 
         let collisionSystem = CollisionSystem(scene: scene)
         let rawPosition =
-            configuredSpawn.map { Vec3f($0.position).simd } ??
+            preferredSceneSpawn.map { Vec3f($0.position).simd } ??
             playerSpawn.map { Vec3f($0.position).simd } ??
+            defaultSceneSpawn.map { Vec3f($0.position).simd } ??
             fallbackPosition
         let probePosition = rawPosition + SIMD3<Float>(0, movementConfiguration.floorProbeHeight, 0)
         let floorHit = collisionSystem.findFloor(at: probePosition)
@@ -1369,10 +1386,12 @@ public final class GameRuntime {
         )
 
         let facingRadians: Float
-        if let configuredSpawn {
-            facingRadians = rawRotationToRadians(Float(configuredSpawn.rotation.y))
+        if let preferredSceneSpawn {
+            facingRadians = rawRotationToRadians(Float(preferredSceneSpawn.rotation.y))
         } else if let playerSpawn {
             facingRadians = rawRotationToRadians(Float(playerSpawn.rotation.y))
+        } else if let defaultSceneSpawn {
+            facingRadians = rawRotationToRadians(Float(defaultSceneSpawn.rotation.y))
         } else {
             facingRadians = 0
         }
@@ -1388,7 +1407,14 @@ public final class GameRuntime {
         )
     }
 
-    private func defaultPlayerSpawn(in scene: LoadedScene) -> SIMD3<Float> {
+    private func defaultPlayerSpawn(
+        in scene: LoadedScene,
+        preferredSpawnPosition: SIMD3<Float>?
+    ) -> SIMD3<Float> {
+        if let preferredSpawnPosition {
+            return preferredSpawnPosition
+        }
+
         guard let collision = scene.collision else {
             return .zero
         }
@@ -1402,6 +1428,23 @@ public final class GameRuntime {
 
     private func rawRotationToRadians(_ rawValue: Float) -> Float {
         rawValue * (.pi / 32_768)
+    }
+
+    private func resolvedSceneSpawn(
+        in scene: LoadedScene,
+        preferredSpawnIndex: Int?
+    ) -> SceneSpawnPoint? {
+        let spawns = scene.spawns?.spawns ?? scene.sceneHeader?.spawns ?? []
+        guard spawns.isEmpty == false else {
+            return nil
+        }
+
+        if let preferredSpawnIndex,
+           let matchingSpawn = spawns.first(where: { $0.index == preferredSpawnIndex }) {
+            return matchingSpawn
+        }
+
+        return spawns.first
     }
 
     private func sceneID(for sceneName: String) -> Int? {

@@ -16,6 +16,18 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual(updated.timeOfDay, 6.0 + (1.0 / 60.0), accuracy: 0.000_1)
     }
 
+    @MainActor
+    func testGameRuntimeDefaultTimeSystemAdvancesAtUsableSceneViewerRate() {
+        let runtime = GameRuntime(
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        runtime.advanceGameTime(byRealSeconds: 1.0)
+
+        XCTAssertEqual(runtime.gameTime.timeOfDay, 6.0 + (0.1 / 60.0), accuracy: 0.000_1)
+    }
+
     func testTimeSystemUsesExplicitSceneStartTimeWhenPresent() {
         let timeSystem = TimeSystem()
         let environment = SceneEnvironmentFile(
@@ -288,6 +300,7 @@ final class OOTCoreTests: XCTestCase {
 
         let walking = initialState.updating(
             input: ControllerInputState(stick: StickInput(x: 0, y: 0.5)),
+            movementReferenceYaw: nil,
             collisionSystem: system,
             configuration: configuration
         )
@@ -297,12 +310,43 @@ final class OOTCoreTests: XCTestCase {
 
         let running = initialState.updating(
             input: ControllerInputState(stick: StickInput(x: 1, y: 0)),
+            movementReferenceYaw: nil,
             collisionSystem: system,
             configuration: configuration
         )
         XCTAssertEqual(running.locomotionState, .running)
         XCTAssertEqual(running.animationState.currentClip, .run)
         XCTAssertEqual(Double(running.facingRadians), Double.pi / 2, accuracy: 0.001)
+    }
+
+    func testPlayerStateMovesRelativeToFacingDirection() {
+        let system = CollisionSystem(staticMeshes: [fixtureCollisionMesh()])
+        let configuration = PlayerMovementConfiguration(
+            walkSpeed: 1,
+            runSpeed: 1.5,
+            floorProbeHeight: 4,
+            collisionRadius: 0.5
+        )
+        let initialState = PlayerState(
+            position: Vec3f(x: 2, y: 0, z: 8),
+            velocity: Vec3f(x: 0, y: 0, z: 0),
+            facingRadians: .pi / 2,
+            isGrounded: true,
+            locomotionState: .idle,
+            animationState: PlayerAnimationState(),
+            floorHeight: 0
+        )
+
+        let movedForward = initialState.updating(
+            input: ControllerInputState(stick: StickInput(x: 0, y: 1)),
+            movementReferenceYaw: nil,
+            collisionSystem: system,
+            configuration: configuration
+        )
+
+        XCTAssertGreaterThan(movedForward.position.x, initialState.position.x)
+        XCTAssertEqual(Double(movedForward.position.z), Double(initialState.position.z), accuracy: 0.001)
+        XCTAssertEqual(Double(movedForward.facingRadians), Double.pi / 2, accuracy: 0.001)
     }
 
     func testPlayerStateSnapsToNearbyFloorAndFallsWithoutSupport() {
@@ -320,6 +364,7 @@ final class OOTCoreTests: XCTestCase {
         )
         let snapped = nearFloor.updating(
             input: ControllerInputState(),
+            movementReferenceYaw: nil,
             collisionSystem: system,
             configuration: configuration
         )
@@ -338,12 +383,43 @@ final class OOTCoreTests: XCTestCase {
         )
         let falling = unsupported.updating(
             input: ControllerInputState(),
+            movementReferenceYaw: nil,
             collisionSystem: system,
             configuration: configuration
         )
         XCTAssertFalse(falling.isGrounded)
         XCTAssertEqual(falling.locomotionState, .falling)
         XCTAssertLessThan(falling.position.y, unsupported.position.y)
+    }
+
+    func testPlayerStateUsesMovementReferenceYawWhenProvided() {
+        let system = CollisionSystem(staticMeshes: [fixtureCollisionMesh()])
+        let configuration = PlayerMovementConfiguration(
+            walkSpeed: 1,
+            runSpeed: 1.5,
+            floorProbeHeight: 4,
+            collisionRadius: 0.5
+        )
+        let initialState = PlayerState(
+            position: Vec3f(x: 2, y: 0, z: 8),
+            velocity: Vec3f(x: 0, y: 0, z: 0),
+            facingRadians: 0,
+            isGrounded: true,
+            locomotionState: .idle,
+            animationState: PlayerAnimationState(),
+            floorHeight: 0
+        )
+
+        let movedForward = initialState.updating(
+            input: ControllerInputState(stick: StickInput(x: 0, y: 1)),
+            movementReferenceYaw: .pi / 2,
+            collisionSystem: system,
+            configuration: configuration
+        )
+
+        XCTAssertGreaterThan(movedForward.position.x, initialState.position.x)
+        XCTAssertEqual(Double(movedForward.position.z), Double(initialState.position.z), accuracy: 0.001)
+        XCTAssertEqual(Double(movedForward.facingRadians), Double.pi / 2, accuracy: 0.001)
     }
 
     @MainActor
@@ -753,6 +829,47 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual(runtime.playState?.currentEntranceIndex, 9)
         XCTAssertEqual(runtime.playState?.currentRoomID, 2)
         XCTAssertEqual(runtime.playState?.transitionEffect, .wipe)
+    }
+
+    @MainActor
+    func testLoadSceneUsesResolvedSpawnPointToPlacePlayerOnGroundWhenNoPlayerActorExists() throws {
+        let scene = makeScene(
+            roomSpawns: [0: []],
+            entrances: [SceneEntranceDefinition(index: 5, spawnIndex: 1)],
+            spawns: [
+                SceneSpawnPoint(
+                    index: 0,
+                    roomID: 0,
+                    position: Vector3s(x: 1, y: 99, z: 1),
+                    rotation: Vector3s(x: 0, y: 0, z: 0)
+                ),
+                SceneSpawnPoint(
+                    index: 1,
+                    roomID: 0,
+                    position: Vector3s(x: 8, y: 99, z: 2),
+                    rotation: Vector3s(x: 0, y: 0x2000, z: 0)
+                ),
+            ],
+            collision: fixtureCollisionMesh()
+        )
+        let fixture = RuntimeFixture(scene: scene, actorTable: [])
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55, entranceIndex: 5)
+
+        let playerState = try XCTUnwrap(runtime.playerState)
+
+        XCTAssertEqual(runtime.playState?.currentSpawnIndex, 1)
+        XCTAssertEqual(playerState.position.x, 8, accuracy: 0.001)
+        XCTAssertEqual(playerState.position.z, 2, accuracy: 0.001)
+        XCTAssertEqual(playerState.position.y, 0, accuracy: 0.001)
+        XCTAssertTrue(playerState.isGrounded)
+        XCTAssertEqual(playerState.locomotionState, .idle)
+        XCTAssertEqual(playerState.facingRadians, .pi / 4, accuracy: 0.001)
     }
 
     @MainActor
@@ -1229,7 +1346,8 @@ private func makeScene(
     entrances: [SceneEntranceDefinition] = [],
     spawns: [SceneSpawnPoint] = [],
     transitionTriggers: [SceneTransitionTrigger] = [],
-    exits: [SceneExitDefinition] = []
+    exits: [SceneExitDefinition] = [],
+    collision: CollisionMesh? = nil
 ) -> LoadedScene {
     let sortedRooms = roomSpawns.keys.sorted()
     let manifestRooms = sortedRooms.map { roomID in
@@ -1263,6 +1381,7 @@ private func makeScene(
             rooms: manifestRooms,
             actorsPath: "Manifests/scenes/test_scene/actors.json"
         ),
+        collision: collision,
         actors: actors,
         spawns: SceneSpawnsFile(sceneName: sceneName, spawns: spawns),
         exits: SceneExitsFile(sceneName: sceneName, exits: exits),

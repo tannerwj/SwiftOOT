@@ -14,6 +14,7 @@ final class OOTContentBootstrapModel {
     private let userDefaults: UserDefaults
     private let environment: [String: String]
     private let developerHarnessConfigurationResult: Result<DeveloperHarnessConfiguration?, Error>
+    private var startupTask: Task<Void, Never>?
 
     var configuredContentRoot: URL?
     var runtime: GameRuntime?
@@ -37,6 +38,8 @@ final class OOTContentBootstrapModel {
     }
 
     func restoreConfiguration() {
+        startupTask?.cancel()
+        startupTask = nil
         runtime = nil
         configuredContentRoot = nil
         errorMessage = nil
@@ -89,6 +92,9 @@ final class OOTContentBootstrapModel {
         _ selectedURL: URL,
         persistSelection: Bool = true
     ) -> Bool {
+        startupTask?.cancel()
+        startupTask = nil
+
         if case .failure(let error) = developerHarnessConfigurationResult {
             errorMessage = error.localizedDescription
             return false
@@ -110,6 +116,10 @@ final class OOTContentBootstrapModel {
         )
         errorMessage = nil
 
+        if let runtime {
+            scheduleStartup(for: runtime)
+        }
+
         if persistSelection {
             userDefaults.set(resolvedContentRoot.path, forKey: Self.storedContentRootDefaultsKey)
         }
@@ -118,11 +128,94 @@ final class OOTContentBootstrapModel {
     }
 
     func clearConfiguration() {
+        startupTask?.cancel()
+        startupTask = nil
         userDefaults.removeObject(forKey: Self.storedContentRootDefaultsKey)
         configuredContentRoot = nil
         runtime = nil
         errorMessage = nil
         startupHint = nil
+    }
+
+    private func scheduleStartup(for runtime: GameRuntime) {
+        let harness = developerHarnessConfiguration
+        startupTask = Task { @MainActor [weak self, runtime] in
+            await Task.yield()
+            guard let self, !Task.isCancelled else {
+                return
+            }
+
+            do {
+                if let harness, harness.isEnabled {
+                    try await DeveloperHarnessRunner.run(
+                        configuration: harness,
+                        runtime: runtime,
+                        log: { [weak self] message in
+                            self?.writeHarnessNoteToStderr(message, harness: harness)
+                        }
+                    )
+                    if harness.captureRequested {
+                        NSApplication.shared.terminate(nil)
+                    }
+                } else {
+                    await runtime.start()
+                }
+            } catch {
+                runtime.errorMessage = error.localizedDescription
+                if let harness, harness.isEnabled {
+                    writeHarnessFailureToStderr(error.localizedDescription, harness: harness)
+                    if harness.captureRequested {
+                        NSApplication.shared.terminate(nil)
+                    }
+                }
+            }
+        }
+    }
+
+    private func writeHarnessFailureToStderr(
+        _ message: String,
+        harness: DeveloperHarnessConfiguration
+    ) {
+        let line = "SwiftOOT harness failed: \(message)\n"
+        guard let data = line.data(using: .utf8) else {
+            return
+        }
+        try? FileHandle.standardError.write(contentsOf: data)
+        appendHarnessTrace(line, harness: harness)
+    }
+
+    private func writeHarnessNoteToStderr(
+        _ message: String,
+        harness: DeveloperHarnessConfiguration
+    ) {
+        let line = "SwiftOOT harness: \(message)\n"
+        guard let data = line.data(using: .utf8) else {
+            return
+        }
+        try? FileHandle.standardError.write(contentsOf: data)
+        appendHarnessTrace(line, harness: harness)
+    }
+
+    private func appendHarnessTrace(
+        _ line: String,
+        harness: DeveloperHarnessConfiguration
+    ) {
+        guard let directory = (harness.captureStateURL ?? harness.captureFrameURL)?.deletingLastPathComponent() else {
+            return
+        }
+
+        let fileManager = FileManager.default
+        let logURL = directory.appendingPathComponent("harness.log")
+        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
+
+        if let handle = try? FileHandle(forWritingTo: logURL) {
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: Data(line.utf8))
+            try? handle.close()
+            return
+        }
+
+        try? Data(line.utf8).write(to: logURL, options: .atomic)
     }
 }
 

@@ -68,6 +68,10 @@ final class SceneLoaderTests: XCTestCase {
             textureURLs[OOTAssetID.stableID(for: "gSpot04Room0Tex")]?.lastPathComponent,
             "gSpot04Room0Tex.tex.bin"
         )
+        XCTAssertEqual(
+            textureURLs[OOTAssetID.stableID(for: "gDayOvercastSkybox1Tex")]?.lastPathComponent,
+            "gDayOvercastSkybox1Tex.tex.bin"
+        )
     }
 }
 
@@ -126,8 +130,8 @@ private struct SceneLoaderFixture {
             sceneName: "spot04",
             time: SceneTimeSettings(hour: 255, minute: 255, timeSpeed: 0),
             skybox: SceneSkyboxSettings(
-                skyboxID: 29,
-                skyboxConfig: 0,
+                skyboxID: 1,
+                skyboxConfig: 1,
                 environmentLightingMode: "LIGHT_MODE_TIME",
                 skyboxDisabled: false,
                 sunMoonDisabled: false
@@ -144,7 +148,23 @@ private struct SceneLoaderFixture {
                     fogNear: 900,
                     zFar: 1000
                 )
-            ]
+            ],
+            resolvedSkybox: SceneResolvedSkybox(
+                textureDirectories: ["Textures/vr_cloud1_static"],
+                states: [
+                    SceneSkyboxAssetState(
+                        id: "day-overcast",
+                        sourceName: "vr_cloud1_static",
+                        faces: [
+                            SceneSkyboxFaceAsset(face: .front, assetName: "gDayOvercastSkybox1Tex"),
+                            SceneSkyboxFaceAsset(face: .right, assetName: "gDayOvercastSkybox2Tex"),
+                            SceneSkyboxFaceAsset(face: .back, assetName: "gDayOvercastSkybox3Tex"),
+                            SceneSkyboxFaceAsset(face: .left, assetName: "gDayOvercastSkybox4Tex"),
+                            SceneSkyboxFaceAsset(face: .top, assetName: "gDayOvercastSkybox5Tex"),
+                        ]
+                    )
+                ]
+            )
         )
         paths = ScenePathsFile(
             sceneName: "spot04",
@@ -383,6 +403,10 @@ private struct SceneLoaderFixture {
         try seedTexture(
             relativeDirectory: "Textures/spot04_room_0",
             name: "gSpot04Room0Tex"
+        )
+        try seedTexture(
+            relativeDirectory: "Textures/vr_cloud1_static",
+            name: "gDayOvercastSkybox1Tex"
         )
     }
 

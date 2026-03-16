@@ -57,6 +57,10 @@ final class InputManager: NSObject, GameplayInputHandling {
         return true
     }
 
+    func updateMovementReferenceYaw(_ yaw: Float?) {
+        runtime?.setMovementReferenceYaw(yaw)
+    }
+
     private func installControllerObservers() {
         let center = NotificationCenter.default
         center.addObserver(

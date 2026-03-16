@@ -237,7 +237,7 @@ public final class OrbitCameraController {
         camera.pan(direction: direction, viewportSize: viewportSize)
     }
 
-    public func frameUniforms() -> FrameUniforms {
+    func cameraMatrices() -> CameraMatrices {
         let aspectRatio: Float
         if viewportSize.width > 0, viewportSize.height > 0 {
             aspectRatio = Float(viewportSize.width / viewportSize.height)
@@ -245,7 +245,14 @@ public final class OrbitCameraController {
             aspectRatio = 1.0
         }
 
-        return camera.frameUniforms(aspectRatio: aspectRatio)
+        return CameraMatrices(
+            viewMatrix: camera.viewMatrix,
+            projectionMatrix: camera.projectionMatrix(aspectRatio: aspectRatio)
+        )
+    }
+
+    public func frameUniforms() -> FrameUniforms {
+        FrameUniforms(mvp: cameraMatrices().viewProjectionMatrix)
     }
 }
 

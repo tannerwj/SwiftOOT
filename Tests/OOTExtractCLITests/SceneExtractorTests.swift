@@ -4,6 +4,31 @@ import XCTest
 @testable import OOTExtractSupport
 
 final class SceneExtractorTests: XCTestCase {
+    func testResolveSkyboxAssetsBuildsTimeBasedNormalSkyMetadata() {
+        let resolved = SceneExtractor.resolvedSkyboxAssets(
+            for: SceneSkyboxSettings(
+                skyboxID: 1,
+                skyboxConfig: 1,
+                environmentLightingMode: "LIGHT_MODE_TIME",
+                skyboxDisabled: false,
+                sunMoonDisabled: false
+            )
+        )
+
+        XCTAssertEqual(resolved?.textureDirectories, [
+            "Textures/vr_cloud0_static",
+            "Textures/vr_cloud1_static",
+            "Textures/vr_cloud2_static",
+            "Textures/vr_cloud3_static",
+        ])
+        XCTAssertEqual(resolved?.schedule.first, SceneSkyboxScheduleEntry(startMinute: 0, endMinute: 241, stateID: "night-overcast"))
+        XCTAssertEqual(resolved?.schedule.first(where: { $0.startMinute == 481 })?.stateID, "day-overcast")
+        XCTAssertEqual(
+            resolved?.states.first(where: { $0.id == "day-overcast" })?.faces.first,
+            SceneSkyboxFaceAsset(face: .front, assetName: "gDayOvercastSkybox1Tex")
+        )
+    }
+
     func testExtractWritesPerRoomGeometryBundles() throws {
         let harness = try SceneHarness()
         defer { harness.cleanup() }
@@ -573,6 +598,76 @@ final class SceneExtractorTests: XCTestCase {
                         maximum: Vector3s(x: -240, y: 10, z: 512)
                     )
                 ),
+            ]
+        )
+    }
+
+    func testExtractResolvesSymbolicSkyboxSettingsIntoResolvedSkyboxMetadata() throws {
+        let harness = try SceneHarness()
+        defer { harness.cleanup() }
+
+        try harness.seedActorTableManifest()
+        try harness.seedObjectTableManifest()
+        try harness.writeSceneXML(at: "assets/xml/scenes/overworld/spot04.xml", contents: sceneXMLFixture)
+        try harness.writeSourceFile(
+            at: "assets/scenes/overworld/spot04/spot04_scene.c",
+            contents: sceneMetadataSourceFixture.replacingOccurrences(
+                of: "SCENE_CMD_SKYBOX_SETTINGS(29, 0, false)",
+                with: "SCENE_CMD_SKYBOX_SETTINGS(SKYBOX_NORMAL_SKY, 1, LIGHT_MODE_TIME)"
+            )
+        )
+        try harness.writeSourceFile(
+            at: "assets/scenes/overworld/spot04/spot04_room_0.c",
+            contents: roomMetadataSourceFixture
+        )
+        try harness.writeSourceFile(
+            at: "include/tables/entrance_table.h",
+            contents: entranceTableFixture
+        )
+        try harness.writeSourceFile(
+            at: "include/environment.h",
+            contents: """
+            typedef enum LightMode {
+                LIGHT_MODE_TIME,
+                LIGHT_MODE_SETTINGS,
+            } LightMode;
+            """
+        )
+        try harness.writeSourceFile(
+            at: "include/skybox.h",
+            contents: """
+            typedef enum SkyboxId {
+                SKYBOX_NONE,
+                SKYBOX_NORMAL_SKY,
+            } SkyboxId;
+            """
+        )
+
+        try SceneExtractor().extract(using: harness.extractionContext(sceneName: "spot04"))
+
+        let sceneDirectory = try harness.metadataDirectory()
+        let environment = try JSONDecoder().decode(
+            SceneEnvironmentFile.self,
+            from: Data(contentsOf: sceneDirectory.appendingPathComponent("environment.json"))
+        )
+
+        XCTAssertEqual(
+            environment.skybox,
+            SceneSkyboxSettings(
+                skyboxID: 1,
+                skyboxConfig: 1,
+                environmentLightingMode: "LIGHT_MODE_TIME",
+                skyboxDisabled: false,
+                sunMoonDisabled: false
+            )
+        )
+        XCTAssertEqual(
+            environment.resolvedSkybox?.textureDirectories,
+            [
+                "Textures/vr_cloud0_static",
+                "Textures/vr_cloud1_static",
+                "Textures/vr_cloud2_static",
+                "Textures/vr_cloud3_static",
             ]
         )
     }
