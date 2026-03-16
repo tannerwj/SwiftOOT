@@ -168,6 +168,93 @@ final class OOTUITests: XCTestCase {
         )
     }
 
+    func testChestItemGetRuntimeWalkthroughUsingFixtureContentRoot() async throws {
+        let fixture = try ChestRuntimeContentFixture()
+        defer { fixture.cleanup() }
+
+        let sceneLoader = SceneLoader(contentRoot: fixture.contentRoot)
+        let contentLoader = ContentLoader(sceneLoader: sceneLoader)
+        let runtime = GameRuntime(
+            contentLoader: contentLoader,
+            sceneLoader: sceneLoader,
+            suspender: { _ in }
+        )
+
+        await runtime.start()
+        XCTAssertEqual(runtime.currentState, .titleScreen)
+
+        runtime.chooseTitleOption(.newGame)
+        runtime.confirmSelectedSaveSlot()
+        XCTAssertEqual(runtime.currentState, .gameplay)
+
+        try runtime.loadScene(id: fixture.sceneID)
+
+        XCTAssertEqual(runtime.loadedScene?.manifest.name, fixture.sceneName)
+        XCTAssertEqual(runtime.gameplayActionLabel, "Open")
+        XCTAssertNil(runtime.activeItemGetOverlay)
+
+        let initialPayload = try SceneRenderPayloadBuilder.makePayload(
+            scene: try XCTUnwrap(runtime.loadedScene),
+            textureAssetURLs: runtime.textureAssetURLs,
+            contentLoader: runtime.contentLoader
+        )
+
+        XCTAssertNotNil(initialPayload.playerRenderAssets)
+        XCTAssertNotNil(initialPayload.chestRenderAssets)
+        try assertRenderedSceneHasVisibleGeometry(
+            payload: initialPayload,
+            expectedSceneName: fixture.sceneName
+        )
+
+        runtime.handlePrimaryGameplayInput()
+
+        let sequence = try XCTUnwrap(runtime.itemGetSequence)
+        XCTAssertEqual(sequence.reward, .compass)
+        XCTAssertEqual(runtime.activeItemGetOverlay?.title, "Compass")
+        XCTAssertEqual(runtime.activeItemGetOverlay?.phase, .raising)
+        XCTAssertEqual(runtime.playerState?.presentationMode, .itemGetA)
+
+        let activeRenderScene = SceneRenderPayloadBuilder.renderScene(
+            from: initialPayload,
+            playerState: runtime.playerState,
+            actors: runtime.actors
+        )
+        XCTAssertEqual(activeRenderScene.skeletons.map(\.name).sorted(), ["Chest-0.0--36.0", "Link"])
+
+        let cameraConfiguration = try XCTUnwrap(
+            SceneRenderPayloadBuilder.makeGameplayCameraConfiguration(
+                scene: try XCTUnwrap(runtime.loadedScene),
+                playerState: runtime.playerState,
+                itemGetSequence: runtime.itemGetSequence
+            )
+        )
+        XCTAssertEqual(
+            cameraConfiguration.presentationOverride,
+            .itemGet(itemPosition: sequence.itemWorldPosition.simd, playerYaw: runtime.playerState?.facingRadians ?? 0)
+        )
+
+        for _ in 0..<24 {
+            runtime.updateFrame()
+        }
+
+        XCTAssertEqual(runtime.activeItemGetOverlay?.phase, .displayingText)
+        XCTAssertEqual(runtime.activeMessagePresentation?.textRuns.first?.text, "Compass\n")
+        XCTAssertTrue(runtime.inventoryState.dungeonState(for: sequence.treasureFlag.scene).hasCompass)
+
+        runtime.handlePrimaryGameplayInput()
+        for _ in 0..<8 {
+            runtime.updateFrame()
+        }
+
+        XCTAssertNil(runtime.itemGetSequence)
+        XCTAssertEqual(runtime.playerState?.presentationMode, .normal)
+
+        try runtime.loadScene(id: fixture.sceneID)
+
+        XCTAssertNil(runtime.gameplayActionLabel)
+        XCTAssertEqual((runtime.actors.first as? TreasureChestActor)?.isOpened, true)
+    }
+
     func testGameplayHUDArtLibraryLoadsKnownGameplayKeepTextures() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
             UUID().uuidString,
