@@ -162,6 +162,85 @@ public struct SaveContext: Codable, Sendable, Equatable {
     }
 }
 
+public enum GameplayHUDButtonItem: String, Codable, Sendable, Equatable {
+    case sword
+    case shield
+    case slingshot
+    case bow
+    case bomb
+    case boomerang
+    case ocarina
+    case none
+
+    public var actionLabel: String {
+        switch self {
+        case .sword:
+            return "Attack"
+        case .shield:
+            return "Guard"
+        case .slingshot:
+            return "Shoot"
+        case .bow:
+            return "Fire"
+        case .bomb:
+            return "Bomb"
+        case .boomerang:
+            return "Return"
+        case .ocarina:
+            return "Play"
+        case .none:
+            return "Action"
+        }
+    }
+}
+
+public struct GameplayHUDState: Codable, Sendable, Equatable {
+    public var currentHealthUnits: Int
+    public var maximumHealthUnits: Int
+    public var currentMagic: Int
+    public var maximumMagic: Int
+    public var rupees: Int
+    public var smallKeyCount: Int?
+    public var bButtonItem: GameplayHUDButtonItem
+    public var actionLabelOverride: String?
+
+    public init(
+        currentHealthUnits: Int = 6,
+        maximumHealthUnits: Int = 6,
+        currentMagic: Int = 0,
+        maximumMagic: Int = 0,
+        rupees: Int = 0,
+        smallKeyCount: Int? = nil,
+        bButtonItem: GameplayHUDButtonItem = .sword,
+        actionLabelOverride: String? = nil
+    ) {
+        let normalizedMaximumHealthUnits = max(2, maximumHealthUnits)
+        self.currentHealthUnits = min(max(0, currentHealthUnits), normalizedMaximumHealthUnits)
+        self.maximumHealthUnits = normalizedMaximumHealthUnits
+        let normalizedMaximumMagic = max(0, maximumMagic)
+        self.currentMagic = min(max(0, currentMagic), normalizedMaximumMagic)
+        self.maximumMagic = normalizedMaximumMagic
+        self.rupees = max(0, rupees)
+        self.smallKeyCount = smallKeyCount.map { max(0, $0) }
+        self.bButtonItem = bButtonItem
+        self.actionLabelOverride = actionLabelOverride
+    }
+
+    public static func starter(hearts: Int) -> Self {
+        let healthUnits = max(2, hearts * 2)
+        return GameplayHUDState(
+            currentHealthUnits: healthUnits,
+            maximumHealthUnits: healthUnits,
+            currentMagic: 48,
+            maximumMagic: 96,
+            rupees: 0,
+            smallKeyCount: nil,
+            bButtonItem: .sword,
+            actionLabelOverride: nil
+        )
+    }
+}
+
 public struct PlayState: Codable, Equatable, @unchecked Sendable {
     public enum EntryMode: String, Codable, Sendable, Equatable {
         case newGame
@@ -357,6 +436,7 @@ public final class GameRuntime {
     public var saveContext: SaveContext
     public var inputState: InputState
     public var controllerInputState: ControllerInputState
+    public var hudState: GameplayHUDState
     public var selectedTitleOption: TitleMenuOption
     public var fileSelectMode: FileSelectMode?
     public var statusMessage: String?
@@ -421,6 +501,7 @@ public final class GameRuntime {
         saveContext: SaveContext = SaveContext(),
         inputState: InputState = InputState(),
         controllerInputState: ControllerInputState = ControllerInputState(),
+        hudState: GameplayHUDState = GameplayHUDState(),
         selectedTitleOption: TitleMenuOption = .newGame,
         fileSelectMode: FileSelectMode? = nil,
         statusMessage: String? = nil,
@@ -450,6 +531,7 @@ public final class GameRuntime {
         self.saveContext = saveContext
         self.inputState = inputState
         self.controllerInputState = controllerInputState
+        self.hudState = hudState
         self.selectedTitleOption = selectedTitleOption
         self.fileSelectMode = fileSelectMode
         self.statusMessage = statusMessage
@@ -496,6 +578,10 @@ public final class GameRuntime {
             return "Next"
         }
         return activeTalkActor?.talkPrompt
+    }
+
+    public var gameplayHUDActionLabel: String {
+        gameplayActionLabel ?? hudState.actionLabelOverride ?? hudState.bButtonItem.actionLabel
     }
 
     public func start() async {
@@ -656,6 +742,7 @@ public final class GameRuntime {
         let normalizedIndex = normalizedSlotIndex(index)
         let slot = SaveSlot.starter(id: normalizedIndex)
         saveContext.slots[normalizedIndex] = slot
+        hudState = .starter(hearts: slot.hearts)
         playState = PlayState(
             activeSaveSlot: normalizedIndex,
             entryMode: .newGame,
@@ -678,6 +765,7 @@ public final class GameRuntime {
             return
         }
 
+        hudState = .starter(hearts: slot.hearts)
         playState = PlayState(
             activeSaveSlot: normalizedIndex,
             entryMode: .continueGame,
