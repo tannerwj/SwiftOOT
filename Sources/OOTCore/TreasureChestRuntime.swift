@@ -27,6 +27,46 @@ public struct TreasureFlagKey: Sendable, Codable, Hashable, Equatable {
     }
 }
 
+public enum DungeonEventKind: String, Sendable, Codable, Hashable, Equatable {
+    case switchPressed
+    case enemyDefeated
+    case webBurned
+    case torchLit
+    case blockMoved
+    case doorOpened
+}
+
+public struct DungeonEventFlagKey: Sendable, Codable, Hashable, Equatable {
+    public var scene: SceneIdentity
+    public var kind: DungeonEventKind
+    public var roomID: Int
+    public var actorID: Int
+    public var params: Int
+    public var positionX: Int
+    public var positionY: Int
+    public var positionZ: Int
+
+    public init(
+        scene: SceneIdentity,
+        kind: DungeonEventKind,
+        roomID: Int,
+        actorID: Int,
+        params: Int,
+        positionX: Int,
+        positionY: Int,
+        positionZ: Int
+    ) {
+        self.scene = scene
+        self.kind = kind
+        self.roomID = roomID
+        self.actorID = actorID
+        self.params = params
+        self.positionX = positionX
+        self.positionY = positionY
+        self.positionZ = positionZ
+    }
+}
+
 public enum TreasureChestSize: String, Sendable, Codable, Equatable {
     case small
     case large
@@ -217,6 +257,7 @@ public struct TreasureChestParams: Sendable, Equatable {
 public struct GameplayInventoryState: Sendable, Codable, Equatable {
     public var dungeonStateByScene: [SceneIdentity: DungeonInventoryState]
     public var openedTreasureFlags: Set<TreasureFlagKey>
+    public var triggeredDungeonEventFlags: Set<DungeonEventFlagKey>
     public var hasSlingshot: Bool
     public var dekuNutCount: Int
     public var dekuNutCapacity: Int
@@ -228,6 +269,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
     public init(
         dungeonStateByScene: [SceneIdentity: DungeonInventoryState] = [:],
         openedTreasureFlags: Set<TreasureFlagKey> = [],
+        triggeredDungeonEventFlags: Set<DungeonEventFlagKey> = [],
         hasSlingshot: Bool = false,
         dekuNutCount: Int = 0,
         dekuNutCapacity: Int = 20,
@@ -238,6 +280,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
     ) {
         self.dungeonStateByScene = dungeonStateByScene
         self.openedTreasureFlags = openedTreasureFlags
+        self.triggeredDungeonEventFlags = triggeredDungeonEventFlags
         self.hasSlingshot = hasSlingshot
         self.dekuNutCount = max(0, dekuNutCount)
         self.dekuNutCapacity = max(0, dekuNutCapacity)
@@ -259,6 +302,10 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         openedTreasureFlags.contains(key)
     }
 
+    public func hasTriggeredDungeonEvent(_ key: DungeonEventFlagKey) -> Bool {
+        triggeredDungeonEventFlags.contains(key)
+    }
+
     public func dungeonState(for scene: SceneIdentity) -> DungeonInventoryState {
         dungeonStateByScene[scene, default: DungeonInventoryState()]
     }
@@ -269,6 +316,10 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
 
     public mutating func markTreasureOpened(_ key: TreasureFlagKey) {
         openedTreasureFlags.insert(key)
+    }
+
+    public mutating func markDungeonEventTriggered(_ key: DungeonEventFlagKey) {
+        triggeredDungeonEventFlags.insert(key)
     }
 
     public mutating func apply(
@@ -298,6 +349,56 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         }
 
         dungeonStateByScene[scene] = dungeonState
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case dungeonStateByScene
+        case openedTreasureFlags
+        case triggeredDungeonEventFlags
+        case hasSlingshot
+        case dekuNutCount
+        case dekuNutCapacity
+        case dekuStickCount
+        case dekuStickCapacity
+        case currentHealthUnits
+        case maximumHealthUnits
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        dungeonStateByScene = try container.decodeIfPresent(
+            [SceneIdentity: DungeonInventoryState].self,
+            forKey: .dungeonStateByScene
+        ) ?? [:]
+        openedTreasureFlags = try container.decodeIfPresent(
+            Set<TreasureFlagKey>.self,
+            forKey: .openedTreasureFlags
+        ) ?? []
+        triggeredDungeonEventFlags = try container.decodeIfPresent(
+            Set<DungeonEventFlagKey>.self,
+            forKey: .triggeredDungeonEventFlags
+        ) ?? []
+        hasSlingshot = try container.decodeIfPresent(Bool.self, forKey: .hasSlingshot) ?? false
+        dekuNutCount = max(0, try container.decodeIfPresent(Int.self, forKey: .dekuNutCount) ?? 0)
+        dekuNutCapacity = max(0, try container.decodeIfPresent(Int.self, forKey: .dekuNutCapacity) ?? 20)
+        dekuStickCount = max(0, try container.decodeIfPresent(Int.self, forKey: .dekuStickCount) ?? 0)
+        dekuStickCapacity = max(0, try container.decodeIfPresent(Int.self, forKey: .dekuStickCapacity) ?? 10)
+        currentHealthUnits = max(0, try container.decodeIfPresent(Int.self, forKey: .currentHealthUnits) ?? 6)
+        maximumHealthUnits = max(2, try container.decodeIfPresent(Int.self, forKey: .maximumHealthUnits) ?? 6)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(dungeonStateByScene, forKey: .dungeonStateByScene)
+        try container.encode(openedTreasureFlags, forKey: .openedTreasureFlags)
+        try container.encode(triggeredDungeonEventFlags, forKey: .triggeredDungeonEventFlags)
+        try container.encode(hasSlingshot, forKey: .hasSlingshot)
+        try container.encode(dekuNutCount, forKey: .dekuNutCount)
+        try container.encode(dekuNutCapacity, forKey: .dekuNutCapacity)
+        try container.encode(dekuStickCount, forKey: .dekuStickCount)
+        try container.encode(dekuStickCapacity, forKey: .dekuStickCapacity)
+        try container.encode(currentHealthUnits, forKey: .currentHealthUnits)
+        try container.encode(maximumHealthUnits, forKey: .maximumHealthUnits)
     }
 }
 
