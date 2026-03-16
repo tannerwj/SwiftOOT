@@ -7,7 +7,7 @@ struct TableManifestCounts: Sendable, Equatable {
     let objects: Int
     let entrances: Int
 
-    static let pinnedOOT = TableManifestCounts(scenes: 101, actors: 471, objects: 402, entrances: 1557)
+    static let pinnedOOT = TableManifestCounts(scenes: 101, actors: 471, objects: 402, entrances: 1556)
 }
 
 public struct TableExtractor: OOTExtractionPipelineComponent {
@@ -186,8 +186,11 @@ public struct TableExtractor: OOTExtractionPipelineComponent {
             .appendingPathComponent("include")
             .appendingPathComponent("tables")
             .appendingPathComponent("entrance_table.h")
+        let sceneHeaderURL = sourceRoot
+            .appendingPathComponent("include")
+            .appendingPathComponent("scene.h")
         let macros = try parser.parseMacros(at: entranceTableURL, matching: ["DEFINE_ENTRANCE"])
-        let sceneIDByEnumName = Dictionary(uniqueKeysWithValues: sceneEntries.map { ($0.enumName, $0.index) })
+        let sceneIDByEnumName = try loadSceneIDByEnumName(from: sceneHeaderURL, sceneEntries: sceneEntries)
 
         return try macros.enumerated().map { offset, macro in
             try expectArgumentCount(for: macro, expected: 7, path: entranceTableURL.path)
@@ -208,6 +211,25 @@ public struct TableExtractor: OOTExtractionPipelineComponent {
                 transitionOut: normalizeTransitionEffect(macro.arguments[6])
             )
         }
+    }
+
+    private func loadSceneIDByEnumName(
+        from sceneHeaderURL: URL,
+        sceneEntries: [SceneTableEntry]
+    ) throws -> [String: Int] {
+        var sceneIDByEnumName = Dictionary(uniqueKeysWithValues: sceneEntries.map { ($0.enumName, $0.index) })
+        let explicitSceneDefines = try parser.parseIntegerDefines(at: sceneHeaderURL) { name in
+            name.hasPrefix("SCENE_") &&
+                !name.hasPrefix("SCENE_CMD_") &&
+                !name.hasPrefix("SCENE_CAM_TYPE_") &&
+                name != "SCENE_ID_MAX"
+        }
+
+        for define in explicitSceneDefines {
+            sceneIDByEnumName[define.name] = define.value
+        }
+
+        return sceneIDByEnumName
     }
 
     private func loadSceneDrawConfigMap(from url: URL) throws -> [String: Int] {

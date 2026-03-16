@@ -33,7 +33,7 @@ final class TableExtractorTests: XCTestCase {
         }
 
         let extractor = TableExtractor(
-            expectedCounts: TableManifestCounts(scenes: 1, actors: 3, objects: 3, entrances: 2)
+            expectedCounts: TableManifestCounts(scenes: 1, actors: 3, objects: 3, entrances: 3)
         )
 
         try extractor.extract(using: OOTExtractionContext(source: fixture, output: output))
@@ -106,6 +106,16 @@ final class TableExtractorTests: XCTestCase {
                 transitionIn: .circleIris,
                 transitionOut: .wipe
             ),
+            EntranceTableEntry(
+                index: 0x002,
+                name: "ENTR_UNUSED_6E",
+                sceneID: 0x6E,
+                spawnIndex: 2,
+                continueBGM: false,
+                displayTitleCard: true,
+                transitionIn: .fade,
+                transitionOut: .fade
+            ),
         ])
     }
 
@@ -118,12 +128,12 @@ final class TableExtractorTests: XCTestCase {
         }
 
         let extractor = TableExtractor(
-            expectedCounts: TableManifestCounts(scenes: 1, actors: 3, objects: 3, entrances: 2)
+            expectedCounts: TableManifestCounts(scenes: 1, actors: 3, objects: 3, entrances: 3)
         )
         try extractor.extract(using: OOTExtractionContext(source: fixture, output: output))
 
         let mismatchedVerifier = TableExtractor(
-            expectedCounts: TableManifestCounts(scenes: 1, actors: 4, objects: 3, entrances: 2)
+            expectedCounts: TableManifestCounts(scenes: 1, actors: 4, objects: 3, entrances: 3)
         )
 
         XCTAssertThrowsError(try mismatchedVerifier.verify(using: OOTVerificationContext(content: output))) { error in
@@ -155,6 +165,8 @@ final class TableExtractorTests: XCTestCase {
                 /* 1 */ SDC_CUSTOM,
                 /* 2 */ SDC_MAX
             } SceneDrawConfig;
+
+            #define SCENE_UNUSED_6E 0x6E
             """,
             to: root.appendingPathComponent("include").appendingPathComponent("scene.h")
         )
@@ -191,6 +203,7 @@ final class TableExtractorTests: XCTestCase {
             """
             /* 0x000 */ DEFINE_ENTRANCE(ENTR_FOO_0, SCENE_FOO, 0, false, true, TRANS_TYPE_FADE_BLACK, TRANS_TYPE_FADE_BLACK)
             /* 0x001 */ DEFINE_ENTRANCE(ENTR_FOO_1, SCENE_FOO, 1, true, false, TRANS_TYPE_CIRCLE(TCA_NORMAL, TCC_BLACK, TCS_FAST), TRANS_TYPE_WIPE3)
+            /* 0x002 */ DEFINE_ENTRANCE(ENTR_UNUSED_6E, SCENE_UNUSED_6E, 2, false, true, TRANS_TYPE_FADE_BLACK, TRANS_TYPE_FADE_BLACK)
             """,
             to: includeTables.appendingPathComponent("entrance_table.h")
         )

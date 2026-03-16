@@ -7,6 +7,12 @@ struct CMacroInvocation: Sendable, Equatable {
     let tableIndex: Int?
 }
 
+struct CIntegerDefine: Sendable, Equatable {
+    let name: String
+    let value: Int
+    let lineNumber: Int
+}
+
 struct CHeaderParser: Sendable {
     var definedSymbols: Set<String>
 
@@ -75,6 +81,47 @@ struct CHeaderParser: Sendable {
         }
 
         return invocations
+    }
+
+    func parseIntegerDefines(at url: URL, matching predicate: (String) -> Bool) throws -> [CIntegerDefine] {
+        let text: String
+        do {
+            text = try String(contentsOf: url, encoding: .utf8)
+        } catch {
+            throw CHeaderParserError.unreadableFile(url.path, error)
+        }
+
+        return try parseIntegerDefines(in: text, matching: predicate)
+    }
+
+    func parseIntegerDefines(in text: String, matching predicate: (String) -> Bool) throws -> [CIntegerDefine] {
+        var defines: [CIntegerDefine] = []
+        var conditionalStack: [ConditionalFrame] = []
+
+        for (offset, rawLine) in text.components(separatedBy: .newlines).enumerated() {
+            let lineNumber = offset + 1
+            let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if trimmed.hasPrefix("#") {
+                if let define = try parseIntegerDefineDirective(
+                    from: trimmed,
+                    lineNumber: lineNumber,
+                    isActive: isActive(conditionalStack),
+                    matching: predicate
+                ) {
+                    defines.append(define)
+                    continue
+                }
+
+                try handleDirective(trimmed, lineNumber: lineNumber, stack: &conditionalStack)
+            }
+        }
+
+        guard conditionalStack.isEmpty else {
+            throw CHeaderParserError.unterminatedConditional
+        }
+
+        return defines
     }
 
     private func handleDirective(
@@ -249,6 +296,45 @@ struct CHeaderParser: Sendable {
         return Int(normalized, radix: 16)
     }
 
+    private func parseIntegerDefineDirective(
+        from line: String,
+        lineNumber: Int,
+        isActive: Bool,
+        matching predicate: (String) -> Bool
+    ) throws -> CIntegerDefine? {
+        guard isActive else {
+            return nil
+        }
+
+        guard let match = firstMatch(of: defineRegex, in: line) else {
+            return nil
+        }
+
+        let name = nsSubstring(in: line, at: match.range(at: 1))
+        guard predicate(name) else {
+            return nil
+        }
+
+        let rawValue = nsSubstring(in: line, at: match.range(at: 2))
+        let value = try parseIntegerLiteral(rawValue)
+        return CIntegerDefine(name: name, value: value, lineNumber: lineNumber)
+    }
+
+    private func parseIntegerLiteral(_ rawValue: String) throws -> Int {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("0x") || trimmed.hasPrefix("0X") {
+            guard let value = Int(trimmed.dropFirst(2), radix: 16) else {
+                throw CHeaderParserError.invalidIntegerLiteral(trimmed)
+            }
+            return value
+        }
+
+        guard let value = Int(trimmed) else {
+            throw CHeaderParserError.invalidIntegerLiteral(trimmed)
+        }
+        return value
+    }
+
     private func isActive(_ stack: [ConditionalFrame]) -> Bool {
         stack.allSatisfy(\.branchActive)
     }
@@ -296,12 +382,20 @@ private extension CHeaderParser {
             options: []
         )
     }
+
+    var defineRegex: NSRegularExpression {
+        try! NSRegularExpression(
+            pattern: #"^#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)\s+(0[xX][0-9A-Fa-f]+|\d+)\s*$"#,
+            options: []
+        )
+    }
 }
 
 private enum CHeaderParserError: LocalizedError {
     case unreadableFile(String, Error)
     case unexpectedDirective(String, Int)
     case unterminatedConditional
+    case invalidIntegerLiteral(String)
 
     var errorDescription: String? {
         switch self {
@@ -311,6 +405,8 @@ private enum CHeaderParserError: LocalizedError {
             return "Unexpected #\(directive) at line \(line)"
         case .unterminatedConditional:
             return "Encountered unterminated preprocessor conditional"
+        case .invalidIntegerLiteral(let literal):
+            return "Unable to parse integer literal \(literal)"
         }
     }
 }
