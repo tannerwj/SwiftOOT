@@ -97,6 +97,9 @@ public enum DamageElement: String, Sendable, Codable, Equatable, Hashable {
     case swordSpin
     case melee
     case projectile
+    case boomerang
+    case explosion
+    case flash
 }
 
 public struct DamageEffect: Sendable, Codable, Equatable {
@@ -128,7 +131,22 @@ public struct DamageTable: Sendable, Codable, Equatable {
     }
 
     public func effect(for element: DamageElement) -> DamageEffect {
-        overrides[element] ?? defaultEffect
+        if let override = overrides[element] {
+            return override
+        }
+
+        switch element {
+        case .boomerang, .flash:
+            return DamageEffect(damage: 0, knockbackDistance: 0, invincibilityFrames: 0)
+        case .explosion:
+            return DamageEffect(
+                damage: max(defaultEffect.damage, 2),
+                knockbackDistance: max(defaultEffect.knockbackDistance, 24),
+                invincibilityFrames: max(defaultEffect.invincibilityFrames, 10)
+            )
+        case .swordSlash, .swordJump, .swordSpin, .melee, .projectile:
+            return defaultEffect
+        }
     }
 }
 
@@ -357,7 +375,7 @@ public extension CombatActor {
         attackerPosition _: Vec3f?,
         playState _: PlayState
     ) -> CombatHitResolution {
-        if hit.element == .projectile, combatProfile.blocksProjectiles {
+        if hit.element.canBeBlockedAsProjectile, combatProfile.blocksProjectiles {
             return .block
         }
 
@@ -447,7 +465,25 @@ extension DamageElement {
         switch self {
         case .swordSlash, .swordJump, .swordSpin, .melee:
             return true
-        case .projectile:
+        case .projectile, .boomerang, .explosion, .flash:
+            return false
+        }
+    }
+
+    var canBeBlockedAsProjectile: Bool {
+        switch self {
+        case .projectile, .boomerang:
+            return true
+        case .swordSlash, .swordJump, .swordSpin, .melee, .explosion, .flash:
+            return false
+        }
+    }
+
+    var isProjectileLike: Bool {
+        switch self {
+        case .projectile, .boomerang:
+            return true
+        case .swordSlash, .swordJump, .swordSpin, .melee, .explosion, .flash:
             return false
         }
     }

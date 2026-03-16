@@ -348,7 +348,9 @@ private struct GameplayShellView: View {
                                 scene: $0,
                                 playerState: runtime.playerState,
                                 combatState: runtime.combatState,
-                                itemGetSequence: runtime.itemGetSequence
+                                itemGetSequence: runtime.itemGetSequence,
+                                itemAimYaw: runtime.itemAimYaw,
+                                itemAimPitch: runtime.itemAimPitch
                             )
                         }
                     ) { stats in

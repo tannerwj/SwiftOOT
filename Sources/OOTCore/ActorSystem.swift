@@ -280,6 +280,27 @@ open class CombatantBaseActor: DamageableBaseActor, CombatActor {
         []
     }
 
+    open func combatHitResolution(
+        for hit: CombatHit,
+        attackerPosition _: Vec3f?,
+        playState _: PlayState
+    ) -> CombatHitResolution {
+        if hit.element.canBeBlockedAsProjectile, combatProfile.blocksProjectiles {
+            return .block
+        }
+
+        if hit.element.isMelee, combatProfile.deflectsMeleeAttacks {
+            return .block
+        }
+
+        let effect = combatProfile.damageTable.effect(for: hit.element)
+        guard effect.damage > 0 else {
+            return .ignore
+        }
+
+        return .apply(effect)
+    }
+
     open func combatDidReceiveHit(_ hit: CombatHit, playState: PlayState) {}
 
     open func combatDidBlockHit(_ hit: CombatHit, playState: PlayState) {}

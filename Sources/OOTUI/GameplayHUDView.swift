@@ -69,6 +69,11 @@ struct GameplayHUDView: View {
                         Spacer()
 
                         VStack(alignment: .trailing, spacing: 14) {
+                            CButtonClusterView(
+                                cButtons: runtime.hudState.cButtons,
+                                art: art
+                            )
+
                             SceneMinimapView(runtime: runtime)
                                 .frame(width: min(geometry.size.width * 0.24, 168))
                                 .frame(height: min(geometry.size.width * 0.24, 168))
@@ -128,6 +133,8 @@ private extension GameplayHUDView {
             playerState: playerState,
             combatState: runtime.combatState,
             itemGetSequence: runtime.itemGetSequence,
+            itemAimYaw: runtime.itemAimYaw,
+            itemAimPitch: runtime.itemAimPitch,
             viewportSize: viewportSize
         )
     }
@@ -185,6 +192,8 @@ enum LockOnIndicatorProjector {
         playerState: PlayerState,
         combatState: GameplayCombatState,
         itemGetSequence: ItemGetSequenceState?,
+        itemAimYaw: Float?,
+        itemAimPitch: Float?,
         viewportSize: CGSize
     ) -> CGPoint? {
         guard
@@ -192,7 +201,9 @@ enum LockOnIndicatorProjector {
                 scene: scene,
                 playerState: playerState,
                 combatState: combatState,
-                itemGetSequence: itemGetSequence
+                itemGetSequence: itemGetSequence,
+                itemAimYaw: itemAimYaw,
+                itemAimPitch: itemAimPitch
             ),
             let projection = GameplayCameraProjector.project(
                 worldPoint: target.focusPoint.simd + SIMD3<Float>(0, 16, 0),
@@ -437,10 +448,84 @@ private struct BButtonView: View {
             return "circle.hexagongrid.fill"
         case .boomerang:
             return "arrow.triangle.2.circlepath"
+        case .dekuStick:
+            return "wand.and.stars.inverse"
+        case .dekuNut:
+            return "circle.lefthalf.filled"
         case .ocarina:
             return "music.note"
+        case .bottle:
+            return "takeoutbag.and.cup.and.straw.fill"
         case .none:
             return "circle.fill"
+        }
+    }
+}
+
+private struct CButtonClusterView: View {
+    let cButtons: GameplayHUDCButtonState
+    let art: GameplayHUDArtLibrary
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            CButtonView(letter: "1", state: cButtons.left, art: art)
+            CButtonView(letter: "2", state: cButtons.down, art: art)
+            CButtonView(letter: "3", state: cButtons.right, art: art)
+        }
+    }
+}
+
+private struct CButtonView: View {
+    let letter: String
+    let state: GameplayHUDButtonState
+    let art: GameplayHUDArtLibrary
+
+    var body: some View {
+        VStack(spacing: 4) {
+            HUDButtonOrb(
+                letter: letter,
+                label: state.item == .none ? nil : state.item.actionLabel,
+                fill: Color(red: 0.93, green: 0.8, blue: 0.12).opacity(state.isEnabled ? 1 : 0.55),
+                icon: art.image(for: state.item),
+                fallbackSymbol: fallbackSymbol
+            )
+            .scaleEffect(0.82)
+
+            if let ammoCount = state.ammoCount {
+                Text("\(ammoCount)")
+                    .font(.system(size: 11, weight: .black, design: .rounded))
+                    .foregroundStyle(.white.opacity(state.isEnabled ? 0.92 : 0.55))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(.black.opacity(0.45), in: Capsule(style: .continuous))
+            }
+        }
+    }
+
+    private var fallbackSymbol: String? {
+        switch state.item {
+        case .slingshot:
+            return "scope"
+        case .bomb:
+            return "circle.hexagongrid.fill"
+        case .boomerang:
+            return "arrow.triangle.2.circlepath"
+        case .dekuStick:
+            return "wand.and.stars.inverse"
+        case .dekuNut:
+            return "circle.lefthalf.filled"
+        case .ocarina:
+            return "music.note"
+        case .bottle:
+            return "takeoutbag.and.cup.and.straw.fill"
+        case .sword:
+            return "figure.fencing"
+        case .shield:
+            return "shield.fill"
+        case .bow:
+            return "arrow.up.forward"
+        case .none:
+            return nil
         }
     }
 }
@@ -863,11 +948,19 @@ struct GameplayHUDArtLibrary {
 
     func image(for item: GameplayHUDButtonItem) -> NSImage? {
         switch item {
+        case .slingshot:
+            return nil
         case .bomb:
             return bomb
+        case .boomerang:
+            return nil
+        case .dekuStick:
+            return nil
+        case .dekuNut:
+            return nil
         case .bow:
             return arrow
-        default:
+        case .sword, .shield, .ocarina, .bottle, .none:
             return nil
         }
     }

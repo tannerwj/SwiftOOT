@@ -264,11 +264,18 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
     public var openedTreasureFlags: Set<TreasureFlagKey>
     public var triggeredDungeonEventFlags: Set<DungeonEventFlagKey>
     public var hasSlingshot: Bool
+    public var slingshotAmmo: Int
+    public var slingshotCapacity: Int
+    public var hasBombBag: Bool
+    public var bombCount: Int
+    public var bombCapacity: Int
+    public var hasBoomerang: Bool
     public var goldSkulltulaTokenCount: Int
     public var dekuNutCount: Int
     public var dekuNutCapacity: Int
     public var dekuStickCount: Int
     public var dekuStickCapacity: Int
+    public var cButtonLoadout: GameplayCButtonLoadout
     public var currentHealthUnits: Int
     public var maximumHealthUnits: Int
 
@@ -277,11 +284,18 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         openedTreasureFlags: Set<TreasureFlagKey> = [],
         triggeredDungeonEventFlags: Set<DungeonEventFlagKey> = [],
         hasSlingshot: Bool = false,
+        slingshotAmmo: Int = 0,
+        slingshotCapacity: Int = 30,
+        hasBombBag: Bool = false,
+        bombCount: Int = 0,
+        bombCapacity: Int = 20,
+        hasBoomerang: Bool = false,
         goldSkulltulaTokenCount: Int = 0,
         dekuNutCount: Int = 0,
         dekuNutCapacity: Int = 20,
         dekuStickCount: Int = 0,
         dekuStickCapacity: Int = 10,
+        cButtonLoadout: GameplayCButtonLoadout = GameplayCButtonLoadout(),
         currentHealthUnits: Int = 6,
         maximumHealthUnits: Int = 6
     ) {
@@ -289,13 +303,21 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         self.openedTreasureFlags = openedTreasureFlags
         self.triggeredDungeonEventFlags = triggeredDungeonEventFlags
         self.hasSlingshot = hasSlingshot
+        self.slingshotAmmo = max(0, slingshotAmmo)
+        self.slingshotCapacity = max(0, slingshotCapacity)
+        self.hasBombBag = hasBombBag
+        self.bombCount = max(0, bombCount)
+        self.bombCapacity = max(0, bombCapacity)
+        self.hasBoomerang = hasBoomerang
         self.goldSkulltulaTokenCount = max(0, goldSkulltulaTokenCount)
         self.dekuNutCount = max(0, dekuNutCount)
         self.dekuNutCapacity = max(0, dekuNutCapacity)
         self.dekuStickCount = max(0, dekuStickCount)
         self.dekuStickCapacity = max(0, dekuStickCapacity)
+        self.cButtonLoadout = cButtonLoadout
         self.currentHealthUnits = max(0, currentHealthUnits)
         self.maximumHealthUnits = max(2, maximumHealthUnits)
+        normalizeItemState()
     }
 
     public static func starter(hearts: Int) -> Self {
@@ -345,6 +367,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
             dungeonState.hasBossKey = true
         case .slingshot:
             hasSlingshot = true
+            slingshotAmmo = max(slingshotAmmo, 30)
         case .heartContainer:
             maximumHealthUnits += 2
             currentHealthUnits = maximumHealthUnits
@@ -357,6 +380,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         }
 
         dungeonStateByScene[scene] = dungeonState
+        normalizeItemState()
     }
     public mutating func apply(
         _ reward: ActorReward,
@@ -368,6 +392,120 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         case .goldSkulltulaToken:
             goldSkulltulaTokenCount += 1
         }
+        normalizeItemState()
+    }
+
+    public func owns(_ item: GameplayUsableItem) -> Bool {
+        switch item {
+        case .slingshot:
+            return hasSlingshot
+        case .bombs:
+            return hasBombBag
+        case .boomerang:
+            return hasBoomerang
+        case .dekuStick:
+            return dekuStickCount > 0
+        case .dekuNut:
+            return dekuNutCount > 0
+        case .ocarina, .bottle:
+            return false
+        }
+    }
+
+    public func canUse(_ item: GameplayUsableItem) -> Bool {
+        switch item {
+        case .slingshot:
+            return hasSlingshot && slingshotAmmo > 0
+        case .bombs:
+            return hasBombBag && bombCount > 0
+        case .boomerang:
+            return hasBoomerang
+        case .dekuStick:
+            return dekuStickCount > 0
+        case .dekuNut:
+            return dekuNutCount > 0
+        case .ocarina, .bottle:
+            return false
+        }
+    }
+
+    public func ammoCount(for item: GameplayUsableItem) -> Int? {
+        switch item {
+        case .slingshot:
+            return slingshotAmmo
+        case .bombs:
+            return bombCount
+        case .boomerang:
+            return nil
+        case .dekuStick:
+            return dekuStickCount
+        case .dekuNut:
+            return dekuNutCount
+        case .ocarina, .bottle:
+            return nil
+        }
+    }
+
+    public mutating func assign(_ item: GameplayUsableItem?, to button: GameplayCButton) {
+        cButtonLoadout[button] = item
+        normalizeItemState()
+    }
+
+    @discardableResult
+    public mutating func consume(_ item: GameplayUsableItem, amount: Int = 1) -> Bool {
+        let resolvedAmount = max(1, amount)
+        guard canUse(item) else {
+            return false
+        }
+
+        switch item {
+        case .slingshot:
+            slingshotAmmo = max(0, slingshotAmmo - resolvedAmount)
+        case .bombs:
+            bombCount = max(0, bombCount - resolvedAmount)
+        case .boomerang:
+            break
+        case .dekuStick:
+            dekuStickCount = max(0, dekuStickCount - resolvedAmount)
+        case .dekuNut:
+            dekuNutCount = max(0, dekuNutCount - resolvedAmount)
+        case .ocarina, .bottle:
+            return false
+        }
+
+        normalizeItemState()
+        return true
+    }
+
+    public mutating func normalizeItemState() {
+        slingshotAmmo = min(max(0, slingshotAmmo), slingshotCapacity)
+        bombCount = min(max(0, bombCount), bombCapacity)
+        dekuNutCount = min(max(0, dekuNutCount), dekuNutCapacity)
+        dekuStickCount = min(max(0, dekuStickCount), dekuStickCapacity)
+
+        let preferredItems: [GameplayUsableItem] = [
+            .slingshot,
+            .bombs,
+            .boomerang,
+            .dekuStick,
+            .dekuNut,
+        ]
+
+        for button in GameplayCButton.allCases {
+            if let item = cButtonLoadout[button], owns(item) == false {
+                cButtonLoadout[button] = nil
+            }
+        }
+
+        var assignedItems = Set(GameplayCButton.allCases.compactMap { cButtonLoadout[$0] })
+        for button in GameplayCButton.allCases where cButtonLoadout[button] == nil {
+            guard let nextItem = preferredItems.first(where: { owns($0) && assignedItems.contains($0) == false }) else {
+                continue
+            }
+
+            cButtonLoadout[button] = nextItem
+            assignedItems.insert(nextItem)
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -375,11 +513,18 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         case openedTreasureFlags
         case triggeredDungeonEventFlags
         case hasSlingshot
+        case slingshotAmmo
+        case slingshotCapacity
+        case hasBombBag
+        case bombCount
+        case bombCapacity
+        case hasBoomerang
         case goldSkulltulaTokenCount
         case dekuNutCount
         case dekuNutCapacity
         case dekuStickCount
         case dekuStickCapacity
+        case cButtonLoadout
         case currentHealthUnits
         case maximumHealthUnits
     }
@@ -399,6 +544,12 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
             forKey: .triggeredDungeonEventFlags
         ) ?? []
         hasSlingshot = try container.decodeIfPresent(Bool.self, forKey: .hasSlingshot) ?? false
+        slingshotAmmo = max(0, try container.decodeIfPresent(Int.self, forKey: .slingshotAmmo) ?? 0)
+        slingshotCapacity = max(0, try container.decodeIfPresent(Int.self, forKey: .slingshotCapacity) ?? 30)
+        hasBombBag = try container.decodeIfPresent(Bool.self, forKey: .hasBombBag) ?? false
+        bombCount = max(0, try container.decodeIfPresent(Int.self, forKey: .bombCount) ?? 0)
+        bombCapacity = max(0, try container.decodeIfPresent(Int.self, forKey: .bombCapacity) ?? 20)
+        hasBoomerang = try container.decodeIfPresent(Bool.self, forKey: .hasBoomerang) ?? false
         goldSkulltulaTokenCount = max(
             0,
             try container.decodeIfPresent(Int.self, forKey: .goldSkulltulaTokenCount) ?? 0
@@ -407,8 +558,10 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         dekuNutCapacity = max(0, try container.decodeIfPresent(Int.self, forKey: .dekuNutCapacity) ?? 20)
         dekuStickCount = max(0, try container.decodeIfPresent(Int.self, forKey: .dekuStickCount) ?? 0)
         dekuStickCapacity = max(0, try container.decodeIfPresent(Int.self, forKey: .dekuStickCapacity) ?? 10)
+        cButtonLoadout = try container.decodeIfPresent(GameplayCButtonLoadout.self, forKey: .cButtonLoadout) ?? GameplayCButtonLoadout()
         currentHealthUnits = max(0, try container.decodeIfPresent(Int.self, forKey: .currentHealthUnits) ?? 6)
         maximumHealthUnits = max(2, try container.decodeIfPresent(Int.self, forKey: .maximumHealthUnits) ?? 6)
+        normalizeItemState()
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -417,11 +570,18 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         try container.encode(openedTreasureFlags, forKey: .openedTreasureFlags)
         try container.encode(triggeredDungeonEventFlags, forKey: .triggeredDungeonEventFlags)
         try container.encode(hasSlingshot, forKey: .hasSlingshot)
+        try container.encode(slingshotAmmo, forKey: .slingshotAmmo)
+        try container.encode(slingshotCapacity, forKey: .slingshotCapacity)
+        try container.encode(hasBombBag, forKey: .hasBombBag)
+        try container.encode(bombCount, forKey: .bombCount)
+        try container.encode(bombCapacity, forKey: .bombCapacity)
+        try container.encode(hasBoomerang, forKey: .hasBoomerang)
         try container.encode(goldSkulltulaTokenCount, forKey: .goldSkulltulaTokenCount)
         try container.encode(dekuNutCount, forKey: .dekuNutCount)
         try container.encode(dekuNutCapacity, forKey: .dekuNutCapacity)
         try container.encode(dekuStickCount, forKey: .dekuStickCount)
         try container.encode(dekuStickCapacity, forKey: .dekuStickCapacity)
+        try container.encode(cButtonLoadout, forKey: .cButtonLoadout)
         try container.encode(currentHealthUnits, forKey: .currentHealthUnits)
         try container.encode(maximumHealthUnits, forKey: .maximumHealthUnits)
     }

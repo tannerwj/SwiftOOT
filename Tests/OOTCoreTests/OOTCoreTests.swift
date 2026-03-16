@@ -2086,6 +2086,325 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testSlingshotEntersAimModeAndDamagesEnemyWhenFiredFromCButton() throws {
+        let recorder = EventRecorder()
+        var registry = ActorRegistry()
+        registry.register(actorID: 10) {
+            TestCombatActor(spawnRecord: $0, label: "slingshot-target", recorder: recorder)
+        }
+
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(id: 10, name: "ACTOR_SLINGSHOT_TARGET", position: Vector3s(x: 0, y: 0, z: -72)),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 10, name: "ACTOR_SLINGSHOT_TARGET", category: .enemy),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            actorRegistry: registry,
+            suspender: { _ in }
+        )
+        runtime.inventoryState = GameplayInventoryState(
+            hasSlingshot: true,
+            slingshotAmmo: 6,
+            cButtonLoadout: GameplayCButtonLoadout(left: .slingshot)
+        )
+
+        try runtime.loadScene(id: 0x55)
+        runtime.playerState = PlayerState(
+            position: Vec3f(x: 0, y: 0, z: 0),
+            facingRadians: 0,
+            isGrounded: true,
+            floorHeight: 0
+        )
+
+        runtime.setControllerInput(ControllerInputState(cLeftPressed: true))
+        runtime.updateFrame()
+        runtime.setControllerInput(ControllerInputState())
+        runtime.updateFrame()
+
+        XCTAssertNotNil(runtime.activeSlingshotAimState)
+
+        runtime.setControllerInput(ControllerInputState(cLeftPressed: true))
+        runtime.updateFrame()
+        runtime.setControllerInput(ControllerInputState())
+
+        for _ in 0..<8 {
+            runtime.updateFrame()
+        }
+
+        XCTAssertNil(runtime.activeSlingshotAimState)
+        XCTAssertEqual(runtime.inventoryState.slingshotAmmo, 5)
+        XCTAssertTrue(recorder.events.contains("hit:slingshot-target:projectile:1"))
+    }
+
+    @MainActor
+    func testBombExplosionDamagesEnemyAndTriggersNearbyBombChainReaction() throws {
+        let recorder = EventRecorder()
+        var registry = ActorRegistry()
+        registry.register(actorID: 10) {
+            TestCombatActor(spawnRecord: $0, label: "bomb-target", recorder: recorder)
+        }
+
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(id: 10, name: "ACTOR_BOMB_TARGET", position: Vector3s(x: 0, y: 0, z: -40)),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 10, name: "ACTOR_BOMB_TARGET", category: .enemy),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            actorRegistry: registry,
+            suspender: { _ in }
+        )
+        runtime.inventoryState = GameplayInventoryState(
+            hasBombBag: true,
+            bombCount: 2,
+            cButtonLoadout: GameplayCButtonLoadout(down: .bombs)
+        )
+
+        try runtime.loadScene(id: 0x55)
+        runtime.playerState = PlayerState(
+            position: Vec3f(x: 0, y: 0, z: 0),
+            facingRadians: 0,
+            isGrounded: true,
+            floorHeight: 0
+        )
+
+        runtime.playState?.requestSpawn(
+            BombActor(
+                position: Vec3f(x: 0, y: 0, z: -36),
+                velocity: SIMD3<Float>(0, 0, 0),
+                roomID: 0
+            ),
+            category: .bomb,
+            roomID: 0
+        )
+        runtime.playState?.requestSpawn(
+            BombActor(
+                position: Vec3f(x: 12, y: 0, z: -44),
+                velocity: SIMD3<Float>(0, 0, 0),
+                roomID: 0
+            ),
+            category: .bomb,
+            roomID: 0
+        )
+
+        runtime.setControllerInput(ControllerInputState(cDownPressed: true))
+        runtime.updateFrame()
+        runtime.setControllerInput(ControllerInputState())
+
+        for _ in 0..<60 {
+            runtime.updateFrame()
+        }
+
+        XCTAssertEqual(runtime.inventoryState.bombCount, 1)
+        XCTAssertTrue(recorder.events.contains { $0 == "hit:bomb-target:explosion:2" })
+        XCTAssertFalse(runtime.actors.contains { $0 is BombActor })
+    }
+
+    @MainActor
+    func testBoomerangStunsEnemyAndReturnsToPlayer() throws {
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(id: 10, name: "ACTOR_EN_DEKUBABA", position: Vector3s(x: 0, y: 0, z: -48)),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ],
+                collision: fixtureCollisionMesh()
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 10, name: "ACTOR_EN_DEKUBABA", category: .enemy),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+        runtime.inventoryState = GameplayInventoryState(
+            hasBoomerang: true,
+            cButtonLoadout: GameplayCButtonLoadout(right: .boomerang)
+        )
+
+        try runtime.loadScene(id: 0x55)
+        runtime.playerState = PlayerState(
+            position: Vec3f(x: 0, y: 0, z: 0),
+            facingRadians: 0,
+            isGrounded: true,
+            floorHeight: 0
+        )
+
+        runtime.setControllerInput(ControllerInputState(cRightPressed: true))
+        runtime.updateFrame()
+        runtime.setControllerInput(ControllerInputState())
+
+        for _ in 0..<28 {
+            runtime.updateFrame()
+        }
+
+        let baba = try XCTUnwrap(runtime.actors.first(where: { $0 is DekuBabaActor }) as? DekuBabaActor)
+        XCTAssertEqual(baba.state, .stunned)
+        XCTAssertFalse(runtime.actors.contains { $0 is BoomerangActor })
+    }
+
+    @MainActor
+    func testDekuStickLightsFromTorchAndBurnsWeb() throws {
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(id: 10, name: "ACTOR_OBJ_SYOKUDAI", position: Vector3s(x: 0, y: 0, z: -20)),
+                        makeSpawn(id: 20, name: "ACTOR_BG_YDAN_SP", position: Vector3s(x: 0, y: 0, z: -76)),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 10, name: "ACTOR_OBJ_SYOKUDAI", category: .prop),
+                makeActorTableEntry(id: 20, name: "ACTOR_BG_YDAN_SP", category: .bg),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+        runtime.inventoryState = GameplayInventoryState(
+            dekuStickCount: 1,
+            cButtonLoadout: GameplayCButtonLoadout(left: .dekuStick)
+        )
+
+        try runtime.loadScene(id: 0x55)
+        runtime.playerState = PlayerState(
+            position: Vec3f(x: 0, y: 0, z: -18),
+            facingRadians: 0,
+            isGrounded: true,
+            floorHeight: 0
+        )
+
+        runtime.setControllerInput(ControllerInputState(cLeftPressed: true))
+        runtime.updateFrame()
+        runtime.setControllerInput(ControllerInputState())
+        runtime.updateFrame()
+
+        XCTAssertEqual(runtime.inventoryState.dekuStickCount, 0)
+        XCTAssertEqual(runtime.inventoryState.triggeredDungeonEventFlags.count, 1)
+        XCTAssertTrue(runtime.activeDekuStickState?.isLit == true)
+
+        runtime.playerState = PlayerState(
+            position: Vec3f(x: 0, y: 0, z: -74),
+            facingRadians: 0,
+            isGrounded: true,
+            floorHeight: 0
+        )
+        runtime.updateFrame()
+
+        XCTAssertEqual(runtime.inventoryState.triggeredDungeonEventFlags.count, 2)
+        XCTAssertFalse(runtime.actors.contains { $0 is BurnableWebActor })
+    }
+
+    @MainActor
+    func testDekuNutFlashStunsAllEnemiesInRange() throws {
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(id: 10, name: "ACTOR_EN_DEKUBABA", position: Vector3s(x: -24, y: 0, z: -48)),
+                        makeSpawn(id: 20, name: "ACTOR_EN_DEKUBABA", position: Vector3s(x: 24, y: 0, z: -48)),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ],
+                collision: fixtureCollisionMesh()
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 10, name: "ACTOR_EN_DEKUBABA", category: .enemy),
+                makeActorTableEntry(id: 20, name: "ACTOR_EN_DEKUBABA", category: .enemy),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+        runtime.inventoryState = GameplayInventoryState(
+            dekuNutCount: 3,
+            cButtonLoadout: GameplayCButtonLoadout(down: .dekuNut)
+        )
+
+        try runtime.loadScene(id: 0x55)
+        runtime.playerState = PlayerState(
+            position: Vec3f(x: 0, y: 0, z: 0),
+            facingRadians: 0,
+            isGrounded: true,
+            floorHeight: 0
+        )
+
+        runtime.setControllerInput(ControllerInputState(cDownPressed: true))
+        runtime.updateFrame()
+        runtime.setControllerInput(ControllerInputState())
+        runtime.updateFrame()
+
+        let babaStates = runtime.actors.compactMap { ($0 as? DekuBabaActor)?.state }
+        XCTAssertEqual(babaStates.count, 2)
+        XCTAssertTrue(babaStates.allSatisfy { $0 == .stunned })
+        XCTAssertEqual(runtime.inventoryState.dekuNutCount, 2)
+    }
+
+    @MainActor
     func testTreasureChestInteractionStartsItemGetFlowAndPersistsTreasureFlagAcrossReload() throws {
         let chestActorID = 10
         let chestParams = makeChestParams(type: 0, getItemID: 0x41, treasureFlag: 3)

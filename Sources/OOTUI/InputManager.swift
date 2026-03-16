@@ -6,6 +6,9 @@ import OOTRender
 @MainActor
 final class InputManager: NSObject, GameplayInputHandling {
     private enum BoundKey: UInt16, Hashable {
+        case one = 18
+        case two = 19
+        case three = 20
         case a = 0
         case s = 1
         case d = 2
@@ -114,6 +117,9 @@ final class InputManager: NSObject, GameplayInputHandling {
             stick: stick,
             aPressed: pressedKeys.contains(.space) || gamepadState.aPressed,
             bPressed: pressedKeys.contains(.leftShift) || pressedKeys.contains(.rightShift) || gamepadState.bPressed,
+            cLeftPressed: pressedKeys.contains(.one) || gamepadState.cLeftPressed,
+            cDownPressed: pressedKeys.contains(.two) || gamepadState.cDownPressed,
+            cRightPressed: pressedKeys.contains(.three) || gamepadState.cRightPressed,
             zPressed: pressedKeys.contains(.tab) || gamepadState.zPressed,
             startPressed: pressedKeys.contains(.returnKey) || gamepadState.startPressed
         )
@@ -164,6 +170,9 @@ final class InputManager: NSObject, GameplayInputHandling {
             stick: stick,
             aPressed: gamepad.buttonA.isPressed,
             bPressed: gamepad.buttonB.isPressed,
+            cLeftPressed: gamepad.buttonY.isPressed,
+            cDownPressed: gamepad.buttonX.isPressed,
+            cRightPressed: gamepad.rightShoulder.isPressed,
             zPressed: gamepad.leftTrigger.isPressed || gamepad.leftShoulder.isPressed,
             startPressed: false
         )
