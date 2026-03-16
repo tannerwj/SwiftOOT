@@ -48,6 +48,9 @@ public struct DeveloperInputStep: Codable, Sendable, Equatable {
         case stick
         case aPressed
         case bPressed
+        case cLeftPressed
+        case cDownPressed
+        case cRightPressed
         case zPressed
         case startPressed
     }
@@ -57,6 +60,9 @@ public struct DeveloperInputStep: Codable, Sendable, Equatable {
     public var stick: DeveloperInputVector?
     public var aPressed: Bool
     public var bPressed: Bool
+    public var cLeftPressed: Bool
+    public var cDownPressed: Bool
+    public var cRightPressed: Bool
     public var zPressed: Bool
     public var startPressed: Bool
 
@@ -66,6 +72,9 @@ public struct DeveloperInputStep: Codable, Sendable, Equatable {
         stick: DeveloperInputVector? = nil,
         aPressed: Bool = false,
         bPressed: Bool = false,
+        cLeftPressed: Bool = false,
+        cDownPressed: Bool = false,
+        cRightPressed: Bool = false,
         zPressed: Bool = false,
         startPressed: Bool = false
     ) {
@@ -74,6 +83,9 @@ public struct DeveloperInputStep: Codable, Sendable, Equatable {
         self.stick = stick
         self.aPressed = aPressed
         self.bPressed = bPressed
+        self.cLeftPressed = cLeftPressed
+        self.cDownPressed = cDownPressed
+        self.cRightPressed = cRightPressed
         self.zPressed = zPressed
         self.startPressed = startPressed
     }
@@ -85,6 +97,9 @@ public struct DeveloperInputStep: Codable, Sendable, Equatable {
         stick = try container.decodeIfPresent(DeveloperInputVector.self, forKey: .stick)
         aPressed = try container.decodeIfPresent(Bool.self, forKey: .aPressed) ?? false
         bPressed = try container.decodeIfPresent(Bool.self, forKey: .bPressed) ?? false
+        cLeftPressed = try container.decodeIfPresent(Bool.self, forKey: .cLeftPressed) ?? false
+        cDownPressed = try container.decodeIfPresent(Bool.self, forKey: .cDownPressed) ?? false
+        cRightPressed = try container.decodeIfPresent(Bool.self, forKey: .cRightPressed) ?? false
         zPressed = try container.decodeIfPresent(Bool.self, forKey: .zPressed) ?? false
         startPressed = try container.decodeIfPresent(Bool.self, forKey: .startPressed) ?? false
     }
@@ -97,6 +112,9 @@ public struct DeveloperInputScript: Codable, Sendable, Equatable {
         var stick: StickInput?
         var aPressed: Bool
         var bPressed: Bool
+        var cLeftPressed: Bool
+        var cDownPressed: Bool
+        var cRightPressed: Bool
         var zPressed: Bool
         var startPressed: Bool
     }
@@ -124,6 +142,9 @@ public struct DeveloperInputScript: Codable, Sendable, Equatable {
             }
             resolvedInput.aPressed = resolvedInput.aPressed || step.aPressed
             resolvedInput.bPressed = resolvedInput.bPressed || step.bPressed
+            resolvedInput.cLeftPressed = resolvedInput.cLeftPressed || step.cLeftPressed
+            resolvedInput.cDownPressed = resolvedInput.cDownPressed || step.cDownPressed
+            resolvedInput.cRightPressed = resolvedInput.cRightPressed || step.cRightPressed
             resolvedInput.zPressed = resolvedInput.zPressed || step.zPressed
             resolvedInput.startPressed = resolvedInput.startPressed || step.startPressed
         }
@@ -188,6 +209,9 @@ public struct DeveloperInputScript: Codable, Sendable, Equatable {
                     stick: step.stick?.stickInput,
                     aPressed: step.aPressed,
                     bPressed: step.bPressed,
+                    cLeftPressed: step.cLeftPressed,
+                    cDownPressed: step.cDownPressed,
+                    cRightPressed: step.cRightPressed,
                     zPressed: step.zPressed,
                     startPressed: step.startPressed
                 )

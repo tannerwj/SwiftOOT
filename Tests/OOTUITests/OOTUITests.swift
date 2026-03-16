@@ -93,6 +93,15 @@ final class OOTUITests: XCTestCase {
         XCTAssertTrue(inputManager.handleKeyDown(try makeKeyEvent(type: .keyDown, character: " ", keyCode: 49)))
         XCTAssertTrue(runtime.controllerInputState.aPressed)
 
+        XCTAssertTrue(inputManager.handleKeyDown(try makeKeyEvent(type: .keyDown, character: "1", keyCode: 18)))
+        XCTAssertTrue(runtime.controllerInputState.cLeftPressed)
+
+        XCTAssertTrue(inputManager.handleKeyDown(try makeKeyEvent(type: .keyDown, character: "2", keyCode: 19)))
+        XCTAssertTrue(runtime.controllerInputState.cDownPressed)
+
+        XCTAssertTrue(inputManager.handleKeyDown(try makeKeyEvent(type: .keyDown, character: "3", keyCode: 20)))
+        XCTAssertTrue(runtime.controllerInputState.cRightPressed)
+
         XCTAssertTrue(inputManager.handleKeyDown(try makeKeyEvent(type: .keyDown, character: "\t", keyCode: 48)))
         XCTAssertTrue(runtime.controllerInputState.zPressed)
 
@@ -101,12 +110,18 @@ final class OOTUITests: XCTestCase {
 
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "w", keyCode: 13)))
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: " ", keyCode: 49)))
+        XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "1", keyCode: 18)))
+        XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "2", keyCode: 19)))
+        XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "3", keyCode: 20)))
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "\t", keyCode: 48)))
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "", keyCode: 56)))
 
         XCTAssertEqual(runtime.controllerInputState.stick, .zero)
         XCTAssertFalse(runtime.controllerInputState.aPressed)
         XCTAssertFalse(runtime.controllerInputState.bPressed)
+        XCTAssertFalse(runtime.controllerInputState.cLeftPressed)
+        XCTAssertFalse(runtime.controllerInputState.cDownPressed)
+        XCTAssertFalse(runtime.controllerInputState.cRightPressed)
         XCTAssertFalse(runtime.controllerInputState.zPressed)
     }
 
@@ -261,6 +276,28 @@ final class OOTUITests: XCTestCase {
         )
     }
 
+    func testGameplayCameraConfigurationCarriesFirstPersonAimOverride() throws {
+        let scene = makeLoadedScene()
+        let playerState = PlayerState(
+            position: Vec3f(x: 12, y: 34, z: 56),
+            facingRadians: .pi / 4
+        )
+
+        let configuration = try XCTUnwrap(
+            SceneRenderPayloadBuilder.makeGameplayCameraConfiguration(
+                scene: scene,
+                playerState: playerState,
+                itemAimYaw: .pi / 3,
+                itemAimPitch: 0.2
+            )
+        )
+
+        XCTAssertEqual(
+            configuration.presentationOverride,
+            .firstPersonAim(playerYaw: .pi / 3, pitch: 0.2)
+        )
+    }
+
     func testGameplayCameraConfigurationCarriesLockOnTargetPosition() throws {
         let scene = makeLoadedScene()
         let playerState = PlayerState(
@@ -317,6 +354,8 @@ final class OOTUITests: XCTestCase {
             playerState: playerState,
             combatState: combatState,
             itemGetSequence: nil,
+            itemAimYaw: nil,
+            itemAimPitch: nil,
             viewportSize: CGSize(width: 800, height: 600)
         )
 
