@@ -90,6 +90,11 @@ public extension TalkRequestingActor {
 }
 
 @MainActor
+public protocol SkeletonRenderableActor: Actor {
+    var skeletonRenderState: ActorSkeletonRenderState? { get }
+}
+
+@MainActor
 public protocol DamageableActor: Actor {
     var hitPoints: Int { get set }
 }
@@ -144,6 +149,32 @@ open class BaseActor: Actor {
         params = UInt16(bitPattern: spawnRecord.spawn.params)
     }
 
+    public init(
+        profile: ActorProfile,
+        category: ActorCategory,
+        position: Vec3f,
+        rotation: Vec3s = Vector3s(x: 0, y: 0, z: 0),
+        params: UInt16 = 0,
+        roomID: Int = 0,
+        roomName: String = "",
+        spawnActorName: String = "",
+        spawnPosition: Vector3s? = nil
+    ) {
+        self.profile = profile
+        self.category = category
+        self.roomID = roomID
+        self.roomName = roomName
+        self.spawnActorName = spawnActorName
+        self.spawnPosition = spawnPosition ?? Vector3s(
+            x: Int16(position.x.rounded()),
+            y: Int16(position.y.rounded()),
+            z: Int16(position.z.rounded())
+        )
+        self.position = position
+        self.rotation = rotation
+        self.params = params
+    }
+
     open func initialize(playState: PlayState) {}
 
     open func update(playState: PlayState) {}
@@ -161,6 +192,32 @@ open class DamageableBaseActor: BaseActor, DamageableActor {
         self.hitPoints = hitPoints
         super.init(spawnRecord: spawnRecord)
     }
+
+    public init(
+        profile: ActorProfile,
+        category: ActorCategory,
+        position: Vec3f,
+        rotation: Vec3s = Vector3s(x: 0, y: 0, z: 0),
+        params: UInt16 = 0,
+        hitPoints: Int = 1,
+        roomID: Int = 0,
+        roomName: String = "",
+        spawnActorName: String = "",
+        spawnPosition: Vector3s? = nil
+    ) {
+        self.hitPoints = hitPoints
+        super.init(
+            profile: profile,
+            category: category,
+            position: position,
+            rotation: rotation,
+            params: params,
+            roomID: roomID,
+            roomName: roomName,
+            spawnActorName: spawnActorName,
+            spawnPosition: spawnPosition
+        )
+    }
 }
 
 @MainActor
@@ -176,6 +233,35 @@ open class CombatantBaseActor: DamageableBaseActor, CombatActor {
         self.combatProfile = combatProfile
         self.combatState = ActorCombatState()
         super.init(spawnRecord: spawnRecord, hitPoints: hitPoints)
+    }
+
+    public init(
+        profile: ActorProfile,
+        category: ActorCategory,
+        position: Vec3f,
+        rotation: Vec3s = Vector3s(x: 0, y: 0, z: 0),
+        params: UInt16 = 0,
+        hitPoints: Int = 1,
+        combatProfile: ActorCombatProfile = ActorCombatProfile(),
+        roomID: Int = 0,
+        roomName: String = "",
+        spawnActorName: String = "",
+        spawnPosition: Vector3s? = nil
+    ) {
+        self.combatProfile = combatProfile
+        self.combatState = ActorCombatState()
+        super.init(
+            profile: profile,
+            category: category,
+            position: position,
+            rotation: rotation,
+            params: params,
+            hitPoints: hitPoints,
+            roomID: roomID,
+            roomName: roomName,
+            spawnActorName: spawnActorName,
+            spawnPosition: spawnPosition
+        )
     }
 
     open var targetingRange: Float {
@@ -255,26 +341,35 @@ public final class PlaceholderCombatActor: CombatantBaseActor {
 @MainActor
 public final class ActorRuntimeHooks: @unchecked Sendable {
     private let destroyHandler: @MainActor (any Actor) -> Void
+    private let spawnHandler: @MainActor (any Actor, ActorCategory, Int) -> Void
+    private let playerStateProvider: @MainActor () -> PlayerState?
     private let messageHandler: @MainActor (Int) -> Void
     private let chestOpenHandler: @MainActor (TreasureChestOpenRequest) -> Bool
     private let treasureQueryHandler: @MainActor (TreasureFlagKey) -> Bool
+    private let rewardHandler: @MainActor (ActorReward) -> Void
     private let inventoryStateHandler: @MainActor () -> GameplayInventoryState
     private let dungeonEventHandler: @MainActor (DungeonEventFlagKey) -> Void
     private let dungeonEventQueryHandler: @MainActor (DungeonEventFlagKey) -> Bool
 
     public init(
         destroyHandler: @escaping @MainActor (any Actor) -> Void,
+        spawnHandler: @escaping @MainActor (any Actor, ActorCategory, Int) -> Void,
+        playerStateProvider: @escaping @MainActor () -> PlayerState?,
         messageHandler: @escaping @MainActor (Int) -> Void,
         chestOpenHandler: @escaping @MainActor (TreasureChestOpenRequest) -> Bool,
         treasureQueryHandler: @escaping @MainActor (TreasureFlagKey) -> Bool,
+        rewardHandler: @escaping @MainActor (ActorReward) -> Void,
         inventoryStateHandler: @escaping @MainActor () -> GameplayInventoryState,
         dungeonEventHandler: @escaping @MainActor (DungeonEventFlagKey) -> Void,
         dungeonEventQueryHandler: @escaping @MainActor (DungeonEventFlagKey) -> Bool
     ) {
         self.destroyHandler = destroyHandler
+        self.spawnHandler = spawnHandler
+        self.playerStateProvider = playerStateProvider
         self.messageHandler = messageHandler
         self.chestOpenHandler = chestOpenHandler
         self.treasureQueryHandler = treasureQueryHandler
+        self.rewardHandler = rewardHandler
         self.inventoryStateHandler = inventoryStateHandler
         self.dungeonEventHandler = dungeonEventHandler
         self.dungeonEventQueryHandler = dungeonEventQueryHandler
@@ -282,6 +377,14 @@ public final class ActorRuntimeHooks: @unchecked Sendable {
 
     public func requestDestroy(_ actor: any Actor) {
         destroyHandler(actor)
+    }
+
+    public func requestSpawn(
+        _ actor: any Actor,
+        category: ActorCategory,
+        roomID: Int
+    ) {
+        spawnHandler(actor, category, roomID)
     }
 
     public func requestMessage(_ messageID: Int) {
@@ -294,6 +397,14 @@ public final class ActorRuntimeHooks: @unchecked Sendable {
 
     public func isTreasureOpened(_ key: TreasureFlagKey) -> Bool {
         treasureQueryHandler(key)
+    }
+
+    public func requestReward(_ reward: ActorReward) {
+        rewardHandler(reward)
+    }
+
+    public func currentPlayerState() -> PlayerState? {
+        playerStateProvider()
     }
 
     public func currentInventoryState() -> GameplayInventoryState {
@@ -373,6 +484,30 @@ public struct ActorRegistry {
 
         registry.register(
             actorIDs: actorTable
+                .filter { $0.enumName == "ACTOR_EN_DEKUBABA" }
+                .map(\.id)
+        ) { DekuBabaActor(spawnRecord: $0) }
+
+        registry.register(
+            actorIDs: actorTable
+                .filter { $0.enumName == "ACTOR_EN_SW" }
+                .map(\.id)
+        ) { SkulltulaActor(spawnRecord: $0) }
+
+        registry.register(
+            actorIDs: actorTable
+                .filter { $0.enumName == "ACTOR_BOSS_GOMA" }
+                .map(\.id)
+        ) { QueenGohmaActor(spawnRecord: $0) }
+
+        registry.register(
+            actorIDs: actorTable
+                .filter { $0.enumName == "ACTOR_EN_GOMA" }
+                .map(\.id)
+        ) { GohmaLarvaActor(spawnRecord: $0) }
+
+        registry.register(
+            actorIDs: actorTable
                 .filter { $0.enumName == "ACTOR_BG_YDAN_SP" }
                 .map(\.id)
         ) { BurnableWebActor(spawnRecord: $0) }
@@ -402,7 +537,15 @@ public struct ActorRegistry {
             actorIDs: actorTable
                 .filter {
                     let category = ActorCategory(rawValue: $0.profile.category)
-                    return category == .enemy || category == .boss
+                    guard category == .enemy || category == .boss else {
+                        return false
+                    }
+
+                    return [
+                        "ACTOR_EN_DEKUBABA",
+                        "ACTOR_BOSS_GOMA",
+                        "ACTOR_EN_GOMA",
+                    ].contains($0.enumName) == false
                 }
                 .map(\.id)
         ) { PlaceholderCombatActor(spawnRecord: $0) }
@@ -448,7 +591,13 @@ public final class ActorContext {
     }
 
     private struct ActorEntry {
-        var spawnKey: SpawnKey
+        var spawnKey: SpawnKey?
+        var roomID: Int
+        var category: ActorCategory
+        var actor: any Actor
+    }
+
+    private struct PendingSpawn {
         var roomID: Int
         var category: ActorCategory
         var actor: any Actor
@@ -457,6 +606,7 @@ public final class ActorContext {
     private var actorsByCategory: [ActorCategory: [ActorEntry]]
     private var activeSpawnKeys: Set<SpawnKey>
     private var pendingDestroy: Set<ObjectIdentifier>
+    private var pendingSpawns: [PendingSpawn]
 
     public var registry: ActorRegistry
 
@@ -470,6 +620,7 @@ public final class ActorContext {
         self.telemetryPublisher = telemetryPublisher
         self.activeSpawnKeys = []
         self.pendingDestroy = []
+        self.pendingSpawns = []
         self.actorsByCategory = Dictionary(
             uniqueKeysWithValues: ActorCategory.updatePriorityOrder.map { ($0, []) }
         )
@@ -514,7 +665,23 @@ public final class ActorContext {
         pendingDestroy.insert(ObjectIdentifier(actor))
     }
 
+    public func enqueueSpawn(
+        _ actor: any Actor,
+        category: ActorCategory,
+        roomID: Int
+    ) {
+        pendingSpawns.append(
+            PendingSpawn(
+                roomID: roomID,
+                category: category,
+                actor: actor
+            )
+        )
+    }
+
     public func updateAll(playState: PlayState) {
+        flushPendingSpawns(playState: playState)
+
         for category in ActorCategory.updatePriorityOrder {
             let snapshot = actorsByCategory[category, default: []]
 
@@ -523,6 +690,8 @@ public final class ActorContext {
                 cleanupActorIfNeeded(entry.actor, in: category, playState: playState)
             }
         }
+
+        flushPendingSpawns(playState: playState)
     }
 
     public func drawActors(in pass: ActorDrawPass, playState: PlayState) {
@@ -607,7 +776,9 @@ public final class ActorContext {
         }
 
         let actorEntry = actorsByCategory[category, default: []].remove(at: actorIndex)
-        activeSpawnKeys.remove(actorEntry.spawnKey)
+        if let spawnKey = actorEntry.spawnKey {
+            activeSpawnKeys.remove(spawnKey)
+        }
         pendingDestroy.remove(actorID)
         actorEntry.actor.destroy(playState: playState)
     }
@@ -615,6 +786,31 @@ public final class ActorContext {
     private func contains(_ actor: any Actor, in category: ActorCategory) -> Bool {
         actorsByCategory[category, default: []]
             .contains { ObjectIdentifier($0.actor) == ObjectIdentifier(actor) }
+    }
+
+    private func flushPendingSpawns(playState: PlayState) {
+        guard pendingSpawns.isEmpty == false else {
+            return
+        }
+
+        let queuedSpawns = pendingSpawns
+        pendingSpawns.removeAll(keepingCapacity: true)
+
+        for pendingSpawn in queuedSpawns {
+            let actorEntry = ActorEntry(
+                spawnKey: nil,
+                roomID: pendingSpawn.roomID,
+                category: pendingSpawn.category,
+                actor: pendingSpawn.actor
+            )
+            actorsByCategory[pendingSpawn.category, default: []].append(actorEntry)
+            pendingSpawn.actor.initialize(playState: playState)
+            cleanupActorIfNeeded(
+                pendingSpawn.actor,
+                in: pendingSpawn.category,
+                playState: playState
+            )
+        }
     }
 
     private func makeSpawnRecords(

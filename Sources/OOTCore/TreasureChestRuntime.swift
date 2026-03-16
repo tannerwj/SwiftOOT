@@ -233,6 +233,11 @@ public enum TreasureChestReward: Sendable, Codable, Equatable {
     }
 }
 
+public enum ActorReward: Sendable, Codable, Equatable {
+    case chest(TreasureChestReward)
+    case goldSkulltulaToken
+}
+
 public struct TreasureChestParams: Sendable, Equatable {
     public var type: Int
     public var getItemID: Int
@@ -259,6 +264,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
     public var openedTreasureFlags: Set<TreasureFlagKey>
     public var triggeredDungeonEventFlags: Set<DungeonEventFlagKey>
     public var hasSlingshot: Bool
+    public var goldSkulltulaTokenCount: Int
     public var dekuNutCount: Int
     public var dekuNutCapacity: Int
     public var dekuStickCount: Int
@@ -271,6 +277,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         openedTreasureFlags: Set<TreasureFlagKey> = [],
         triggeredDungeonEventFlags: Set<DungeonEventFlagKey> = [],
         hasSlingshot: Bool = false,
+        goldSkulltulaTokenCount: Int = 0,
         dekuNutCount: Int = 0,
         dekuNutCapacity: Int = 20,
         dekuStickCount: Int = 0,
@@ -282,6 +289,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         self.openedTreasureFlags = openedTreasureFlags
         self.triggeredDungeonEventFlags = triggeredDungeonEventFlags
         self.hasSlingshot = hasSlingshot
+        self.goldSkulltulaTokenCount = max(0, goldSkulltulaTokenCount)
         self.dekuNutCount = max(0, dekuNutCount)
         self.dekuNutCapacity = max(0, dekuNutCapacity)
         self.dekuStickCount = max(0, dekuStickCount)
@@ -350,12 +358,24 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
 
         dungeonStateByScene[scene] = dungeonState
     }
+    public mutating func apply(
+        _ reward: ActorReward,
+        in scene: SceneIdentity
+    ) {
+        switch reward {
+        case .chest(let chestReward):
+            apply(chestReward, in: scene)
+        case .goldSkulltulaToken:
+            goldSkulltulaTokenCount += 1
+        }
+    }
 
     private enum CodingKeys: String, CodingKey {
         case dungeonStateByScene
         case openedTreasureFlags
         case triggeredDungeonEventFlags
         case hasSlingshot
+        case goldSkulltulaTokenCount
         case dekuNutCount
         case dekuNutCapacity
         case dekuStickCount
@@ -379,6 +399,10 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
             forKey: .triggeredDungeonEventFlags
         ) ?? []
         hasSlingshot = try container.decodeIfPresent(Bool.self, forKey: .hasSlingshot) ?? false
+        goldSkulltulaTokenCount = max(
+            0,
+            try container.decodeIfPresent(Int.self, forKey: .goldSkulltulaTokenCount) ?? 0
+        )
         dekuNutCount = max(0, try container.decodeIfPresent(Int.self, forKey: .dekuNutCount) ?? 0)
         dekuNutCapacity = max(0, try container.decodeIfPresent(Int.self, forKey: .dekuNutCapacity) ?? 20)
         dekuStickCount = max(0, try container.decodeIfPresent(Int.self, forKey: .dekuStickCount) ?? 0)
@@ -393,6 +417,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         try container.encode(openedTreasureFlags, forKey: .openedTreasureFlags)
         try container.encode(triggeredDungeonEventFlags, forKey: .triggeredDungeonEventFlags)
         try container.encode(hasSlingshot, forKey: .hasSlingshot)
+        try container.encode(goldSkulltulaTokenCount, forKey: .goldSkulltulaTokenCount)
         try container.encode(dekuNutCount, forKey: .dekuNutCount)
         try container.encode(dekuNutCapacity, forKey: .dekuNutCapacity)
         try container.encode(dekuStickCount, forKey: .dekuStickCount)

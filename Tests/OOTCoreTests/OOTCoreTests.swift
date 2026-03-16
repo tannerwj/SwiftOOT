@@ -1676,6 +1676,270 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testDefaultRegistrySpawnsConcreteDekuTreeEnemyActors() throws {
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(id: 10, name: "ACTOR_EN_DEKUBABA", position: Vector3s(x: -40, y: 0, z: -60)),
+                        makeSpawn(id: 20, name: "ACTOR_EN_SW", position: Vector3s(x: 0, y: 80, z: -80)),
+                        makeSpawn(id: 30, name: "ACTOR_BOSS_GOMA", position: Vector3s(x: 40, y: 120, z: -120)),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ],
+                collision: fixtureCollisionMesh()
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 10, name: "ACTOR_EN_DEKUBABA", category: .enemy),
+                makeActorTableEntry(id: 20, name: "ACTOR_EN_SW", category: .npc),
+                makeActorTableEntry(id: 30, name: "ACTOR_BOSS_GOMA", category: .boss),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+
+        XCTAssertTrue(runtime.actors.contains { $0 is DekuBabaActor })
+        XCTAssertTrue(runtime.actors.contains { $0 is SkulltulaActor })
+        XCTAssertTrue(runtime.actors.contains { $0 is QueenGohmaActor })
+    }
+
+    @MainActor
+    func testDekuBabaStunsThenGrantsStickRewardWhenFinishedDuringStunWindow() throws {
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(id: 10, name: "ACTOR_EN_DEKUBABA", position: Vector3s(x: 0, y: 0, z: -48)),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ],
+                collision: fixtureCollisionMesh()
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 10, name: "ACTOR_EN_DEKUBABA", category: .enemy),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+        for _ in 0..<4 {
+            runtime.updateFrame()
+        }
+
+        let playState = try XCTUnwrap(runtime.playState)
+        let baba = try XCTUnwrap(runtime.actors.first(where: { $0 is DekuBabaActor }) as? DekuBabaActor)
+        XCTAssertEqual(baba.state, .lunging)
+        let firstHit = CombatHit(
+            source: .player,
+            element: .swordSlash,
+            direction: Vec3f(x: 0, y: 0, z: -1),
+            effect: DamageEffect(damage: 1, knockbackDistance: 12)
+        )
+        XCTAssertEqual(
+            baba.combatHitResolution(
+                for: firstHit,
+                attackerPosition: Vec3f(x: 0, y: 0, z: 0),
+                playState: playState
+            ),
+            .ignore
+        )
+        for _ in 0..<1 {
+            runtime.updateFrame()
+        }
+
+        XCTAssertEqual(baba.state, .stunned)
+        XCTAssertEqual(runtime.inventoryState.dekuStickCount, 0)
+
+        baba.hitPoints = 1
+        applyPlayerHit(
+            to: baba,
+            element: .swordSlash,
+            attackerPosition: Vec3f(x: 0, y: 0, z: 0),
+            playState: playState
+        )
+        for _ in 0..<24 {
+            runtime.updateFrame()
+        }
+
+        XCTAssertEqual(runtime.inventoryState.dekuStickCount, 1)
+        XCTAssertFalse(runtime.actors.contains { $0 is DekuBabaActor })
+    }
+
+    @MainActor
+    func testGoldSkulltulaDropsWhenApproachedBlocksFrontHitsAndAwardsTokenFromBehind() throws {
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(
+                            id: 10,
+                            name: "ACTOR_EN_SW",
+                            position: Vector3s(x: 0, y: 96, z: -56),
+                            params: Int16(bitPattern: UInt16(1 << 13))
+                        ),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ],
+                collision: fixtureCollisionMesh()
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 10, name: "ACTOR_EN_SW", category: .npc),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+
+        var skulltula = try XCTUnwrap(runtime.actors.first(where: { $0 is SkulltulaActor }) as? SkulltulaActor)
+        XCTAssertEqual(skulltula.state, .hanging)
+
+        for _ in 0..<24 {
+            runtime.updateFrame()
+        }
+
+        skulltula = try XCTUnwrap(runtime.actors.first(where: { $0 is SkulltulaActor }) as? SkulltulaActor)
+        XCTAssertEqual(skulltula.state, .grounded)
+        runtime.updateFrame()
+
+        let playState = try XCTUnwrap(runtime.playState)
+        let frontHit = CombatHit(
+            source: .player,
+            element: .swordSlash,
+            direction: Vec3f(x: 0, y: 0, z: -1),
+            effect: DamageEffect(damage: 1, knockbackDistance: 12)
+        )
+        XCTAssertEqual(
+            skulltula.combatHitResolution(
+                for: frontHit,
+                attackerPosition: Vec3f(x: 0, y: 0, z: 0),
+                playState: playState
+            ),
+            .block
+        )
+        XCTAssertEqual(skulltula.hitPoints, 2)
+
+        runtime.playerState = PlayerState(
+            position: Vec3f(x: 0, y: 0, z: -86),
+            facingRadians: .pi,
+            isGrounded: true,
+            floorHeight: 0
+        )
+
+        applyPlayerHit(
+            to: skulltula,
+            element: .swordSlash,
+            attackerPosition: Vec3f(x: 0, y: 0, z: -86),
+            playState: playState
+        )
+        applyPlayerHit(
+            to: skulltula,
+            element: .swordJump,
+            attackerPosition: Vec3f(x: 0, y: 0, z: -86),
+            playState: playState
+        )
+        for _ in 0..<28 {
+            runtime.updateFrame()
+        }
+
+        XCTAssertEqual(runtime.inventoryState.goldSkulltulaTokenCount, 1)
+        XCTAssertFalse(runtime.actors.contains { $0 is SkulltulaActor })
+    }
+
+    @MainActor
+    func testQueenGohmaSpawnsLarvaTransitionsToGroundAndAwardsHeartContainer() throws {
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(id: 10, name: "ACTOR_BOSS_GOMA", position: Vector3s(x: 0, y: 120, z: -72)),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ],
+                collision: fixtureCollisionMesh()
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 10, name: "ACTOR_BOSS_GOMA", category: .boss),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+
+        for _ in 0..<80 {
+            runtime.updateFrame()
+        }
+
+        let gohma = try XCTUnwrap(runtime.actors.first(where: { $0 is QueenGohmaActor }) as? QueenGohmaActor)
+        XCTAssertEqual(gohma.spawnedLarvaCount, 3)
+        XCTAssertEqual(runtime.actors.filter { $0 is GohmaLarvaActor }.count, 3)
+
+        for _ in 0..<80 where gohma.state != .floorStunned {
+            runtime.updateFrame()
+        }
+
+        XCTAssertEqual(gohma.state, .floorStunned)
+        gohma.hitPoints = 1
+
+        applyPlayerHit(
+            to: gohma,
+            element: .swordJump,
+            attackerPosition: Vec3f(x: 0, y: 0, z: 0),
+            playState: try XCTUnwrap(runtime.playState)
+        )
+        for _ in 0..<96 {
+            runtime.updateFrame()
+        }
+
+        XCTAssertEqual(runtime.inventoryState.maximumHealthUnits, 8)
+        XCTAssertFalse(runtime.actors.contains { $0 is QueenGohmaActor })
+    }
+
+    @MainActor
     func testJumpAndSpinAttacksPublishExpectedAttackKinds() throws {
         let recorder = EventRecorder()
         var registry = ActorRegistry()
@@ -2110,6 +2374,53 @@ private struct RuntimeFixture {
             actorTable: actorTable,
             messageCatalog: messageCatalog,
             entranceTable: entranceTable
+        )
+    }
+}
+
+@MainActor
+private func performSwordSlash(with runtime: GameRuntime) throws {
+    runtime.setControllerInput(ControllerInputState(bPressed: true))
+    runtime.updateFrame()
+    runtime.setControllerInput(ControllerInputState())
+    runtime.updateFrame()
+    XCTAssertEqual(runtime.combatState.activeAttack?.kind, .slash)
+    for _ in 0..<6 {
+        runtime.updateFrame()
+    }
+}
+
+@MainActor
+private func applyPlayerHit(
+    to actor: any CombatActor,
+    element: DamageElement,
+    attackerPosition: Vec3f,
+    playState: PlayState
+) {
+    let proposedHit = CombatHit(
+        source: .player,
+        element: element,
+        direction: Vec3f(actor.position.simd - attackerPosition.simd),
+        effect: actor.combatProfile.damageTable.effect(for: element)
+    )
+
+    switch actor.combatHitResolution(
+        for: proposedHit,
+        attackerPosition: attackerPosition,
+        playState: playState
+    ) {
+    case .ignore, .block:
+        return
+    case .apply(let effect):
+        actor.hitPoints = max(0, actor.hitPoints - effect.damage)
+        actor.combatDidReceiveHit(
+            CombatHit(
+                source: .player,
+                element: element,
+                direction: proposedHit.direction,
+                effect: effect
+            ),
+            playState: playState
         )
     }
 }

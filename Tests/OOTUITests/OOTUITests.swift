@@ -414,6 +414,34 @@ final class OOTUITests: XCTestCase {
         XCTAssertEqual((runtime.actors.first as? TreasureChestActor)?.isOpened, true)
     }
 
+    func testRenderSceneIncludesSkeletonRenderableActors() throws {
+        let payload = try SceneRenderPayloadBuilder.makePayload(
+            scene: makeLoadedScene(),
+            textureAssetURLs: [:],
+            contentLoader: HUDArtContentLoader(object: makeSkeletonTestObject())
+        )
+
+        let actor = TestSkeletonActor(
+            renderState: ActorSkeletonRenderState(
+                objectName: "object_dekubaba",
+                skeletonName: "gDekuBabaSkel",
+                animationName: "gDekuBabaFastChompAnim",
+                animationFrame: 3,
+                animationPlaybackMode: .loop
+            )
+        )
+        let renderScene = SceneRenderPayloadBuilder.renderScene(
+            from: payload,
+            playerState: nil,
+            actors: [actor]
+        )
+
+        let enemySkeleton = try XCTUnwrap(
+            renderScene.skeletons.first { $0.name.contains("object_dekubaba") }
+        )
+        XCTAssertEqual(enemySkeleton.animationState.animation?.name, "gDekuBabaFastChompAnim")
+    }
+
     func testGameplayHUDArtLibraryLoadsKnownGameplayKeepTextures() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
             UUID().uuidString,
@@ -934,4 +962,45 @@ private struct HUDArtContentLoader: ContentLoading {
     func loadObject(named name: String) throws -> LoadedObject {
         object
     }
+}
+
+@MainActor
+private final class TestSkeletonActor: BaseActor, SkeletonRenderableActor {
+    let renderState: ActorSkeletonRenderState
+
+    init(renderState: ActorSkeletonRenderState) {
+        self.renderState = renderState
+        super.init(
+            profile: ActorProfile(id: 1, category: ActorCategory.enemy.rawValue, flags: 0, objectID: 0),
+            category: .enemy,
+            position: Vec3f(x: 0, y: 0, z: 0)
+        )
+    }
+
+    var skeletonRenderState: ActorSkeletonRenderState? {
+        renderState
+    }
+}
+
+private func makeSkeletonTestObject() -> LoadedObject {
+    LoadedObject(
+        manifest: ObjectManifest(name: "test_object"),
+        skeletonsByName: [
+            "gDekuBabaSkel": SkeletonData(
+                type: .normal,
+                limbs: [
+                    LimbData(translation: Vector3s(x: 0, y: 0, z: 0)),
+                ]
+            ),
+        ],
+        animationsByName: [
+            "gDekuBabaFastChompAnim": ObjectAnimationData(
+                name: "gDekuBabaFastChompAnim",
+                kind: .standard,
+                frameCount: 4,
+                values: [0, 0, 0],
+                limbCount: 1
+            ),
+        ]
+    )
 }

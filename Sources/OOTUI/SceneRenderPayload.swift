@@ -15,6 +15,7 @@ struct SceneRenderPayload {
     let vertexCount: Int
     let playerRenderAssets: PlayerRenderAssets?
     let chestRenderAssets: ChestRenderAssets?
+    let actorRenderAssetsByObjectName: [String: GenericActorRenderAssets]
 }
 
 struct PlayerRenderAssets {
@@ -129,6 +130,30 @@ struct ChestRenderAssets {
     }
 }
 
+struct GenericActorRenderAssets {
+    let skeleton: SkeletonData
+    let skeletonAsset: OOTRenderSkeletonAsset
+    let animationsByName: [String: ObjectAnimationData]
+
+    func makeSkeleton(for renderState: ActorSkeletonRenderState) -> OOTRenderSkeleton {
+        let playbackMode: SkelAnimationPlaybackMode =
+            renderState.animationPlaybackMode == .hold ? .hold : .loop
+        return OOTRenderSkeleton(
+            name: "\(renderState.objectName)-\(renderState.modelMatrix.columns.3.x)-\(renderState.modelMatrix.columns.3.z)",
+            skeleton: skeleton,
+            asset: skeletonAsset,
+            animationState: OOTSkeletonAnimationState(
+                animation: renderState.animationName.flatMap { animationsByName[$0] },
+                currentFrame: renderState.animationFrame,
+                playbackMode: playbackMode
+            ),
+            modelMatrix: renderState.modelMatrix,
+            rootLimbIndex: 0,
+            useLowDetailDisplayLists: renderState.useLowDetailDisplayLists
+        )
+    }
+}
+
 enum SceneRenderPayloadBuilder {
     @MainActor
     static func makePayload(
@@ -151,6 +176,7 @@ enum SceneRenderPayloadBuilder {
         var mergedTextureAssetURLs = textureAssetURLs
         let playerRenderAssets = try makePlayerRenderAssets(contentLoader: contentLoader)
         let chestRenderAssets = try makeChestRenderAssets(contentLoader: contentLoader)
+        let actorRenderAssets = try makeActorRenderAssets(contentLoader: contentLoader)
         if let playerRenderAssets {
             for (assetID, url) in playerRenderAssets.textureAssetURLs {
                 mergedTextureAssetURLs[assetID] = url
@@ -158,6 +184,11 @@ enum SceneRenderPayloadBuilder {
         }
         if let chestRenderAssets {
             for (assetID, url) in chestRenderAssets.textureAssetURLs {
+                mergedTextureAssetURLs[assetID] = url
+            }
+        }
+        for assets in actorRenderAssets.values {
+            for (assetID, url) in assets.textureAssetURLs {
                 mergedTextureAssetURLs[assetID] = url
             }
         }
@@ -176,7 +207,8 @@ enum SceneRenderPayloadBuilder {
             roomCount: scene.rooms.count,
             vertexCount: vertexCount,
             playerRenderAssets: playerRenderAssets?.assets,
-            chestRenderAssets: chestRenderAssets?.assets
+            chestRenderAssets: chestRenderAssets?.assets,
+            actorRenderAssetsByObjectName: actorRenderAssets.mapValues(\.assets)
         )
     }
 
@@ -203,6 +235,19 @@ enum SceneRenderPayloadBuilder {
                 }
             )
         }
+        skeletons.append(
+            contentsOf: actors.compactMap { actor in
+                guard
+                    let renderableActor = actor as? any SkeletonRenderableActor,
+                    let renderState = renderableActor.skeletonRenderState,
+                    let renderAssets = payload.actorRenderAssetsByObjectName[renderState.objectName]
+                else {
+                    return nil
+                }
+
+                return renderAssets.makeSkeleton(for: renderState)
+            }
+        )
         scene.skeletons = skeletons
         return scene
     }
@@ -340,6 +385,53 @@ enum SceneRenderPayloadBuilder {
         )
 
         return (assets, loadedObject.textureAssetURLs)
+    }
+
+    @MainActor
+    private static func makeActorRenderAssets(
+        contentLoader: any ContentLoading
+    ) throws -> [String: (assets: GenericActorRenderAssets, textureAssetURLs: [UInt32: URL])] {
+        let objectNames = [
+            "object_dekubaba",
+            "object_st",
+            "object_goma",
+            "object_gol",
+        ]
+
+        var assetsByObjectName: [String: (assets: GenericActorRenderAssets, textureAssetURLs: [UInt32: URL])] = [:]
+        for objectName in objectNames {
+            guard let loadedObject = try? contentLoader.loadObject(named: objectName) else {
+                continue
+            }
+            guard
+                let skeleton = loadedObject.skeletonsByName.sorted(by: { $0.key < $1.key }).first?.value
+            else {
+                continue
+            }
+
+            let displayListsByAddress: [UInt32: [F3DEX2Command]] = Dictionary(
+                uniqueKeysWithValues: loadedObject.manifest.meshes.compactMap { mesh in
+                    guard let displayList = loadedObject.displayListsByPath[mesh.displayListPath] else {
+                        return nil
+                    }
+
+                    return (OOTAssetID.stableID(for: mesh.name), displayList)
+                }
+            )
+
+            let assets = GenericActorRenderAssets(
+                skeleton: skeleton,
+                skeletonAsset: OOTRenderSkeletonAsset(
+                    displayListsByPath: loadedObject.displayListsByPath,
+                    displayListsByAddress: displayListsByAddress,
+                    segmentData: makeSegmentData(vertexDataByPath: loadedObject.vertexDataByPath)
+                ),
+                animationsByName: loadedObject.animationsByName
+            )
+            assetsByObjectName[objectName] = (assets, loadedObject.textureAssetURLs)
+        }
+
+        return assetsByObjectName
     }
 
     private static func makeAnimationLibrary(

@@ -373,6 +373,24 @@ public struct PlayState: Codable, Equatable, @unchecked Sendable {
     }
 
     @MainActor
+    public func requestSpawn(
+        _ actor: any Actor,
+        category: ActorCategory,
+        roomID: Int
+    ) {
+        actorRuntimeHooks?.requestSpawn(actor, category: category, roomID: roomID)
+    }
+
+    @MainActor
+    public func requestReward(_ reward: ActorReward) {
+        actorRuntimeHooks?.requestReward(reward)
+    }
+
+    @MainActor
+    public var currentPlayerState: PlayerState? {
+        actorRuntimeHooks?.currentPlayerState()
+    }
+    @MainActor
     public func currentInventoryState() -> GameplayInventoryState {
         actorRuntimeHooks?.currentInventoryState() ?? .starter(hearts: 3)
     }
@@ -386,7 +404,6 @@ public struct PlayState: Codable, Equatable, @unchecked Sendable {
     public func isDungeonEventTriggered(_ key: DungeonEventFlagKey) -> Bool {
         actorRuntimeHooks?.isDungeonEventTriggered(key) ?? false
     }
-
     public var currentSceneIdentity: SceneIdentity? {
         guard currentSceneName.isEmpty == false else {
             return nil
@@ -1064,6 +1081,12 @@ public final class GameRuntime {
             destroyHandler: { actor in
                 actorContext.requestDestroy(actor)
             },
+            spawnHandler: { actor, category, roomID in
+                actorContext.enqueueSpawn(actor, category: category, roomID: roomID)
+            },
+            playerStateProvider: { [weak self] in
+                self?.playerState
+            },
             messageHandler: { [weak self] messageID in
                 self?.enqueueMessage(id: messageID)
             },
@@ -1072,6 +1095,9 @@ public final class GameRuntime {
             },
             treasureQueryHandler: { [weak self] key in
                 self?.inventoryState.hasOpenedTreasure(key) ?? false
+            },
+            rewardHandler: { [weak self] reward in
+                self?.grantActorReward(reward)
             },
             inventoryStateHandler: { [weak self] in
                 self?.inventoryState ?? .starter(hearts: 3)
@@ -1409,6 +1435,15 @@ public final class GameRuntime {
         return true
     }
 
+    private func grantActorReward(_ reward: ActorReward) {
+        guard let scene = playState?.currentSceneIdentity else {
+            return
+        }
+
+        inventoryState.apply(reward, in: scene)
+        persistActiveSaveSlotState()
+        synchronizeHUDStateWithInventory()
+    }
     private func markDungeonEventTriggered(_ key: DungeonEventFlagKey) {
         guard inventoryState.hasTriggeredDungeonEvent(key) == false else {
             return
@@ -1417,7 +1452,6 @@ public final class GameRuntime {
         inventoryState.markDungeonEventTriggered(key)
         persistActiveSaveSlotState()
     }
-
     private func advanceItemGetSequenceIfNeeded() {
         guard var itemGetSequence else {
             return
