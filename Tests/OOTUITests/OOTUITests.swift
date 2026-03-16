@@ -516,9 +516,10 @@ final class OOTUITests: XCTestCase {
         }
 
         let contentRoot = URL(fileURLWithPath: contentRootPath, isDirectory: true)
+        let sceneLoader = SceneLoader(contentRoot: contentRoot)
         let runtime = GameRuntime(
             contentLoader: ContentLoader(contentRoot: contentRoot),
-            sceneLoader: SceneLoader(contentRoot: contentRoot),
+            sceneLoader: sceneLoader,
             suspender: { _ in }
         )
 
@@ -551,8 +552,19 @@ final class OOTUITests: XCTestCase {
         )
 
         let alternateScene = try XCTUnwrap(
-            runtime.availableScenes.first(where: { sceneName(for: $0) != "spot04" }),
-            "Expected at least one additional extracted scene for scene-switch validation."
+            runtime.availableScenes.first { entry in
+                guard sceneName(for: entry) != "spot04" else {
+                    return false
+                }
+                guard
+                    let scene = try? sceneLoader.loadScene(id: entry.index),
+                    let textureAssetURLs = try? sceneLoader.loadTextureAssetURLs(for: scene)
+                else {
+                    return false
+                }
+                return textureAssetURLs.isEmpty == false
+            },
+            "Expected an additional extracted scene with scene-local textures for scene-switch validation."
         )
 
         await runtime.selectScene(id: alternateScene.index)
@@ -575,6 +587,52 @@ final class OOTUITests: XCTestCase {
             expectedSceneName: sceneName(for: alternateScene)
         )
     }
+
+    func testDeveloperLaunchesTAN52SceneSetWhenConfigured() async throws {
+        guard let contentRootPath = ProcessInfo.processInfo.environment["SWIFTOOT_REAL_CONTENT_ROOT"] else {
+            throw XCTSkip("Set SWIFTOOT_REAL_CONTENT_ROOT to run the TAN-52 gameplay launch validation.")
+        }
+
+        let contentRoot = URL(fileURLWithPath: contentRootPath, isDirectory: true)
+
+        for sceneName in tan52SceneNames {
+            let runtime = GameRuntime(
+                contentLoader: ContentLoader(contentRoot: contentRoot),
+                sceneLoader: SceneLoader(contentRoot: contentRoot),
+                suspender: { _ in }
+            )
+
+            try await runtime.launchDeveloperScene(
+                DeveloperSceneLaunchConfiguration(
+                    scene: .name(sceneName),
+                    spawnIndex: 0
+                )
+            )
+
+            XCTAssertEqual(runtime.currentState, .gameplay, "Expected gameplay state for \(sceneName)")
+            XCTAssertEqual(runtime.loadedScene?.manifest.name, sceneName, "Loaded wrong scene for \(sceneName)")
+            XCTAssertNil(runtime.errorMessage, "Unexpected runtime error for \(sceneName)")
+            XCTAssertEqual(
+                runtime.playState?.currentSceneID,
+                runtime.loadedScene?.manifest.id,
+                "Scene ID mismatch for \(sceneName)"
+            )
+
+            let initialSnapshot = runtime.developerRuntimeStateSnapshot()
+            XCTAssertEqual(initialSnapshot.sceneID, runtime.loadedScene?.manifest.id, "Snapshot scene ID mismatch for \(sceneName)")
+            XCTAssertFalse(initialSnapshot.activeRoomIDs.isEmpty, "Expected active rooms for \(sceneName)")
+            XCTAssertFalse(initialSnapshot.loadedObjectIDs.isEmpty, "Expected loaded objects for \(sceneName)")
+            XCTAssertNotNil(initialSnapshot.player, "Expected spawned player state for \(sceneName)")
+            XCTAssertNil(initialSnapshot.errorMessage, "Unexpected snapshot error for \(sceneName)")
+
+            runtime.updateFrame()
+
+            let advancedSnapshot = runtime.developerRuntimeStateSnapshot()
+            XCTAssertEqual(advancedSnapshot.sceneID, initialSnapshot.sceneID, "Scene changed unexpectedly for \(sceneName)")
+            XCTAssertNil(advancedSnapshot.errorMessage, "Frame advance produced an error for \(sceneName)")
+        }
+    }
+
     func testDeveloperHarnessProducesRealContentCaptureWhenConfigured() async throws {
         guard let contentRootPath = ProcessInfo.processInfo.environment["SWIFTOOT_REAL_CONTENT_ROOT"] else {
             throw XCTSkip("Set SWIFTOOT_REAL_CONTENT_ROOT to run the real-content harness validation.")
@@ -806,6 +864,19 @@ private extension OOTUITests {
             return String(entry.segmentName.dropLast("_scene".count))
         }
         return entry.segmentName
+    }
+
+    var tan52SceneNames: [String] {
+        [
+            "spot00", "spot01", "spot02", "spot03", "spot04", "spot05", "spot06", "spot07", "spot08", "spot09",
+            "spot10", "spot11", "spot15", "spot16", "spot17", "spot18", "spot20",
+            "entra", "entra_n", "market_day", "market_night", "market_alley", "market_alley_n",
+            "shrine", "shrine_n", "hairal_niwa", "hairal_niwa_n", "nakaniwa", "miharigoya",
+            "link_home", "kokiri_home", "kokiri_home3", "kokiri_home4", "kokiri_home5",
+            "kakariko", "kakariko3", "impa", "labo", "hylia_labo", "hut", "souko", "malon_stable", "tent",
+            "shop1", "kokiri_shop", "golon", "zoora", "drag", "alley_shop", "night_shop", "face_shop",
+            "daiyousei_izumi", "yousei_izumi_tate", "yousei_izumi_yoko", "mahouya",
+        ]
     }
 
     func assertRenderedSceneHasVisibleGeometry(
