@@ -411,6 +411,66 @@ final class TextureExtractorTests: XCTestCase {
             TextureAssetMetadata(format: .ia16, width: 1, height: 1, hasTLUT: false)
         )
     }
+
+    func testExtractUsesPNGWhenSceneTextureIncludeIsMissingFromCanonicalShape() throws {
+        let harness = try TextureHarness()
+        defer { harness.cleanup() }
+
+        try harness.writeXML(
+            at: "assets/xml/scenes/dungeons/ydan.xml",
+            contents: """
+            <Root>
+                <File Name="ydan_scene" Segment="2">
+                    <Texture Name="gDekuTreeDayEntranceTex" Format="rgba16" Width="1" Height="1" Offset="0xBA08"/>
+                    <Scene Name="ydan_scene" Offset="0x0"/>
+                </File>
+            </Root>
+            """
+        )
+        try harness.writeSource(
+            at: "extracted/ntsc-1.2/assets/scenes/dungeons/ydan/ydan_scene.h",
+            contents: """
+            #include "tex_len.h"
+
+            #define gDekuTreeDayEntranceTex_WIDTH 1
+            #define gDekuTreeDayEntranceTex_HEIGHT 1
+            extern u64 gDekuTreeDayEntranceTex[TEX_LEN(u64, gDekuTreeDayEntranceTex_WIDTH, gDekuTreeDayEntranceTex_HEIGHT, 16)];
+            """
+        )
+        try harness.writeSource(
+            at: "extracted/ntsc-1.2/assets/scenes/dungeons/ydan/ydan_scene.c",
+            contents: """
+            #include "ydan_scene.h"
+
+            u64 gDekuTreeDayEntranceTex[TEX_LEN(u64, gDekuTreeDayEntranceTex_WIDTH, gDekuTreeDayEntranceTex_HEIGHT, 16)] = {
+            #include "assets/scenes/dungeons/ydan/gDekuTreeDayEntranceTex.rgba16.inc.c"
+            };
+            """
+        )
+        try harness.writePNG(
+            at: "extracted/ntsc-1.2/assets/scenes/dungeons/ydan/gDekuTreeDayEntranceTex.rgba16.png"
+        )
+
+        let extractor = TextureExtractor()
+        try extractor.extract(using: harness.extractionContext(sceneName: "ydan"))
+
+        let textureDirectory = harness.outputRoot
+            .appendingPathComponent("Textures", isDirectory: true)
+            .appendingPathComponent("ydan_scene", isDirectory: true)
+        let binary = try Data(contentsOf: textureDirectory.appendingPathComponent("gDekuTreeDayEntranceTex.tex.bin"))
+        let metadata = try JSONDecoder().decode(
+            TextureAssetMetadata.self,
+            from: Data(contentsOf: textureDirectory.appendingPathComponent("gDekuTreeDayEntranceTex.tex.json"))
+        )
+
+        XCTAssertEqual(binary.count, 4)
+        XCTAssertEqual(
+            metadata,
+            TextureAssetMetadata(format: .rgba32, width: 1, height: 1, hasTLUT: false)
+        )
+
+        try extractor.verify(using: harness.verificationContext)
+    }
 }
 
 private struct TextureHarness {

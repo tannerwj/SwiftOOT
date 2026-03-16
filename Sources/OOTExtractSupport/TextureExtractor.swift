@@ -233,6 +233,7 @@ private extension TextureExtractor {
         let order: Int
         let tlutName: String?
         let pngURL: URL?
+        let usesMissingIncludeFallback: Bool
     }
 
     struct SourceBackedTLUTDeclaration: Sendable {
@@ -534,6 +535,12 @@ private extension TextureExtractor {
                 sourceRoot: sourceRoot,
                 fileManager: fileManager
             )
+        } else {
+            groups = try applySourceBackedPNGFallbacks(
+                to: groups,
+                sourceRoot: sourceRoot,
+                fileManager: fileManager
+            )
         }
 
         return groups.sorted { $0.sourceName < $1.sourceName }
@@ -798,6 +805,12 @@ private extension TextureExtractor {
         fileManager: FileManager
     ) -> SourceBackedTextureDeclaration? {
         let basename = URL(fileURLWithPath: includePath).lastPathComponent
+        let includeURL = sourceBackedIncludeURL(
+            forIncludePath: includePath,
+            sourceFile: sourceFile,
+            sourceRoot: sourceRoot,
+            fileManager: fileManager
+        )
         let pngURL = sourceBackedPNGURL(
             forIncludePath: includePath,
             sourceFile: sourceFile,
@@ -817,7 +830,8 @@ private extension TextureExtractor {
                 height: height,
                 order: order,
                 tlutName: substring(in: basename, range: match.range(at: 2)),
-                pngURL: pngURL
+                pngURL: pngURL,
+                usesMissingIncludeFallback: includeURL == nil && pngURL != nil
             )
         }
 
@@ -835,8 +849,28 @@ private extension TextureExtractor {
             height: height,
             order: order,
             tlutName: nil,
-            pngURL: pngURL
+            pngURL: pngURL,
+            usesMissingIncludeFallback: includeURL == nil && pngURL != nil
         )
+    }
+
+    static func sourceBackedIncludeURL(
+        forIncludePath includePath: String,
+        sourceFile: URL,
+        sourceRoot: URL,
+        fileManager: FileManager
+    ) -> URL? {
+        for root in sourceBackedSearchRoots(
+            for: sourceFile,
+            sourceRoot: sourceRoot
+        ) {
+            let candidate = root.appendingPathComponent(includePath)
+            if fileManager.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+        }
+
+        return nil
     }
 
     static func sourceBackedPNGURL(
@@ -850,14 +884,10 @@ private extension TextureExtractor {
         }
 
         let pngPath = String(includePath.dropLast(".inc.c".count)) + ".png"
-        let candidateRoots = [
-            assetRoot(for: sourceFile),
-            sourceRoot.appendingPathComponent("build", isDirectory: true),
-            sourceRoot,
-            sourceFile.deletingLastPathComponent(),
-        ]
-
-        for root in candidateRoots.compactMap({ $0 }) {
+        for root in sourceBackedSearchRoots(
+            for: sourceFile,
+            sourceRoot: sourceRoot
+        ) {
             let candidate = root.appendingPathComponent(pngPath)
             if fileManager.fileExists(atPath: candidate.path) {
                 return candidate
@@ -865,6 +895,18 @@ private extension TextureExtractor {
         }
 
         return nil
+    }
+
+    static func sourceBackedSearchRoots(
+        for sourceFile: URL,
+        sourceRoot: URL
+    ) -> [URL] {
+        [
+            assetRoot(for: sourceFile),
+            sourceRoot.appendingPathComponent("build", isDirectory: true),
+            sourceRoot,
+            sourceFile.deletingLastPathComponent(),
+        ].compactMap { $0 }
     }
 
     static func assetRoot(for fileURL: URL) -> URL? {
@@ -1023,6 +1065,122 @@ private extension TextureExtractor {
         }
 
         return arrays
+    }
+
+    static func applySourceBackedPNGFallbacks(
+        to groups: [TextureSourceGroup],
+        sourceRoot: URL,
+        fileManager: FileManager
+    ) throws -> [TextureSourceGroup] {
+        var fallbackURLsBySourceName: [String: [String: URL]] = [:]
+        var enrichedGroups: [TextureSourceGroup] = []
+        enrichedGroups.reserveCapacity(groups.count)
+
+        for group in groups {
+            let fallbackURLs: [String: URL]
+            if let cached = fallbackURLsBySourceName[group.sourceName] {
+                fallbackURLs = cached
+            } else {
+                let resolved = try missingIncludePNGFallbacksByTextureName(
+                    for: group.sourceName,
+                    assetDirectory: group.assetDirectory,
+                    sourceRoot: sourceRoot,
+                    fileManager: fileManager
+                )
+                fallbackURLsBySourceName[group.sourceName] = resolved
+                fallbackURLs = resolved
+            }
+
+            guard fallbackURLs.isEmpty == false else {
+                enrichedGroups.append(group)
+                continue
+            }
+
+            let textures = group.textures.map { texture in
+                guard
+                    texture.pngURL == nil,
+                    let pngURL = fallbackURLs[texture.name]
+                else {
+                    return texture
+                }
+
+                return TextureDefinition(
+                    name: texture.name,
+                    format: texture.format,
+                    width: texture.width,
+                    height: texture.height,
+                    offset: texture.offset,
+                    tlutOffset: texture.tlutOffset,
+                    tlutName: texture.tlutName,
+                    pngURL: pngURL
+                )
+            }
+
+            enrichedGroups.append(
+                TextureSourceGroup(
+                    xmlURL: group.xmlURL,
+                    sourceName: group.sourceName,
+                    outputSource: group.outputSource,
+                    assetDirectory: group.assetDirectory,
+                    textures: textures,
+                    tlutByOffset: group.tlutByOffset,
+                    tlutByName: group.tlutByName
+                )
+            )
+        }
+
+        return enrichedGroups
+    }
+
+    static func missingIncludePNGFallbacksByTextureName(
+        for sourceName: String,
+        assetDirectory: String,
+        sourceRoot: URL,
+        fileManager: FileManager
+    ) throws -> [String: URL] {
+        guard let sourceFile = try locateSourceFile(
+            named: sourceName,
+            preferredExtensions: ["c", "inc.c"],
+            assetDirectory: assetDirectory,
+            sourceRoot: sourceRoot,
+            fileManager: fileManager
+        ) else {
+            return [:]
+        }
+
+        let headerFile = try locateSourceFile(
+            named: sourceName,
+            preferredExtensions: ["h"],
+            assetDirectory: assetDirectory,
+            sourceRoot: sourceRoot,
+            fileManager: fileManager
+        )
+        let sourceContents = try String(contentsOf: sourceFile, encoding: .utf8)
+        let headerContents = if let headerFile {
+            try String(contentsOf: headerFile, encoding: .utf8)
+        } else {
+            ""
+        }
+
+        let dimensionsByName = parseTextureDimensions(in: headerContents)
+        let declarations = parseSourceBackedTextureDeclarations(
+            in: sourceContents,
+            dimensionsByName: dimensionsByName,
+            sourceFile: sourceFile,
+            sourceRoot: sourceRoot,
+            fileManager: fileManager
+        )
+
+        return declarations.textures.reduce(into: [:]) { result, texture in
+            guard
+                texture.usesMissingIncludeFallback,
+                let pngURL = texture.pngURL
+            else {
+                return
+            }
+
+            result[texture.name] = pngURL
+        }
     }
 
     static func dataSource(
