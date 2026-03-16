@@ -728,6 +728,194 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testGameplayActionLabelIsNilWhenTalkActorsAreOutOfRangeOrBehindPlayer() throws {
+        var registry = ActorRegistry()
+        registry.register(actorID: 1) {
+            TestTalkActor(
+                spawnRecord: $0,
+                prompt: "Behind",
+                messageID: 0x1000
+            )
+        }
+        registry.register(actorID: 2) {
+            TestTalkActor(
+                spawnRecord: $0,
+                prompt: "Far",
+                messageID: 0x1001
+            )
+        }
+
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(id: 1, name: "ACTOR_TALK_BEHIND", position: Vector3s(x: 0, y: 0, z: 60)),
+                        makeSpawn(id: 2, name: "ACTOR_TALK_FAR", position: Vector3s(x: 0, y: 0, z: -180)),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 1, name: "ACTOR_TALK_BEHIND", category: .npc),
+                makeActorTableEntry(id: 2, name: "ACTOR_TALK_FAR", category: .npc),
+            ],
+            messageCatalog: MessageCatalog(
+                messageList: [
+                    MessageDefinition(id: 0x1000, variant: .white, segments: [.text("Behind")]),
+                    MessageDefinition(id: 0x1001, variant: .white, segments: [.text("Far")]),
+                ]
+            )
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            actorRegistry: registry,
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+
+        XCTAssertNil(runtime.gameplayActionLabel)
+
+        runtime.handlePrimaryGameplayInput()
+
+        XCTAssertNil(runtime.activeMessagePresentation)
+    }
+
+    @MainActor
+    func testPrimaryGameplayInputTargetsNearestTalkActorInsteadOfSpawnOrder() throws {
+        var registry = ActorRegistry()
+        registry.register(actorID: 1) {
+            TestTalkActor(
+                spawnRecord: $0,
+                prompt: "Far",
+                messageID: 0x1000
+            )
+        }
+        registry.register(actorID: 2) {
+            TestTalkActor(
+                spawnRecord: $0,
+                prompt: "Near",
+                messageID: 0x1001
+            )
+        }
+
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(id: 1, name: "ACTOR_TALK_FAR", position: Vector3s(x: 0, y: 0, z: -110)),
+                        makeSpawn(id: 2, name: "ACTOR_TALK_NEAR", position: Vector3s(x: 0, y: 0, z: -50)),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 1, name: "ACTOR_TALK_FAR", category: .npc),
+                makeActorTableEntry(id: 2, name: "ACTOR_TALK_NEAR", category: .npc),
+            ],
+            messageCatalog: MessageCatalog(
+                messageList: [
+                    MessageDefinition(id: 0x1000, variant: .white, segments: [.text("Far")]),
+                    MessageDefinition(id: 0x1001, variant: .white, segments: [.text("Near")]),
+                ]
+            )
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            actorRegistry: registry,
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+
+        XCTAssertEqual(runtime.gameplayActionLabel, "Near")
+
+        runtime.handlePrimaryGameplayInput()
+
+        XCTAssertEqual(runtime.activeMessagePresentation?.messageID, 0x1001)
+        XCTAssertEqual(runtime.gameplayActionLabel, "Next")
+    }
+
+    @MainActor
+    func testTalkTargetingBreaksPerfectTiesBySpawnOrder() throws {
+        var registry = ActorRegistry()
+        registry.register(actorID: 1) {
+            TestTalkActor(
+                spawnRecord: $0,
+                prompt: "First",
+                messageID: 0x1000
+            )
+        }
+        registry.register(actorID: 2) {
+            TestTalkActor(
+                spawnRecord: $0,
+                prompt: "Second",
+                messageID: 0x1001
+            )
+        }
+
+        let tiePosition = Vector3s(x: 0, y: 0, z: -40)
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(id: 1, name: "ACTOR_TALK_FIRST", position: tiePosition),
+                        makeSpawn(id: 2, name: "ACTOR_TALK_SECOND", position: tiePosition),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 1, name: "ACTOR_TALK_FIRST", category: .npc),
+                makeActorTableEntry(id: 2, name: "ACTOR_TALK_SECOND", category: .npc),
+            ],
+            messageCatalog: MessageCatalog(
+                messageList: [
+                    MessageDefinition(id: 0x1000, variant: .white, segments: [.text("First")]),
+                    MessageDefinition(id: 0x1001, variant: .white, segments: [.text("Second")]),
+                ]
+            )
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            actorRegistry: registry,
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+
+        XCTAssertEqual(runtime.gameplayActionLabel, "First")
+
+        runtime.handlePrimaryGameplayInput()
+
+        XCTAssertEqual(runtime.activeMessagePresentation?.messageID, 0x1000)
+    }
+
+    @MainActor
     func testDrawPassesOnlyCallMatchingActors() throws {
         let recorder = EventRecorder()
         var registry = ActorRegistry()
@@ -920,6 +1108,31 @@ private final class RecordingActor: DamageableBaseActor {
 
     override func destroy(playState: PlayState) {
         recorder.append("destroy:\(label)")
+    }
+}
+
+@MainActor
+private final class TestTalkActor: DamageableBaseActor, TalkRequestingActor {
+    let prompt: String
+    let messageID: Int
+
+    var talkPrompt: String {
+        prompt
+    }
+
+    init(
+        spawnRecord: ActorSpawnRecord,
+        prompt: String,
+        messageID: Int
+    ) {
+        self.prompt = prompt
+        self.messageID = messageID
+        super.init(spawnRecord: spawnRecord)
+    }
+
+    func talkRequested(playState: PlayState) -> Bool {
+        playState.requestMessage(messageID)
+        return true
     }
 }
 

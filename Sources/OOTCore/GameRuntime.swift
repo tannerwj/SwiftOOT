@@ -1149,7 +1149,69 @@ public final class GameRuntime {
     }
 
     private var activeTalkActor: (any TalkRequestingActor)? {
-        actors.first { $0 is any TalkRequestingActor } as? (any TalkRequestingActor)
+        resolveActiveTalkActor()?.actor
+    }
+
+    private func resolveActiveTalkActor() -> TalkTargetCandidate? {
+        guard currentState == .gameplay, let playerState else {
+            return nil
+        }
+
+        let playerPosition = playerState.position.simd
+        let playerForward = SIMD2<Float>(
+            sin(playerState.facingRadians),
+            -cos(playerState.facingRadians)
+        )
+        let tieEpsilon: Float = 0.001
+
+        return actors.enumerated()
+            .compactMap { index, actor -> TalkTargetCandidate? in
+                guard let talkActor = actor as? (any TalkRequestingActor) else {
+                    return nil
+                }
+
+                let offset = talkActor.position.simd - playerPosition
+                let planarOffset = SIMD2<Float>(offset.x, offset.z)
+                let planarDistanceSquared = simd_length_squared(planarOffset)
+                let maxDistanceSquared = talkActor.talkInteractionRange * talkActor.talkInteractionRange
+                guard planarDistanceSquared <= maxDistanceSquared else {
+                    return nil
+                }
+
+                let facingAlignment: Float
+                if planarDistanceSquared > tieEpsilon {
+                    facingAlignment = simd_dot(playerForward, simd_normalize(planarOffset))
+                } else {
+                    facingAlignment = 1
+                }
+
+                guard facingAlignment >= talkActor.talkFacingThreshold else {
+                    return nil
+                }
+
+                return TalkTargetCandidate(
+                    actor: talkActor,
+                    distanceSquared: planarDistanceSquared,
+                    facingAlignment: facingAlignment,
+                    actorIndex: index
+                )
+            }
+            .min { lhs, rhs in
+                if abs(lhs.distanceSquared - rhs.distanceSquared) > tieEpsilon {
+                    return lhs.distanceSquared < rhs.distanceSquared
+                }
+                if abs(lhs.facingAlignment - rhs.facingAlignment) > tieEpsilon {
+                    return lhs.facingAlignment > rhs.facingAlignment
+                }
+                return lhs.actorIndex < rhs.actorIndex
+            }
+    }
+
+    private struct TalkTargetCandidate {
+        let actor: any TalkRequestingActor
+        let distanceSquared: Float
+        let facingAlignment: Float
+        let actorIndex: Int
     }
 
     private func enqueueMessage(id messageID: Int) {

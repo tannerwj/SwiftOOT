@@ -66,6 +66,8 @@ public protocol Actor: AnyObject {
 @MainActor
 public protocol TalkRequestingActor: Actor {
     var talkPrompt: String { get }
+    var talkInteractionRange: Float { get }
+    var talkFacingThreshold: Float { get }
     func talkRequested(playState: PlayState) -> Bool
 }
 
@@ -83,6 +85,8 @@ public extension Actor {
 
 public extension TalkRequestingActor {
     var talkPrompt: String { "Talk" }
+    var talkInteractionRange: Float { 120 }
+    var talkFacingThreshold: Float { 0.25 }
 }
 
 @MainActor
@@ -163,6 +167,8 @@ public final class DoorActor: BaseActor {}
 
 @MainActor
 public final class SignActor: DamageableBaseActor, TalkRequestingActor {
+    public var talkInteractionRange: Float { 160 }
+
     public func talkRequested(playState: PlayState) -> Bool {
         let messageID = params == 0 ? 0x1001 : Int(params)
         playState.requestMessage(messageID)
