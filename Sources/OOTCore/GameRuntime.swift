@@ -390,7 +390,20 @@ public struct PlayState: Codable, Equatable, @unchecked Sendable {
     public var currentPlayerState: PlayerState? {
         actorRuntimeHooks?.currentPlayerState()
     }
+    @MainActor
+    public func currentInventoryState() -> GameplayInventoryState {
+        actorRuntimeHooks?.currentInventoryState() ?? .starter(hearts: 3)
+    }
 
+    @MainActor
+    public func markDungeonEventTriggered(_ key: DungeonEventFlagKey) {
+        actorRuntimeHooks?.markDungeonEventTriggered(key)
+    }
+
+    @MainActor
+    public func isDungeonEventTriggered(_ key: DungeonEventFlagKey) -> Bool {
+        actorRuntimeHooks?.isDungeonEventTriggered(key) ?? false
+    }
     public var currentSceneIdentity: SceneIdentity? {
         guard currentSceneName.isEmpty == false else {
             return nil
@@ -1085,6 +1098,15 @@ public final class GameRuntime {
             },
             rewardHandler: { [weak self] reward in
                 self?.grantActorReward(reward)
+            },
+            inventoryStateHandler: { [weak self] in
+                self?.inventoryState ?? .starter(hearts: 3)
+            },
+            dungeonEventHandler: { [weak self] key in
+                self?.markDungeonEventTriggered(key)
+            },
+            dungeonEventQueryHandler: { [weak self] key in
+                self?.inventoryState.hasTriggeredDungeonEvent(key) ?? false
             }
         )
         let basePlayState = playState ?? PlayState(
@@ -1253,6 +1275,7 @@ public final class GameRuntime {
 
         actorContext.updateAll(playState: playState)
         updateCombatStateAfterActorStep(playState: playState, currentInput: playerInput)
+        processSceneTransitionsIfNeeded()
         let allowPrimaryAction = canUsePrimaryGameplayInput(for: playerInput)
         applyGameplayControllerInput(allowPrimaryAction: allowPrimaryAction)
         messageContext.tick(playerName: playState.playerName)
@@ -1421,7 +1444,14 @@ public final class GameRuntime {
         persistActiveSaveSlotState()
         synchronizeHUDStateWithInventory()
     }
+    private func markDungeonEventTriggered(_ key: DungeonEventFlagKey) {
+        guard inventoryState.hasTriggeredDungeonEvent(key) == false else {
+            return
+        }
 
+        inventoryState.markDungeonEventTriggered(key)
+        persistActiveSaveSlotState()
+    }
     private func advanceItemGetSequenceIfNeeded() {
         guard var itemGetSequence else {
             return
@@ -1744,16 +1774,76 @@ public final class GameRuntime {
     }
 
     private func sceneID(for sceneName: String) -> Int? {
-        switch sceneName {
-        case "Kokiri Forest":
-            return 0x55
-        default:
+        let normalizedName = sceneName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalizedName.isEmpty == false else {
             return nil
         }
+
+        let sceneEntries: [SceneTableEntry]
+        if availableScenes.isEmpty {
+            sceneEntries = (try? sceneLoader.loadSceneTableEntries()) ?? []
+        } else {
+            sceneEntries = availableScenes
+        }
+
+        return sceneEntries.first { entry in
+            Self.sceneName(for: entry).localizedCaseInsensitiveCompare(normalizedName) == .orderedSame ||
+                entry.enumName.localizedCaseInsensitiveCompare(normalizedName) == .orderedSame ||
+                entry.title?.localizedCaseInsensitiveCompare(normalizedName) == .orderedSame
+        }?.index
     }
 
     private var activeTalkActor: (any TalkRequestingActor)? {
         resolveActiveTalkActor()?.actor
+    }
+
+    private func processSceneTransitionsIfNeeded() {
+        guard
+            currentState == .gameplay,
+            messageContext.isPresenting == false,
+            itemGetSequence == nil,
+            let playerPosition = playerState?.position
+        else {
+            return
+        }
+
+        do {
+            if let doorTriggerID = automaticDoorTriggerID(near: playerPosition.simd) {
+                try activateDoorTransition(id: doorTriggerID)
+                return
+            }
+
+            try evaluateLoadingZone(
+                at: Vector3s(
+                    x: Int16(playerPosition.x.rounded()),
+                    y: Int16(playerPosition.y.rounded()),
+                    z: Int16(playerPosition.z.rounded())
+                )
+            )
+        } catch {
+            telemetryPublisher.publish("gameRuntime.sceneTransitionFailed")
+        }
+    }
+
+    private func automaticDoorTriggerID(near position: SIMD3<Float>) -> Int? {
+        guard let sceneManager, let sceneHeader = loadedScene?.sceneHeader else {
+            return nil
+        }
+
+        let activationDistanceSquared: Float = 90 * 90
+
+        return sceneHeader.transitionTriggers.first { trigger in
+            guard trigger.kind == .door, trigger.roomID == sceneManager.state.currentRoomID else {
+                return false
+            }
+
+            let triggerPosition = SIMD3<Float>(
+                Float(trigger.volume.minimum.x),
+                Float(trigger.volume.minimum.y),
+                Float(trigger.volume.minimum.z)
+            )
+            return simd_distance_squared(triggerPosition, position) <= activationDistanceSquared
+        }?.id
     }
 
     private func resolveActiveTalkActor() -> TalkTargetCandidate? {

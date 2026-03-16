@@ -466,7 +466,7 @@ public final class GohmaLarvaActor: CombatantBaseActor, SkeletonRenderableActor 
         )
     }
 
-    init(position: Vec3f, roomID _: Int) {
+    init(position: Vec3f, roomID: Int) {
         groundY = position.y
         super.init(
             profile: Self.syntheticProfile,
@@ -481,7 +481,9 @@ public final class GohmaLarvaActor: CombatantBaseActor, SkeletonRenderableActor 
                 damageTable: DamageTable(
                     defaultEffect: DamageEffect(damage: 1, knockbackDistance: 10, invincibilityFrames: 8)
                 )
-            )
+            ),
+            roomID: roomID,
+            spawnActorName: "ACTOR_EN_GOMA"
         )
     }
 
