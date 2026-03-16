@@ -36,7 +36,9 @@ final class SceneLoaderTests: XCTestCase {
         XCTAssertEqual(scene.actors, fixture.actors)
         XCTAssertEqual(scene.spawns, fixture.spawns)
         XCTAssertEqual(scene.environment, fixture.environment)
+        XCTAssertEqual(scene.exits, fixture.exits)
         XCTAssertEqual(scene.paths, fixture.paths)
+        XCTAssertEqual(scene.sceneHeader, fixture.sceneHeader)
     }
 
     func testSceneLoaderAcceptsLegacyManifestFilename() throws {
@@ -76,7 +78,9 @@ private struct SceneLoaderFixture {
     let actors: SceneActorsFile
     let spawns: SceneSpawnsFile
     let environment: SceneEnvironmentFile
+    let exits: SceneExitsFile
     let paths: ScenePathsFile
+    let sceneHeader: SceneHeaderDefinition
 
     init(manifestFilename: String = "SceneManifest.json") throws {
         let fileManager = FileManager.default
@@ -155,9 +159,69 @@ private struct SceneLoaderFixture {
                 )
             ]
         )
+        exits = SceneExitsFile(
+            sceneName: "spot04",
+            exits: [
+                SceneExitDefinition(
+                    index: 0,
+                    entranceIndex: 0x0EE,
+                    entranceName: "ENTR_KOKIRI_FOREST_0"
+                )
+            ]
+        )
+        sceneHeader = SceneHeaderDefinition(
+            sceneName: "spot04",
+            sceneObjectIDs: [1, 2],
+            spawns: [
+                SceneSpawnPoint(
+                    index: 0,
+                    roomID: 1,
+                    position: Vector3s(x: 100, y: 200, z: 300),
+                    rotation: Vector3s(x: 0, y: 0x4000, z: 0)
+                )
+            ],
+            entrances: [
+                SceneEntranceDefinition(index: 0x0EE, spawnIndex: 0)
+            ],
+            rooms: [
+                SceneRoomDefinition(
+                    id: 0,
+                    shape: .cullable,
+                    objectIDs: [10],
+                    echo: 1,
+                    behavior: SceneRoomBehavior(disableWarpSongs: false, showInvisibleActors: false)
+                ),
+                SceneRoomDefinition(
+                    id: 1,
+                    shape: .normal,
+                    objectIDs: [11]
+                ),
+            ],
+            transitionTriggers: [
+                SceneTransitionTrigger(
+                    id: 0,
+                    kind: .door,
+                    roomID: 0,
+                    destinationRoomID: 1,
+                    effect: .fade,
+                    volume: SceneTriggerVolume(
+                        minimum: Vector3s(x: 0, y: 0, z: 0),
+                        maximum: Vector3s(x: 10, y: 10, z: 10)
+                    )
+                )
+            ],
+            soundSettings: SceneSoundSettings(specID: 1, natureAmbienceID: 4, sequenceID: 60),
+            specialFiles: SceneSpecialFiles(
+                naviHintName: "NAVI_QUEST_HINTS_OVERWORLD",
+                keepObjectName: "OBJECT_GAMEPLAY_FIELD_KEEP"
+            ),
+            cutsceneIDs: [7]
+        )
 
         try fileManager.createDirectory(at: contentRoot, withIntermediateDirectories: true)
         try seedSceneTable()
+        try seedObjectTable()
+        try seedEntranceTable()
         try seedSceneManifest(filename: manifestFilename)
         try seedSceneMetadata()
         try seedTextureAssets()
@@ -254,6 +318,8 @@ private struct SceneLoaderFixture {
                 spawnsPath: "Manifests/scenes/overworld/spot04/spawns.json",
                 environmentPath: "Manifests/scenes/overworld/spot04/environment.json",
                 pathsPath: "Manifests/scenes/overworld/spot04/paths.json",
+                exitsPath: "Manifests/scenes/overworld/spot04/exits.json",
+                sceneHeaderPath: "Manifests/scenes/overworld/spot04/scene-header.json",
                 textureDirectories: ["Textures/spot04_scene"]
             ),
             to: sceneDirectory.appendingPathComponent(filename)
@@ -270,7 +336,43 @@ private struct SceneLoaderFixture {
         try writeJSON(actors, to: metadataRoot.appendingPathComponent("actors.json"))
         try writeJSON(spawns, to: metadataRoot.appendingPathComponent("spawns.json"))
         try writeJSON(environment, to: metadataRoot.appendingPathComponent("environment.json"))
+        try writeJSON(exits, to: metadataRoot.appendingPathComponent("exits.json"))
         try writeJSON(paths, to: metadataRoot.appendingPathComponent("paths.json"))
+        try writeJSON(sceneHeader, to: metadataRoot.appendingPathComponent("scene-header.json"))
+    }
+
+    private func seedObjectTable() throws {
+        try writeJSON(
+            [
+                ObjectTableEntry(id: 1, enumName: "OBJECT_TEST_1", assetPath: "objects/object_test_1"),
+                ObjectTableEntry(id: 2, enumName: "OBJECT_TEST_2", assetPath: "objects/object_test_2"),
+            ],
+            to: contentRoot
+                .appendingPathComponent("Manifests", isDirectory: true)
+                .appendingPathComponent("tables", isDirectory: true)
+                .appendingPathComponent("object-table.json")
+        )
+    }
+
+    private func seedEntranceTable() throws {
+        try writeJSON(
+            [
+                EntranceTableEntry(
+                    index: 0x0EE,
+                    name: "ENTR_KOKIRI_FOREST_0",
+                    sceneID: 0x55,
+                    spawnIndex: 0,
+                    continueBGM: false,
+                    displayTitleCard: true,
+                    transitionIn: .fade,
+                    transitionOut: .fade
+                )
+            ],
+            to: contentRoot
+                .appendingPathComponent("Manifests", isDirectory: true)
+                .appendingPathComponent("tables", isDirectory: true)
+                .appendingPathComponent("entrance-table.json")
+        )
     }
 
     private func seedTextureAssets() throws {

@@ -171,11 +171,18 @@ public struct PlayState: Codable, Equatable, @unchecked Sendable {
     public var activeSaveSlot: Int
     public var entryMode: EntryMode
     public var currentSceneName: String
+    public var currentSceneID: Int?
+    public var currentRoomID: Int?
+    public var currentEntranceIndex: Int?
+    public var currentSpawnIndex: Int?
     public var playerName: String
 
     public var scene: LoadedScene?
     public var actorTable: [Int: ActorTableEntry]
     public var activeRoomIDs: Set<Int>
+    public var loadedObjectIDs: [Int]
+    public var transitionEffect: SceneTransitionEffect?
+    public var objectSlotOverflow: Bool
     public var currentDrawPass: ActorDrawPass?
 
     @MainActor
@@ -185,19 +192,33 @@ public struct PlayState: Codable, Equatable, @unchecked Sendable {
         activeSaveSlot: Int,
         entryMode: EntryMode,
         currentSceneName: String,
+        currentSceneID: Int? = nil,
+        currentRoomID: Int? = nil,
+        currentEntranceIndex: Int? = nil,
+        currentSpawnIndex: Int? = nil,
         playerName: String,
         scene: LoadedScene? = nil,
         actorTable: [Int: ActorTableEntry] = [:],
         activeRoomIDs: Set<Int> = [],
+        loadedObjectIDs: [Int] = [],
+        transitionEffect: SceneTransitionEffect? = nil,
+        objectSlotOverflow: Bool = false,
         currentDrawPass: ActorDrawPass? = nil
     ) {
         self.activeSaveSlot = activeSaveSlot
         self.entryMode = entryMode
         self.currentSceneName = currentSceneName
+        self.currentSceneID = currentSceneID
+        self.currentRoomID = currentRoomID
+        self.currentEntranceIndex = currentEntranceIndex
+        self.currentSpawnIndex = currentSpawnIndex
         self.playerName = playerName
         self.scene = scene
         self.actorTable = actorTable
         self.activeRoomIDs = activeRoomIDs
+        self.loadedObjectIDs = loadedObjectIDs
+        self.transitionEffect = transitionEffect
+        self.objectSlotOverflow = objectSlotOverflow
         self.currentDrawPass = currentDrawPass
         actorRuntimeHooks = nil
     }
@@ -220,20 +241,41 @@ public struct PlayState: Codable, Equatable, @unchecked Sendable {
         scene: LoadedScene,
         actorTable: [Int: ActorTableEntry],
         activeRoomIDs: Set<Int>,
-        actorRuntimeHooks: ActorRuntimeHooks
+        actorRuntimeHooks: ActorRuntimeHooks,
+        sceneManagerState: SceneManagerState? = nil
     ) -> PlayState {
         var copy = self
         copy.scene = scene
         copy.actorTable = actorTable
         copy.activeRoomIDs = activeRoomIDs
+        if let sceneManagerState {
+            copy.currentSceneID = sceneManagerState.currentSceneID
+            copy.currentRoomID = sceneManagerState.currentRoomID
+            copy.currentEntranceIndex = sceneManagerState.currentEntranceIndex
+            copy.currentSpawnIndex = sceneManagerState.currentSpawnIndex
+            copy.loadedObjectIDs = sceneManagerState.loadedObjectIDs
+            copy.transitionEffect = sceneManagerState.transitionEffect
+            copy.objectSlotOverflow = sceneManagerState.objectSlotOverflow
+        }
         copy.currentDrawPass = nil
         copy.actorRuntimeHooks = actorRuntimeHooks
         return copy
     }
 
-    func withActiveRooms(_ roomIDs: Set<Int>) -> PlayState {
+    func withActiveRooms(
+        _ roomIDs: Set<Int>,
+        sceneManagerState: SceneManagerState? = nil
+    ) -> PlayState {
         var copy = self
         copy.activeRoomIDs = roomIDs
+        if let sceneManagerState {
+            copy.currentRoomID = sceneManagerState.currentRoomID
+            copy.currentEntranceIndex = sceneManagerState.currentEntranceIndex
+            copy.currentSpawnIndex = sceneManagerState.currentSpawnIndex
+            copy.loadedObjectIDs = sceneManagerState.loadedObjectIDs
+            copy.transitionEffect = sceneManagerState.transitionEffect
+            copy.objectSlotOverflow = sceneManagerState.objectSlotOverflow
+        }
         return copy
     }
 
@@ -247,10 +289,17 @@ public struct PlayState: Codable, Equatable, @unchecked Sendable {
         lhs.activeSaveSlot == rhs.activeSaveSlot &&
             lhs.entryMode == rhs.entryMode &&
             lhs.currentSceneName == rhs.currentSceneName &&
+            lhs.currentSceneID == rhs.currentSceneID &&
+            lhs.currentRoomID == rhs.currentRoomID &&
+            lhs.currentEntranceIndex == rhs.currentEntranceIndex &&
+            lhs.currentSpawnIndex == rhs.currentSpawnIndex &&
             lhs.playerName == rhs.playerName &&
             lhs.scene == rhs.scene &&
             lhs.actorTable == rhs.actorTable &&
             lhs.activeRoomIDs == rhs.activeRoomIDs &&
+            lhs.loadedObjectIDs == rhs.loadedObjectIDs &&
+            lhs.transitionEffect == rhs.transitionEffect &&
+            lhs.objectSlotOverflow == rhs.objectSlotOverflow &&
             lhs.currentDrawPass == rhs.currentDrawPass
     }
 
@@ -266,10 +315,17 @@ public struct PlayState: Codable, Equatable, @unchecked Sendable {
         activeSaveSlot = try container.decode(Int.self, forKey: .activeSaveSlot)
         entryMode = try container.decode(EntryMode.self, forKey: .entryMode)
         currentSceneName = try container.decode(String.self, forKey: .currentSceneName)
+        currentSceneID = nil
+        currentRoomID = nil
+        currentEntranceIndex = nil
+        currentSpawnIndex = nil
         playerName = try container.decode(String.self, forKey: .playerName)
         scene = nil
         actorTable = [:]
         activeRoomIDs = []
+        loadedObjectIDs = []
+        transitionEffect = nil
+        objectSlotOverflow = false
         currentDrawPass = nil
         actorRuntimeHooks = nil
     }
@@ -353,6 +409,9 @@ public final class GameRuntime {
 
     @ObservationIgnored
     private var previousControllerInputState = ControllerInputState()
+
+    @ObservationIgnored
+    private var sceneManager: SceneManager?
 
     public init(
         currentState: GameState = .boot,
@@ -633,13 +692,22 @@ public final class GameRuntime {
 
     public func loadScene(
         id sceneID: Int,
+        entranceIndex: Int? = nil,
         activeRoomIDs: Set<Int>? = nil
     ) throws {
         loadMessageCatalogIfAvailable()
         let loadedScene = try contentLoader.loadScene(id: sceneID)
         let actorTableEntries = try contentLoader.loadActorTable()
+        let entranceTableEntries = (try? contentLoader.loadEntranceTable()) ?? []
         let actorTable = Dictionary(uniqueKeysWithValues: actorTableEntries.map { ($0.id, $0) })
-        let selectedRooms = activeRoomIDs ?? Set(loadedScene.manifest.rooms.prefix(1).map(\.id))
+        let manager = SceneManager(
+            scene: loadedScene,
+            actorTable: actorTableEntries,
+            entranceTable: entranceTableEntries,
+            entranceIndex: entranceIndex,
+            activeRoomIDs: activeRoomIDs
+        )
+        let selectedRooms = manager.state.activeRoomIDs
         let textureAssetURLs = try sceneLoader.loadTextureAssetURLs(for: loadedScene)
         let registry = actorRegistryOverride ?? ActorRegistry.default(actorTable: actorTableEntries)
         let actorContext = ActorContext(
@@ -664,7 +732,8 @@ public final class GameRuntime {
             scene: loadedScene,
             actorTable: actorTable,
             activeRoomIDs: selectedRooms,
-            actorRuntimeHooks: hooks
+            actorRuntimeHooks: hooks,
+            sceneManagerState: manager.state
         )
 
         actorContext.spawnActors(
@@ -684,6 +753,7 @@ public final class GameRuntime {
             actorTable: actorTable
         )
         self.actorContext = actorContext
+        sceneManager = manager
         collisionSystem = CollisionSystem(scene: loadedScene)
         sceneViewerState = .running
         errorMessage = nil
@@ -701,14 +771,82 @@ public final class GameRuntime {
             return
         }
 
-        playState = playState.withActiveRooms(roomIDs)
-        actorContext.syncActiveRooms(
+        sceneManager?.syncActiveRooms(roomIDs)
+        playState = playState.withActiveRooms(
             roomIDs,
+            sceneManagerState: sceneManager?.state
+        )
+        actorContext.syncActiveRooms(
+            playState.activeRoomIDs,
             in: scene,
             actorTable: playState.actorTable,
             playState: playState
         )
         self.playState = playState
+    }
+
+    public func activateDoorTransition(id triggerID: Int) throws {
+        guard
+            let scene = playState?.scene,
+            let actorContext,
+            var playState,
+            var sceneManager
+        else {
+            return
+        }
+
+        guard let event = sceneManager.activateDoor(id: triggerID) else {
+            return
+        }
+
+        switch event {
+        case .roomTransition(let state):
+            playState = playState.withActiveRooms(state.activeRoomIDs, sceneManagerState: state)
+            actorContext.syncActiveRooms(
+                state.activeRoomIDs,
+                in: scene,
+                actorTable: playState.actorTable,
+                playState: playState
+            )
+            self.playState = playState
+            self.sceneManager = sceneManager
+        case .sceneTransition(let request):
+            self.sceneManager = sceneManager
+            try loadScene(id: request.sceneID, entranceIndex: request.entranceIndex)
+            self.playState?.transitionEffect = request.effect
+        }
+    }
+
+    public func evaluateLoadingZone(at position: Vector3s) throws {
+        guard
+            let scene = playState?.scene,
+            let actorContext,
+            var playState,
+            var sceneManager
+        else {
+            return
+        }
+
+        guard let event = sceneManager.evaluateLoadingZones(at: position) else {
+            return
+        }
+
+        switch event {
+        case .roomTransition(let state):
+            playState = playState.withActiveRooms(state.activeRoomIDs, sceneManagerState: state)
+            actorContext.syncActiveRooms(
+                state.activeRoomIDs,
+                in: scene,
+                actorTable: playState.actorTable,
+                playState: playState
+            )
+            self.playState = playState
+            self.sceneManager = sceneManager
+        case .sceneTransition(let request):
+            self.sceneManager = sceneManager
+            try loadScene(id: request.sceneID, entranceIndex: request.entranceIndex)
+            self.playState?.transitionEffect = request.effect
+        }
     }
 
     public func updateFrame() {

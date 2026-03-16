@@ -11,8 +11,10 @@ final class OOTDataModelTests: XCTestCase {
         assertCodableAndSendable(N64Vertex.self)
         assertCodableAndSendable(RGB8.self)
         assertCodableAndSendable(SceneManifest.self)
+        assertCodableAndSendable(SceneHeaderDefinition.self)
         assertCodableAndSendable(SceneActorSpawn.self)
         assertCodableAndSendable(SceneActorsFile.self)
+        assertCodableAndSendable(SceneEntranceDefinition.self)
         assertCodableAndSendable(SceneSpawnPoint.self)
         assertCodableAndSendable(SceneSpawnsFile.self)
         assertCodableAndSendable(SceneEnvironmentFile.self)
@@ -21,8 +23,17 @@ final class OOTDataModelTests: XCTestCase {
         assertCodableAndSendable(SceneLightSetting.self)
         assertCodableAndSendable(ScenePathDefinition.self)
         assertCodableAndSendable(ScenePathsFile.self)
+        assertCodableAndSendable(SceneRoomBehavior.self)
+        assertCodableAndSendable(SceneRoomDefinition.self)
+        assertCodableAndSendable(SceneRoomShape.self)
+        assertCodableAndSendable(SceneSoundSettings.self)
+        assertCodableAndSendable(SceneSpecialFiles.self)
         assertCodableAndSendable(SceneSkyboxSettings.self)
         assertCodableAndSendable(SceneTimeSettings.self)
+        assertCodableAndSendable(SceneTransitionEffect.self)
+        assertCodableAndSendable(SceneTransitionTrigger.self)
+        assertCodableAndSendable(SceneTransitionTriggerKind.self)
+        assertCodableAndSendable(SceneTriggerVolume.self)
         assertCodableAndSendable(RoomManifest.self)
         assertCodableAndSendable(RoomActorSpawns.self)
         assertCodableAndSendable(ActorProfile.self)
@@ -30,6 +41,7 @@ final class OOTDataModelTests: XCTestCase {
         assertCodableAndSendable(TextureAssetMetadata.self)
         assertCodableAndSendable(SceneTableEntry.self)
         assertCodableAndSendable(ActorTableEntry.self)
+        assertCodableAndSendable(EntranceTableEntry.self)
         assertCodableAndSendable(ObjectTableEntry.self)
         assertCodableAndSendable(Vector3b.self)
         assertCodableAndSendable(CollisionMesh.self)
@@ -96,6 +108,7 @@ final class OOTDataModelTests: XCTestCase {
             environmentPath: "Manifests/scenes/overworld/spot04/environment.json",
             pathsPath: "Manifests/scenes/overworld/spot04/paths.json",
             exitsPath: "Manifests/scenes/overworld/spot04/exits.json",
+            sceneHeaderPath: "Manifests/scenes/overworld/spot04/scene-header.json",
             textureDirectories: ["Textures/spot04_scene"]
         )
 

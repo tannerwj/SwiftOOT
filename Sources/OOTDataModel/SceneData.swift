@@ -10,6 +10,7 @@ public struct SceneManifest: Codable, Sendable, Equatable {
     public var environmentPath: String?
     public var pathsPath: String?
     public var exitsPath: String?
+    public var sceneHeaderPath: String?
     public var textureDirectories: [String]
 
     public init(
@@ -24,6 +25,7 @@ public struct SceneManifest: Codable, Sendable, Equatable {
         environmentPath: String? = nil,
         pathsPath: String? = nil,
         exitsPath: String? = nil,
+        sceneHeaderPath: String? = nil,
         textureDirectories: [String] = []
     ) {
         self.id = id
@@ -37,6 +39,7 @@ public struct SceneManifest: Codable, Sendable, Equatable {
         self.environmentPath = environmentPath
         self.pathsPath = pathsPath
         self.exitsPath = exitsPath
+        self.sceneHeaderPath = sceneHeaderPath
         self.textureDirectories = textureDirectories
     }
 }

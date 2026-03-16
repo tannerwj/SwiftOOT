@@ -33,7 +33,7 @@ final class TableExtractorTests: XCTestCase {
         }
 
         let extractor = TableExtractor(
-            expectedCounts: TableManifestCounts(scenes: 1, actors: 3, objects: 3)
+            expectedCounts: TableManifestCounts(scenes: 1, actors: 3, objects: 3, entrances: 3)
         )
 
         try extractor.extract(using: OOTExtractionContext(source: fixture, output: output))
@@ -46,6 +46,10 @@ final class TableExtractorTests: XCTestCase {
         let scenes = try decode([SceneTableEntry].self, from: tablesDirectory.appendingPathComponent("scene-table.json"))
         let actors = try decode([ActorTableEntry].self, from: tablesDirectory.appendingPathComponent("actor-table.json"))
         let objects = try decode([ObjectTableEntry].self, from: tablesDirectory.appendingPathComponent("object-table.json"))
+        let entrances = try decode(
+            [EntranceTableEntry].self,
+            from: tablesDirectory.appendingPathComponent("entrance-table.json")
+        )
 
         XCTAssertEqual(scenes, [
             SceneTableEntry(
@@ -81,6 +85,38 @@ final class TableExtractorTests: XCTestCase {
             ObjectTableEntry(id: 1, enumName: "OBJECT_BAR_UNUSED", assetPath: "objects/object_bar"),
             ObjectTableEntry(id: 2, enumName: "OBJECT_INVALID", assetPath: ""),
         ])
+        XCTAssertEqual(entrances, [
+            EntranceTableEntry(
+                index: 0x000,
+                name: "ENTR_FOO_0",
+                sceneID: 0,
+                spawnIndex: 0,
+                continueBGM: false,
+                displayTitleCard: true,
+                transitionIn: .fade,
+                transitionOut: .fade
+            ),
+            EntranceTableEntry(
+                index: 0x001,
+                name: "ENTR_FOO_1",
+                sceneID: 0,
+                spawnIndex: 1,
+                continueBGM: true,
+                displayTitleCard: false,
+                transitionIn: .circleIris,
+                transitionOut: .wipe
+            ),
+            EntranceTableEntry(
+                index: 0x002,
+                name: "ENTR_UNUSED_6E",
+                sceneID: 0x6E,
+                spawnIndex: 2,
+                continueBGM: false,
+                displayTitleCard: true,
+                transitionIn: .fade,
+                transitionOut: .fade
+            ),
+        ])
     }
 
     func testVerifyFailsWhenManifestCountsDoNotMatchExpectation() throws {
@@ -92,12 +128,12 @@ final class TableExtractorTests: XCTestCase {
         }
 
         let extractor = TableExtractor(
-            expectedCounts: TableManifestCounts(scenes: 1, actors: 3, objects: 3)
+            expectedCounts: TableManifestCounts(scenes: 1, actors: 3, objects: 3, entrances: 3)
         )
         try extractor.extract(using: OOTExtractionContext(source: fixture, output: output))
 
         let mismatchedVerifier = TableExtractor(
-            expectedCounts: TableManifestCounts(scenes: 1, actors: 4, objects: 3)
+            expectedCounts: TableManifestCounts(scenes: 1, actors: 4, objects: 3, entrances: 3)
         )
 
         XCTAssertThrowsError(try mismatchedVerifier.verify(using: OOTVerificationContext(content: output))) { error in
@@ -129,6 +165,8 @@ final class TableExtractorTests: XCTestCase {
                 /* 1 */ SDC_CUSTOM,
                 /* 2 */ SDC_MAX
             } SceneDrawConfig;
+
+            #define SCENE_UNUSED_6E 0x6E
             """,
             to: root.appendingPathComponent("include").appendingPathComponent("scene.h")
         )
@@ -159,6 +197,15 @@ final class TableExtractorTests: XCTestCase {
             /* 0x0002 */ DEFINE_OBJECT_UNSET(OBJECT_INVALID)
             """,
             to: includeTables.appendingPathComponent("object_table.h")
+        )
+
+        try write(
+            """
+            /* 0x000 */ DEFINE_ENTRANCE(ENTR_FOO_0, SCENE_FOO, 0, false, true, TRANS_TYPE_FADE_BLACK, TRANS_TYPE_FADE_BLACK)
+            /* 0x001 */ DEFINE_ENTRANCE(ENTR_FOO_1, SCENE_FOO, 1, true, false, TRANS_TYPE_CIRCLE(TCA_NORMAL, TCC_BLACK, TCS_FAST), TRANS_TYPE_WIPE3)
+            /* 0x002 */ DEFINE_ENTRANCE(ENTR_UNUSED_6E, SCENE_UNUSED_6E, 2, false, true, TRANS_TYPE_FADE_BLACK, TRANS_TYPE_FADE_BLACK)
+            """,
+            to: includeTables.appendingPathComponent("entrance_table.h")
         )
 
         return root

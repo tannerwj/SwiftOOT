@@ -326,6 +326,7 @@ private struct UITestSceneLoader: SceneLoading {
     func loadActorTable() throws -> [ActorTableEntry] { [] }
     func loadObjectTable() throws -> [ObjectTableEntry] { [] }
     func loadObject(named name: String) throws -> LoadedObject { throw ContentLoaderError.sceneLoadingUnavailable }
+    func loadEntranceTable() throws -> [EntranceTableEntry] { [] }
     func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh? { nil }
     func loadRoomDisplayList(for room: RoomManifest) throws -> [F3DEX2Command] { [] }
     func loadRoomVertexData(for room: RoomManifest) throws -> Data { Data() }

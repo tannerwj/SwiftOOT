@@ -66,17 +66,20 @@ public struct SceneActorsFile: Codable, Sendable, Equatable {
 
 public struct SceneSpawnPoint: Codable, Sendable, Equatable {
     public var index: Int
+    public var roomID: Int?
     public var position: Vector3s
     public var rotation: Vector3s
     public var params: Int16
 
     public init(
         index: Int,
+        roomID: Int? = nil,
         position: Vector3s,
         rotation: Vector3s,
-        params: Int16
+        params: Int16 = 0
     ) {
         self.index = index
+        self.roomID = roomID
         self.position = position
         self.rotation = rotation
         self.params = params

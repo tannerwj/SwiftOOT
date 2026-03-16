@@ -5,8 +5,9 @@ struct TableManifestCounts: Sendable, Equatable {
     let scenes: Int
     let actors: Int
     let objects: Int
+    let entrances: Int
 
-    static let pinnedOOT = TableManifestCounts(scenes: 101, actors: 471, objects: 402)
+    static let pinnedOOT = TableManifestCounts(scenes: 101, actors: 471, objects: 402, entrances: 1556)
 }
 
 public struct TableExtractor: OOTExtractionPipelineComponent {
@@ -27,11 +28,13 @@ public struct TableExtractor: OOTExtractionPipelineComponent {
         let sceneEntries = try loadSceneEntries(from: context.source)
         let actorEntries = try loadActorEntries(from: context.source)
         let objectEntries = try loadObjectEntries(from: context.source)
+        let entranceEntries = try loadEntranceEntries(from: context.source, sceneEntries: sceneEntries)
 
         try validateCounts(
             scenes: sceneEntries.count,
             actors: actorEntries.count,
-            objects: objectEntries.count
+            objects: objectEntries.count,
+            entrances: entranceEntries.count
         )
 
         let tablesDirectory = manifestsDirectory(in: context.output)
@@ -40,8 +43,12 @@ public struct TableExtractor: OOTExtractionPipelineComponent {
         try writeJSON(sceneEntries, to: tablesDirectory.appendingPathComponent("scene-table.json"))
         try writeJSON(actorEntries, to: tablesDirectory.appendingPathComponent("actor-table.json"))
         try writeJSON(objectEntries, to: tablesDirectory.appendingPathComponent("object-table.json"))
+        try writeJSON(entranceEntries, to: tablesDirectory.appendingPathComponent("entrance-table.json"))
 
-        print("[\(name)] wrote \(sceneEntries.count) scenes, \(actorEntries.count) actors, \(objectEntries.count) objects")
+        print(
+            "[\(name)] wrote \(sceneEntries.count) scenes, \(actorEntries.count) actors, " +
+                "\(objectEntries.count) objects, \(entranceEntries.count) entrances"
+        )
     }
 
     public func verify(using context: OOTVerificationContext) throws {
@@ -56,14 +63,21 @@ public struct TableExtractor: OOTExtractionPipelineComponent {
         let objectEntries: [ObjectTableEntry] = try readJSON(
             from: tablesDirectory.appendingPathComponent("object-table.json")
         )
+        let entranceEntries: [EntranceTableEntry] = try readJSON(
+            from: tablesDirectory.appendingPathComponent("entrance-table.json")
+        )
 
         try validateCounts(
             scenes: sceneEntries.count,
             actors: actorEntries.count,
-            objects: objectEntries.count
+            objects: objectEntries.count,
+            entrances: entranceEntries.count
         )
 
-        print("[\(name)] verified \(sceneEntries.count) scenes, \(actorEntries.count) actors, \(objectEntries.count) objects")
+        print(
+            "[\(name)] verified \(sceneEntries.count) scenes, \(actorEntries.count) actors, " +
+                "\(objectEntries.count) objects, \(entranceEntries.count) entrances"
+        )
     }
 
     private func loadSceneEntries(from sourceRoot: URL) throws -> [SceneTableEntry] {
@@ -164,6 +178,60 @@ public struct TableExtractor: OOTExtractionPipelineComponent {
         }
     }
 
+    private func loadEntranceEntries(
+        from sourceRoot: URL,
+        sceneEntries: [SceneTableEntry]
+    ) throws -> [EntranceTableEntry] {
+        let entranceTableURL = sourceRoot
+            .appendingPathComponent("include")
+            .appendingPathComponent("tables")
+            .appendingPathComponent("entrance_table.h")
+        let sceneHeaderURL = sourceRoot
+            .appendingPathComponent("include")
+            .appendingPathComponent("scene.h")
+        let macros = try parser.parseMacros(at: entranceTableURL, matching: ["DEFINE_ENTRANCE"])
+        let sceneIDByEnumName = try loadSceneIDByEnumName(from: sceneHeaderURL, sceneEntries: sceneEntries)
+
+        return try macros.enumerated().map { offset, macro in
+            try expectArgumentCount(for: macro, expected: 7, path: entranceTableURL.path)
+
+            let sceneEnumName = macro.arguments[1]
+            guard let sceneID = sceneIDByEnumName[sceneEnumName] else {
+                throw TableExtractorError.unresolvedSceneEnum(sceneEnumName)
+            }
+
+            return EntranceTableEntry(
+                index: macro.tableIndex ?? offset,
+                name: macro.arguments[0],
+                sceneID: sceneID,
+                spawnIndex: try parseIntegerLiteral(macro.arguments[2]),
+                continueBGM: try parseBooleanLiteral(macro.arguments[3]),
+                displayTitleCard: try parseBooleanLiteral(macro.arguments[4]),
+                transitionIn: normalizeTransitionEffect(macro.arguments[5]),
+                transitionOut: normalizeTransitionEffect(macro.arguments[6])
+            )
+        }
+    }
+
+    private func loadSceneIDByEnumName(
+        from sceneHeaderURL: URL,
+        sceneEntries: [SceneTableEntry]
+    ) throws -> [String: Int] {
+        var sceneIDByEnumName = Dictionary(uniqueKeysWithValues: sceneEntries.map { ($0.enumName, $0.index) })
+        let explicitSceneDefines = try parser.parseIntegerDefines(at: sceneHeaderURL) { name in
+            name.hasPrefix("SCENE_") &&
+                !name.hasPrefix("SCENE_CMD_") &&
+                !name.hasPrefix("SCENE_CAM_TYPE_") &&
+                name != "SCENE_ID_MAX"
+        }
+
+        for define in explicitSceneDefines {
+            sceneIDByEnumName[define.name] = define.value
+        }
+
+        return sceneIDByEnumName
+    }
+
     private func loadSceneDrawConfigMap(from url: URL) throws -> [String: Int] {
         let text: String
         do {
@@ -221,10 +289,11 @@ public struct TableExtractor: OOTExtractionPipelineComponent {
         }
     }
 
-    private func validateCounts(scenes: Int, actors: Int, objects: Int) throws {
+    private func validateCounts(scenes: Int, actors: Int, objects: Int, entrances: Int) throws {
         try validateCount(kind: "scene", actual: scenes, expected: expectedCounts.scenes)
         try validateCount(kind: "actor", actual: actors, expected: expectedCounts.actors)
         try validateCount(kind: "object", actual: objects, expected: expectedCounts.objects)
+        try validateCount(kind: "entrance", actual: entrances, expected: expectedCounts.entrances)
     }
 
     private func validateCount(kind: String, actual: Int, expected: Int) throws {
@@ -256,6 +325,43 @@ public struct TableExtractor: OOTExtractionPipelineComponent {
         ActorProfile(id: id, category: 0, flags: 0, objectID: 0)
     }
 
+    private func parseIntegerLiteral(_ rawValue: String) throws -> Int {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("0x") || trimmed.hasPrefix("0X") {
+            guard let value = Int(trimmed.dropFirst(2), radix: 16) else {
+                throw TableExtractorError.invalidLiteral(trimmed)
+            }
+            return value
+        }
+
+        guard let value = Int(trimmed) else {
+            throw TableExtractorError.invalidLiteral(trimmed)
+        }
+        return value
+    }
+
+    private func parseBooleanLiteral(_ rawValue: String) throws -> Bool {
+        switch rawValue.trimmingCharacters(in: .whitespacesAndNewlines) {
+        case "true", "TRUE", "1":
+            true
+        case "false", "FALSE", "0":
+            false
+        default:
+            throw TableExtractorError.invalidLiteral(rawValue)
+        }
+    }
+
+    private func normalizeTransitionEffect(_ rawValue: String) -> SceneTransitionEffect {
+        let normalized = rawValue.uppercased()
+        if normalized.contains("WIPE") {
+            return .wipe
+        }
+        if normalized.contains("CIRCLE") || normalized.contains("IRIS") {
+            return .circleIris
+        }
+        return .fade
+    }
+
     private func substring(in text: String, range: NSRange) -> String {
         guard
             range.location != NSNotFound,
@@ -270,6 +376,8 @@ public struct TableExtractor: OOTExtractionPipelineComponent {
 enum TableExtractorError: LocalizedError {
     case unreadableFile(String, Error)
     case invalidArgumentCount(macro: String, expected: Int, actual: Int, lineNumber: Int, path: String)
+    case invalidLiteral(String)
+    case unresolvedSceneEnum(String)
     case unresolvedSceneDrawConfig(String)
     case unsupportedMacro(String)
     case countMismatch(kind: String, expected: Int, actual: Int)
@@ -282,6 +390,10 @@ enum TableExtractorError: LocalizedError {
             return "Failed to read \(path): \(error.localizedDescription)"
         case .invalidArgumentCount(let macro, let expected, let actual, let lineNumber, let path):
             return "Expected \(expected) arguments for \(macro) at \(path):\(lineNumber), got \(actual)"
+        case .invalidLiteral(let literal):
+            return "Unable to parse literal \(literal)"
+        case .unresolvedSceneEnum(let name):
+            return "Unable to resolve scene enum symbol \(name)"
         case .unresolvedSceneDrawConfig(let name):
             return "Unable to resolve scene draw config symbol \(name)"
         case .unsupportedMacro(let name):
