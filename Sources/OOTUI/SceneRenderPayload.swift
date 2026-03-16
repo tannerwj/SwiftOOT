@@ -210,6 +210,7 @@ enum SceneRenderPayloadBuilder {
     static func makeGameplayCameraConfiguration(
         scene: LoadedScene,
         playerState: PlayerState?,
+        combatState: GameplayCombatState? = nil,
         itemGetSequence: ItemGetSequenceState? = nil
     ) -> GameplayCameraConfiguration? {
         if let playerState {
@@ -220,6 +221,7 @@ enum SceneRenderPayloadBuilder {
                     playerState.position.z
                 ),
                 playerYaw: playerState.facingRadians,
+                lockOnTargetPosition: combatState?.lockOnTarget?.focusPoint.simd,
                 presentationOverride: itemGetSequence.map {
                     GameplayCameraPresentationOverride.itemGet(
                         itemPosition: $0.itemWorldPosition.simd,

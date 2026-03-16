@@ -347,6 +347,7 @@ private struct GameplayShellView: View {
                             SceneRenderPayloadBuilder.makeGameplayCameraConfiguration(
                                 scene: $0,
                                 playerState: runtime.playerState,
+                                combatState: runtime.combatState,
                                 itemGetSequence: runtime.itemGetSequence
                             )
                         }
@@ -369,7 +370,7 @@ private struct GameplayShellView: View {
                 }
 
                 if runtime.playState != nil {
-                    GameplayHUDView(runtime: runtime)
+                    GameplayHUDView(runtime: runtime, renderPayload: renderPayload)
                         .transition(.opacity)
                 }
 

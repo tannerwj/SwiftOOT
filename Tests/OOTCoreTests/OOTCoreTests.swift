@@ -1117,6 +1117,304 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testZTargetingLocksOntoNearestActorEnablesStrafingAndSwitchesTargets() throws {
+        let recorder = EventRecorder()
+        var registry = ActorRegistry()
+        registry.register(actorID: 10) {
+            TestCombatActor(
+                spawnRecord: $0,
+                label: "left",
+                recorder: recorder
+            )
+        }
+        registry.register(actorID: 20) {
+            TestCombatActor(
+                spawnRecord: $0,
+                label: "right",
+                recorder: recorder
+            )
+        }
+
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(id: 10, name: "ACTOR_COMBAT_LEFT", position: Vector3s(x: -18, y: 0, z: -56)),
+                        makeSpawn(id: 20, name: "ACTOR_COMBAT_RIGHT", position: Vector3s(x: 52, y: 0, z: -60)),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 10, name: "ACTOR_COMBAT_LEFT", category: .enemy),
+                makeActorTableEntry(id: 20, name: "ACTOR_COMBAT_RIGHT", category: .enemy),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            actorRegistry: registry,
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+
+        runtime.setControllerInput(ControllerInputState(zPressed: true))
+        runtime.updateFrame()
+        runtime.updateFrame()
+
+        XCTAssertEqual(runtime.combatState.lockOnTarget?.actorID, 10)
+        XCTAssertEqual(runtime.combatState.lockOnTarget?.actorType, "TestCombatActor")
+        XCTAssertEqual(runtime.playerState?.isStrafing, true)
+
+        runtime.setControllerInput(
+            ControllerInputState(
+                stick: StickInput(x: 1, y: 0),
+                zPressed: true
+            )
+        )
+        runtime.updateFrame()
+
+        XCTAssertEqual(runtime.combatState.lockOnTarget?.actorID, 20)
+        XCTAssertEqual(runtime.playerState?.isStrafing, true)
+    }
+
+    @MainActor
+    func testSwordCombatAppliesDamageKnockbackAndActorInvincibilityFrames() throws {
+        let recorder = EventRecorder()
+        var registry = ActorRegistry()
+        registry.register(actorID: 10) {
+            TestCombatActor(
+                spawnRecord: $0,
+                label: "enemy",
+                recorder: recorder,
+                combatProfile: ActorCombatProfile(
+                    hurtboxRadius: 18,
+                    hurtboxHeight: 44,
+                    targetAnchorHeight: 44,
+                    targetingRange: 240,
+                    damageTable: DamageTable(
+                        defaultEffect: DamageEffect(damage: 0, knockbackDistance: 0),
+                        overrides: [
+                            .swordSlash: DamageEffect(damage: 1, knockbackDistance: 24, invincibilityFrames: 12),
+                        ]
+                    )
+                )
+            )
+        }
+
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(id: 10, name: "ACTOR_COMBAT_ENEMY", position: Vector3s(x: 0, y: 0, z: -40)),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 10, name: "ACTOR_COMBAT_ENEMY", category: .enemy),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            actorRegistry: registry,
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+
+        runtime.setControllerInput(ControllerInputState(bPressed: true))
+        runtime.updateFrame()
+        runtime.setControllerInput(ControllerInputState())
+        runtime.updateFrame()
+
+        XCTAssertEqual(runtime.combatState.activeAttack?.kind, .slash)
+
+        for _ in 0..<6 {
+            runtime.updateFrame()
+        }
+
+        let actor = try XCTUnwrap(runtime.actors.first as? TestCombatActor)
+        XCTAssertEqual(actor.hitPoints, 2)
+        XCTAssertEqual(actor.combatState.lastReceivedElement, .swordSlash)
+        XCTAssertEqual(actor.combatState.lastReceivedDamage, 1)
+        XCTAssertLessThan(actor.position.z, -40)
+        XCTAssertTrue(recorder.events.contains("hit:enemy:swordSlash:1"))
+
+        runtime.setControllerInput(ControllerInputState(bPressed: true))
+        runtime.updateFrame()
+        runtime.setControllerInput(ControllerInputState())
+        runtime.updateFrame()
+        for _ in 0..<6 {
+            runtime.updateFrame()
+        }
+
+        XCTAssertEqual(actor.hitPoints, 2)
+    }
+
+    @MainActor
+    func testJumpAndSpinAttacksPublishExpectedAttackKinds() throws {
+        let recorder = EventRecorder()
+        var registry = ActorRegistry()
+        registry.register(actorID: 10) {
+            TestCombatActor(
+                spawnRecord: $0,
+                label: "enemy",
+                recorder: recorder
+            )
+        }
+
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(id: 10, name: "ACTOR_COMBAT_ENEMY", position: Vector3s(x: 0, y: 0, z: -48)),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ],
+                collision: fixtureCollisionMesh()
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 10, name: "ACTOR_COMBAT_ENEMY", category: .enemy),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            actorRegistry: registry,
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+        runtime.playerState = PlayerState(
+            position: Vec3f(x: 0, y: 0, z: 0),
+            facingRadians: 0,
+            isGrounded: true,
+            floorHeight: 0
+        )
+
+        runtime.setControllerInput(
+            ControllerInputState(
+                stick: StickInput(x: 0, y: 1),
+                aPressed: true
+            )
+        )
+        runtime.updateFrame()
+
+        XCTAssertEqual(runtime.combatState.activeAttack?.kind, .jump)
+
+        for _ in 0..<20 {
+            runtime.updateFrame()
+        }
+
+        runtime.setControllerInput(ControllerInputState(bPressed: true))
+        for _ in 0..<18 {
+            runtime.updateFrame()
+        }
+        runtime.setControllerInput(ControllerInputState())
+        runtime.updateFrame()
+
+        XCTAssertEqual(runtime.combatState.activeAttack?.kind, .spin)
+    }
+
+    @MainActor
+    func testShieldBlocksProjectileAttacksWhenNoTargetIsLocked() throws {
+        let recorder = EventRecorder()
+        var registry = ActorRegistry()
+        registry.register(actorID: 10) {
+            TestCombatActor(
+                spawnRecord: $0,
+                label: "projectile",
+                recorder: recorder,
+                targetable: false,
+                attackBuilder: { actor in
+                    [
+                        CombatAttackDefinition(
+                            collider: CombatCollider(
+                                initialization: ColliderInit(collisionMask: [.at]),
+                                shape: .cylinder(
+                                    ColliderCylinder(
+                                        center: Vec3f(x: 0, y: 0, z: 0),
+                                        radius: 24,
+                                        height: 44
+                                    )
+                                )
+                            ),
+                            element: .projectile,
+                            effect: DamageEffect(damage: 1, knockbackDistance: 12, invincibilityFrames: 8),
+                            isProjectile: true
+                        ),
+                    ]
+                }
+            )
+        }
+
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(id: 10, name: "ACTOR_PROJECTILE_TEST", position: Vector3s(x: 0, y: 0, z: -24)),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 10, name: "ACTOR_PROJECTILE_TEST", category: .enemy),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            actorRegistry: registry,
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+
+        runtime.setControllerInput(ControllerInputState(zPressed: true))
+        runtime.updateFrame()
+
+        XCTAssertEqual(runtime.inventoryState.currentHealthUnits, 6)
+        XCTAssertEqual(runtime.combatState.shieldRaised, true)
+        XCTAssertTrue(recorder.events.contains("block:projectile:projectile"))
+
+        runtime.setControllerInput(ControllerInputState())
+        runtime.updateFrame()
+
+        XCTAssertEqual(runtime.inventoryState.currentHealthUnits, 5)
+    }
+
+    @MainActor
     func testTreasureChestInteractionStartsItemGetFlowAndPersistsTreasureFlagAcrossReload() throws {
         let chestActorID = 10
         let chestParams = makeChestParams(type: 0, getItemID: 0x41, treasureFlag: 3)
@@ -1531,6 +1829,61 @@ private final class TestTalkActor: DamageableBaseActor, TalkRequestingActor {
     func talkRequested(playState: PlayState) -> Bool {
         playState.requestMessage(messageID)
         return true
+    }
+}
+
+@MainActor
+private final class TestCombatActor: CombatantBaseActor {
+    let label: String
+    let recorder: EventRecorder
+    let targetable: Bool
+    let attackBuilder: (@MainActor (TestCombatActor) -> [CombatAttackDefinition])?
+
+    override var isTargetable: Bool {
+        targetable && hitPoints > 0
+    }
+
+    init(
+        spawnRecord: ActorSpawnRecord,
+        label: String,
+        recorder: EventRecorder,
+        targetable: Bool = true,
+        combatProfile: ActorCombatProfile = ActorCombatProfile(
+            hurtboxRadius: 18,
+            hurtboxHeight: 44,
+            targetAnchorHeight: 44,
+            targetingRange: 280,
+            damageTable: DamageTable(
+                defaultEffect: DamageEffect(damage: 1, knockbackDistance: 18),
+                overrides: [
+                    .swordJump: DamageEffect(damage: 2, knockbackDistance: 24),
+                    .swordSpin: DamageEffect(damage: 2, knockbackDistance: 20),
+                ]
+            )
+        ),
+        attackBuilder: (@MainActor (TestCombatActor) -> [CombatAttackDefinition])? = nil
+    ) {
+        self.label = label
+        self.recorder = recorder
+        self.targetable = targetable
+        self.attackBuilder = attackBuilder
+        super.init(
+            spawnRecord: spawnRecord,
+            hitPoints: 3,
+            combatProfile: combatProfile
+        )
+    }
+
+    override var activeAttacks: [CombatAttackDefinition] {
+        attackBuilder?(self) ?? []
+    }
+
+    override func combatDidReceiveHit(_ hit: CombatHit, playState: PlayState) {
+        recorder.append("hit:\(label):\(hit.element.rawValue):\(hit.effect.damage)")
+    }
+
+    override func combatDidBlockHit(_ hit: CombatHit, playState: PlayState) {
+        recorder.append("block:\(label):\(hit.element.rawValue)")
     }
 }
 

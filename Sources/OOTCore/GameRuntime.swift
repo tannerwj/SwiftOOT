@@ -516,6 +516,7 @@ public final class GameRuntime {
     public var errorMessage: String?
     public var messageContext: MessageContext
     public var itemGetSequence: ItemGetSequenceState?
+    public var combatState: GameplayCombatState
 
     @ObservationIgnored
     public let contentLoader: any ContentLoading
@@ -557,7 +558,7 @@ public final class GameRuntime {
     private let movementConfiguration: PlayerMovementConfiguration
 
     @ObservationIgnored
-    private var previousControllerInputState = ControllerInputState()
+    var previousControllerInputState = ControllerInputState()
 
     @ObservationIgnored
     private var movementReferenceYaw: Float?
@@ -567,6 +568,18 @@ public final class GameRuntime {
 
     @ObservationIgnored
     private var fixedTimeOfDayOverride: Double?
+
+    @ObservationIgnored
+    var combatLockOnTargetID: ObjectIdentifier?
+
+    @ObservationIgnored
+    var activePlayerAttackState: ActivePlayerAttackState?
+
+    @ObservationIgnored
+    var playerInvincibilityFramesRemaining = 0
+
+    @ObservationIgnored
+    var bButtonChargeFrames = 0
 
     public init(
         currentState: GameState = .boot,
@@ -589,6 +602,7 @@ public final class GameRuntime {
         errorMessage: String? = nil,
         messageContext: MessageContext = MessageContext(),
         itemGetSequence: ItemGetSequenceState? = nil,
+        combatState: GameplayCombatState = GameplayCombatState(),
         contentLoader: (any ContentLoading)? = nil,
         sceneLoader: (any SceneLoading)? = nil,
         telemetryPublisher: (any TelemetryPublishing)? = nil,
@@ -621,6 +635,7 @@ public final class GameRuntime {
         self.errorMessage = errorMessage
         self.messageContext = messageContext
         self.itemGetSequence = itemGetSequence
+        self.combatState = combatState
         let resolvedSceneLoader = sceneLoader ?? SceneLoader()
         self.sceneLoader = resolvedSceneLoader
         self.contentLoader = contentLoader ?? ContentLoader(sceneLoader: resolvedSceneLoader)
@@ -661,6 +676,9 @@ public final class GameRuntime {
         }
         if messageContext.isPresenting {
             return "Next"
+        }
+        if let combatActionLabel {
+            return combatActionLabel
         }
         return activeTalkActor?.talkPrompt
     }
@@ -960,6 +978,7 @@ public final class GameRuntime {
         hudState = .starter(hearts: slot.hearts)
         synchronizeHUDStateWithInventory()
         itemGetSequence = nil
+        resetCombatState()
         playState = PlayState(
             activeSaveSlot: normalizedIndex,
             entryMode: .newGame,
@@ -987,6 +1006,7 @@ public final class GameRuntime {
         hudState = .starter(hearts: slot.hearts)
         synchronizeHUDStateWithInventory()
         itemGetSequence = nil
+        resetCombatState()
         playState = PlayState(
             activeSaveSlot: normalizedIndex,
             entryMode: .continueGame,
@@ -1070,6 +1090,7 @@ public final class GameRuntime {
             actorTable: actorTable,
             preferredSpawnIndex: manager.state.currentSpawnIndex
         )
+        resetCombatState()
         self.actorContext = actorContext
         sceneManager = manager
         collisionSystem = CollisionSystem(scene: loadedScene)
@@ -1180,26 +1201,34 @@ public final class GameRuntime {
         }
 
         let playerInput = isGameplayPresentationActive ? ControllerInputState() : controllerInputState
+        let movementInput = movementInputState(for: playerInput)
 
         if let playerState {
             self.playerState = playerState.updating(
-                input: playerInput,
+                input: movementInput,
                 movementReferenceYaw: movementReferenceYaw,
+                lockOnTargetPosition: currentLockOnTargetFocusPoint(),
                 collisionSystem: collisionSystem,
-                configuration: movementConfiguration
+                configuration: movementConfiguration,
+                forcedDisplacement: activePlayerAttackForcedDisplacement()
             )
         }
 
-        applyGameplayControllerInput()
+        updateCombatStateBeforeActorStep(currentInput: playerInput)
         advanceItemGetSequenceIfNeeded()
 
         guard let actorContext, let playState else {
             messageContext.tick(playerName: self.playState?.playerName ?? "Link")
+            syncCombatObservationState()
             return
         }
 
         actorContext.updateAll(playState: playState)
+        updateCombatStateAfterActorStep(playState: playState, currentInput: playerInput)
+        let allowPrimaryAction = canUsePrimaryGameplayInput(for: playerInput)
+        applyGameplayControllerInput(allowPrimaryAction: allowPrimaryAction)
         messageContext.tick(playerName: playState.playerName)
+        syncCombatObservationState()
     }
 
     public func advanceGameplayFrame() {
@@ -1285,14 +1314,14 @@ public final class GameRuntime {
         min(max(0, index), saveContext.slots.count - 1)
     }
 
-    private func applyGameplayControllerInput() {
+    private func applyGameplayControllerInput(allowPrimaryAction: Bool) {
         let currentInput = controllerInputState
         let previousInput = previousControllerInputState
         defer {
             previousControllerInputState = currentInput
         }
 
-        if currentInput.aPressed, previousInput.aPressed == false {
+        if allowPrimaryAction, currentInput.aPressed, previousInput.aPressed == false {
             handlePrimaryGameplayInput()
         }
 
@@ -1328,7 +1357,7 @@ public final class GameRuntime {
         return currentStick.y > 0 ? -1 : 1
     }
 
-    private var isGameplayPresentationActive: Bool {
+    var isGameplayPresentationActive: Bool {
         messageContext.isPresenting || itemGetSequence?.isSuspendingGameplay == true
     }
 
@@ -1414,7 +1443,7 @@ public final class GameRuntime {
         return Vec3f(basePosition + SIMD3<Float>(0, 58, 0))
     }
 
-    private func synchronizeHUDStateWithInventory() {
+    func synchronizeHUDStateWithInventory() {
         let currentSceneIdentity = playState?.currentSceneIdentity ?? SceneIdentity(id: selectedSceneID, name: playState?.currentSceneName ?? loadedScene?.manifest.name ?? "Unknown")
         hudState.currentHealthUnits = inventoryState.currentHealthUnits
         hudState.maximumHealthUnits = inventoryState.maximumHealthUnits

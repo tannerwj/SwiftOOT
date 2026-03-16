@@ -261,6 +261,72 @@ final class OOTUITests: XCTestCase {
         )
     }
 
+    func testGameplayCameraConfigurationCarriesLockOnTargetPosition() throws {
+        let scene = makeLoadedScene()
+        let playerState = PlayerState(
+            position: Vec3f(x: 12, y: 0, z: 56),
+            facingRadians: .pi / 4
+        )
+        let combatState = GameplayCombatState(
+            lockOnTarget: CombatTargetSnapshot(
+                actorID: 10,
+                actorType: "TestCombatActor",
+                position: Vec3f(x: 32, y: 0, z: 8),
+                anchorHeight: 44,
+                distance: 52
+            )
+        )
+
+        let configuration = try XCTUnwrap(
+            SceneRenderPayloadBuilder.makeGameplayCameraConfiguration(
+                scene: scene,
+                playerState: playerState,
+                combatState: combatState
+            )
+        )
+
+        XCTAssertEqual(
+            configuration.lockOnTargetPosition,
+            SIMD3<Float>(32, 44, 8)
+        )
+    }
+
+    func testLockOnIndicatorProjectorReturnsViewportPointForVisibleTarget() throws {
+        let scene = makeLoadedScene()
+        let playerState = PlayerState(
+            position: Vec3f(x: 0, y: 0, z: 0),
+            facingRadians: 0
+        )
+        let combatState = GameplayCombatState(
+            lockOnTarget: CombatTargetSnapshot(
+                actorID: 10,
+                actorType: "TestCombatActor",
+                position: Vec3f(x: 0, y: 0, z: -64),
+                anchorHeight: 44,
+                distance: 64
+            )
+        )
+
+        let point = LockOnIndicatorProjector.project(
+            target: try XCTUnwrap(combatState.lockOnTarget),
+            sceneBounds: SceneBounds(
+                minimum: SIMD3<Float>(-100, 0, -100),
+                maximum: SIMD3<Float>(100, 80, 100)
+            ),
+            scene: scene,
+            playerState: playerState,
+            combatState: combatState,
+            itemGetSequence: nil,
+            viewportSize: CGSize(width: 800, height: 600)
+        )
+
+        let resolvedPoint = try XCTUnwrap(point)
+        XCTAssertGreaterThan(resolvedPoint.x, 0)
+        XCTAssertLessThan(resolvedPoint.x, 800)
+        XCTAssertGreaterThan(resolvedPoint.y, 0)
+        XCTAssertLessThan(resolvedPoint.y, 300)
+    }
+
     func testChestItemGetRuntimeWalkthroughUsingFixtureContentRoot() async throws {
         let fixture = try ChestRuntimeContentFixture()
         defer { fixture.cleanup() }

@@ -5,6 +5,7 @@ import simd
 public enum GameplayCameraMode: String, Sendable, Equatable {
     case normal
     case fixed
+    case lockOn
     case parallel
 }
 
@@ -14,6 +15,7 @@ public struct GameplayCameraConfiguration: Sendable, Equatable {
     public var playerPosition: SIMD3<Float>
     public var playerYaw: Float
     public var headHeight: Float
+    public var lockOnTargetPosition: SIMD3<Float>?
     public var presentationOverride: GameplayCameraPresentationOverride?
     public var collision: CollisionMesh?
 
@@ -21,12 +23,14 @@ public struct GameplayCameraConfiguration: Sendable, Equatable {
         playerPosition: SIMD3<Float>,
         playerYaw: Float,
         headHeight: Float = Self.defaultHeadHeight,
+        lockOnTargetPosition: SIMD3<Float>? = nil,
         presentationOverride: GameplayCameraPresentationOverride? = nil,
         collision: CollisionMesh? = nil
     ) {
         self.playerPosition = playerPosition
         self.playerYaw = playerYaw
         self.headHeight = headHeight
+        self.lockOnTargetPosition = lockOnTargetPosition
         self.presentationOverride = presentationOverride
         self.collision = collision
     }
@@ -41,6 +45,51 @@ struct GameplayCameraSnapshot: Sendable, Equatable {
     var eyePosition: SIMD3<Float>
     var focusTarget: SIMD3<Float>
     var fieldOfView: Float
+}
+
+public struct GameplayCameraProjection: Sendable, Equatable {
+    public var viewportPoint: SIMD2<Float>
+    public var depth: Float
+
+    public init(
+        viewportPoint: SIMD2<Float>,
+        depth: Float
+    ) {
+        self.viewportPoint = viewportPoint
+        self.depth = depth
+    }
+}
+
+public enum GameplayCameraProjector {
+    public static func project(
+        worldPoint: SIMD3<Float>,
+        sceneBounds: SceneBounds,
+        configuration: GameplayCameraConfiguration,
+        viewportSize: CGSize
+    ) -> GameplayCameraProjection? {
+        let controller = GameplayCameraController(
+            sceneBounds: sceneBounds,
+            configuration: configuration,
+            viewportSize: viewportSize
+        )
+        let matrices = controller.cameraMatrices()
+        let clip = matrices.viewProjectionMatrix * SIMD4<Float>(worldPoint, 1)
+        guard clip.w > 0.001 else {
+            return nil
+        }
+
+        let ndc = clip / clip.w
+        guard abs(ndc.x) <= 1.2, abs(ndc.y) <= 1.2, ndc.z >= -1.0, ndc.z <= 1.0 else {
+            return nil
+        }
+
+        let x = ((ndc.x + 1) * 0.5) * Float(viewportSize.width)
+        let y = ((1 - ndc.y) * 0.5) * Float(viewportSize.height)
+        return GameplayCameraProjection(
+            viewportPoint: SIMD2<Float>(x, y),
+            depth: ndc.z
+        )
+    }
 }
 
 public final class GameplayCameraController {
@@ -196,6 +245,16 @@ public final class GameplayCameraController {
     }
 
     var movementReferenceYaw: Float? {
+        if let lockOnTargetPosition = configuration.lockOnTargetPosition {
+            let forward = lockOnTargetPosition - configuration.playerPosition
+            let planarForward = SIMD2<Float>(forward.x, forward.z)
+            guard simd_length_squared(planarForward) > 0.0001 else {
+                return nil
+            }
+
+            return atan2(planarForward.x, -planarForward.y)
+        }
+
         let forward = currentFocusTarget - currentEyePosition
         let planarForward = SIMD2<Float>(forward.x, forward.z)
         guard simd_length_squared(planarForward) > 0.0001 else {
@@ -255,6 +314,40 @@ private extension GameplayCameraController {
                     fieldOfView: Float.pi / 4.4
                 )
             }
+        }
+
+        if let lockOnTargetPosition = configuration.lockOnTargetPosition {
+            let playerFocus = configuration.playerPosition + SIMD3<Float>(0, configuration.headHeight * 0.82, 0)
+            let toTarget = gameplayNormalize(
+                lockOnTargetPosition - configuration.playerPosition,
+                fallback: SIMD3<Float>(
+                    sin(configuration.playerYaw),
+                    0,
+                    -cos(configuration.playerYaw)
+                )
+            )
+            let focusTarget = simd_mix(playerFocus, lockOnTargetPosition, SIMD3<Float>(repeating: 0.6))
+            let desiredEye =
+                playerFocus -
+                (toTarget * (followDistance * 0.78)) +
+                SIMD3<Float>(0, 18, 0)
+            let collisionCorrectedEye = correctedEyePosition(
+                from: focusTarget,
+                to: desiredEye,
+                collision: configuration.collision,
+                padding: collisionPadding
+            )
+            let orientation = gameplayLookRotationQuaternion(
+                eye: collisionCorrectedEye,
+                center: focusTarget
+            )
+            return DesiredPose(
+                mode: .lockOn,
+                eyePosition: collisionCorrectedEye,
+                focusTarget: focusTarget,
+                orientation: orientation,
+                fieldOfView: Float.pi / 3.6
+            )
         }
 
         if let fixedCamera = resolvedFixedCamera(in: configuration) {
