@@ -662,6 +662,73 @@ final class SceneExtractorTests: XCTestCase {
         XCTAssertEqual(sceneHeader.spawns.count, 2)
     }
 
+    func testExtractMetadataIgnoresAlternateHeaderCommandArraysWhenSelectingPrimarySceneMetadata() throws {
+        let harness = try SceneHarness()
+        defer { harness.cleanup() }
+
+        try harness.seedActorTableManifest()
+        try harness.seedObjectTableManifest()
+        try harness.writeSceneXML(at: "assets/xml/scenes/overworld/spot04.xml", contents: sceneXMLFixture)
+        try harness.writeSourceFile(
+            at: "assets/scenes/overworld/spot04/spot04_scene.c",
+            contents: """
+            SceneCmd* spot04_scene_02000070_AltHeaders[] = {
+                spot04_scene_02000070_AltHeaders_0200CC00_Cmds,
+                NULL,
+                NULL,
+                NULL,
+            };
+
+            SceneCmd spot04_sceneCommands[] = {
+                SCENE_CMD_ALTERNATE_HEADER_LIST(spot04_scene_02000070_AltHeaders),
+                SCENE_CMD_END(),
+            };
+
+            \(sceneMetadataSourceFixture.replacingOccurrences(
+                of: "SceneCmd spot04_sceneCommands[] = {",
+                with: "SceneCmd spot04_sceneMainCommands[] = {"
+            ))
+
+            SceneCmd spot04_scene_02000070_AltHeaders_0200CC00_Cmds[] = {
+                SCENE_CMD_SOUND_SETTINGS(1, 4, 60),
+                SCENE_CMD_ROOM_LIST(1, spot04_sceneRoomList0x000184),
+                SCENE_CMD_TRANSITION_ACTOR_LIST(2, spot04_sceneTransitionActorList_000164),
+                SCENE_CMD_COL_HEADER(&spot04_sceneCollisionHeader_008918),
+                SCENE_CMD_ENTRANCE_LIST(spot04_sceneEntranceList0x00019C),
+                SCENE_CMD_SPECIAL_FILES(NAVI_QUEST_HINTS_OVERWORLD, OBJECT_GAMEPLAY_FIELD_KEEP),
+                SCENE_CMD_PATH_LIST(spot04_scenePathList_00030C),
+                SCENE_CMD_SPAWN_LIST(spot04_scene_02000070_AltHeaders_0200CC00_Cmds_0200CD70_SpawnList),
+                SCENE_CMD_EXIT_LIST(spot04_sceneExitList_0001B4),
+                SCENE_CMD_ENV_LIGHT_SETTINGS(12, spot04_sceneLightSettings0x0001CC),
+                SCENE_CMD_END(),
+            };
+            """
+        )
+        try harness.writeSourceFile(
+            at: "assets/scenes/overworld/spot04/spot04_room_0.c",
+            contents: roomMetadataSourceFixture
+        )
+        try harness.writeSourceFile(
+            at: "include/tables/entrance_table.h",
+            contents: entranceTableFixture
+        )
+
+        try SceneExtractor().extract(using: harness.extractionContext(sceneName: "spot04"))
+
+        let sceneDirectory = try harness.metadataDirectory()
+        let spawns = try JSONDecoder().decode(
+            SceneSpawnsFile.self,
+            from: Data(contentsOf: sceneDirectory.appendingPathComponent("spawns.json"))
+        )
+        let environment = try JSONDecoder().decode(
+            SceneEnvironmentFile.self,
+            from: Data(contentsOf: sceneDirectory.appendingPathComponent("environment.json"))
+        )
+
+        XCTAssertEqual(spawns.spawns.count, 2)
+        XCTAssertEqual(environment.lightSettings.count, 12)
+    }
+
     func testVerifyRoundTripsSceneMetadataJSON() throws {
         let harness = try SceneHarness()
         defer { harness.cleanup() }

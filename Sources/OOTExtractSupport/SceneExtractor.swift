@@ -1916,7 +1916,10 @@ private extension SceneExtractor {
     }
 
     static func selectBestSceneCommandArray(from candidates: [ParsedCommandArray]) -> ParsedCommandArray? {
-        candidates
+        let primaryCandidates = candidates.filter { isPrimarySceneCommandArrayName($0.array.name) }
+        let selectionPool = primaryCandidates.isEmpty ? candidates : primaryCandidates
+
+        return selectionPool
             .enumerated()
             .max { lhs, rhs in
                 let lhsScore = sceneCommandScore(for: lhs.element)
@@ -1927,6 +1930,10 @@ private extension SceneExtractor {
                 return lhsScore < rhsScore
             }?
             .element
+    }
+
+    static func isPrimarySceneCommandArrayName(_ name: String) -> Bool {
+        name.contains("_AltHeaders_") == false
     }
 
     static func sceneCommandScore(for candidate: ParsedCommandArray) -> Int {
