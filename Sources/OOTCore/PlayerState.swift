@@ -175,11 +175,16 @@ public struct PlayerMovementConfiguration: Sendable, Equatable {
 extension PlayerState {
     func updating(
         input: ControllerInputState,
+        movementReferenceYaw: Float?,
         collisionSystem: CollisionSystem?,
         configuration: PlayerMovementConfiguration
     ) -> PlayerState {
         let stick = input.stick.normalized
-        let desiredDisplacement = desiredMovement(for: stick, configuration: configuration)
+        let desiredDisplacement = desiredMovement(
+            for: stick,
+            referenceYaw: movementReferenceYaw ?? facingRadians,
+            configuration: configuration
+        )
 
         var nextPosition = position.simd
         var nextVelocity = velocity.simd
@@ -259,13 +264,21 @@ extension PlayerState {
 
     private func desiredMovement(
         for stick: StickInput,
+        referenceYaw: Float,
         configuration: PlayerMovementConfiguration
     ) -> SIMD3<Float> {
         guard stick.isActive else {
             return .zero
         }
 
-        let direction = simd_normalize(SIMD3<Float>(stick.x, 0, -stick.y))
+        let localDirection = simd_normalize(SIMD3<Float>(stick.x, 0, -stick.y))
+        let cosine = cos(referenceYaw)
+        let sine = sin(referenceYaw)
+        let direction = SIMD3<Float>(
+            (localDirection.x * cosine) - (localDirection.z * sine),
+            0,
+            (localDirection.x * sine) + (localDirection.z * cosine)
+        )
         let magnitude = stick.magnitude
 
         let speed: Float

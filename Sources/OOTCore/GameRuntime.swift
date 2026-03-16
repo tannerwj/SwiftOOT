@@ -514,6 +514,9 @@ public final class GameRuntime {
     private var previousControllerInputState = ControllerInputState()
 
     @ObservationIgnored
+    private var movementReferenceYaw: Float?
+
+    @ObservationIgnored
     private var sceneManager: SceneManager?
 
     public init(
@@ -540,7 +543,7 @@ public final class GameRuntime {
         contentLoader: (any ContentLoading)? = nil,
         sceneLoader: (any SceneLoading)? = nil,
         telemetryPublisher: (any TelemetryPublishing)? = nil,
-        timeSystem: TimeSystem = TimeSystem(),
+        timeSystem: TimeSystem = TimeSystem(gameMinutesPerRealSecond: 0.1),
         actorRegistry: ActorRegistry? = nil,
         movementConfiguration: PlayerMovementConfiguration = PlayerMovementConfiguration(),
         bootDuration: Duration = .milliseconds(250),
@@ -772,6 +775,10 @@ public final class GameRuntime {
 
     public func setControllerInput(_ input: ControllerInputState) {
         controllerInputState = input
+    }
+
+    public func setMovementReferenceYaw(_ yaw: Float?) {
+        movementReferenceYaw = yaw
     }
 
     private func openFileSelect(
@@ -1009,6 +1016,7 @@ public final class GameRuntime {
         if let playerState {
             self.playerState = playerState.updating(
                 input: playerInput,
+                movementReferenceYaw: movementReferenceYaw,
                 collisionSystem: collisionSystem,
                 configuration: movementConfiguration
             )
