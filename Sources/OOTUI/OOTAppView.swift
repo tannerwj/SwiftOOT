@@ -291,30 +291,9 @@ private struct GameplayShellView: View {
                     .padding(24)
                 }
 
-                if let playState = runtime.playState {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Gameplay Runtime")
-                            .font(.headline.weight(.bold))
-                        Text("\(playState.playerName) in \(playState.currentSceneName)")
-                        Text("Save Slot \(playState.activeSaveSlot + 1)")
-                            .foregroundStyle(.secondary)
-                        if let playerState = runtime.playerState {
-                            Text("Locomotion: \(playerState.locomotionState.rawValue)")
-                            Text(
-                                String(
-                                    format: "Position: %.1f %.1f %.1f",
-                                    playerState.position.x,
-                                    playerState.position.y,
-                                    playerState.position.z
-                                )
-                            )
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(16)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    .padding(16)
+                if runtime.playState != nil {
+                    GameplayHUDView(runtime: runtime)
+                        .transition(.opacity)
                 }
 
                 VStack(spacing: 16) {

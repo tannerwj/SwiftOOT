@@ -106,6 +106,9 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual(runtime.playState?.entryMode, .newGame)
         XCTAssertEqual(runtime.playState?.activeSaveSlot, 2)
         XCTAssertTrue(runtime.saveContext.slots[2].hasSaveData)
+        XCTAssertEqual(runtime.hudState.currentHealthUnits, 6)
+        XCTAssertEqual(runtime.hudState.maximumHealthUnits, 6)
+        XCTAssertEqual(runtime.hudState.bButtonItem, .sword)
     }
 
     @MainActor
@@ -149,6 +152,22 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual(runtime.currentState, .gameplay)
         XCTAssertEqual(runtime.playState?.entryMode, .continueGame)
         XCTAssertEqual(runtime.playState?.currentSceneName, "Hyrule Field")
+        XCTAssertEqual(runtime.hudState.currentHealthUnits, 8)
+        XCTAssertEqual(runtime.hudState.maximumHealthUnits, 8)
+    }
+
+    @MainActor
+    func testGameplayHUDActionLabelFallsBackToHUDButtonAction() {
+        let runtime = GameRuntime(
+            hudState: GameplayHUDState(
+                bButtonItem: .bomb,
+                actionLabelOverride: "Lift"
+            ),
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        XCTAssertEqual(runtime.gameplayHUDActionLabel, "Lift")
     }
 
     func testMessageContextRevealsPlayerNameDelayAndChoices() {

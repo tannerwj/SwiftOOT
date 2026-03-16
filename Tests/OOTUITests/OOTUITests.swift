@@ -36,6 +36,30 @@ final class OOTUITests: XCTestCase {
             )
         )
         _ = ActionPromptView(label: "Talk")
+        _ = GameplayHUDView(
+            runtime: GameRuntime(
+                playState: PlayState(
+                    activeSaveSlot: 0,
+                    entryMode: .newGame,
+                    currentSceneName: "Kokiri Forest",
+                    playerName: "Link",
+                    scene: makeLoadedScene()
+                ),
+                playerState: PlayerState(position: Vec3f(x: 12, y: 0, z: -18)),
+                hudState: GameplayHUDState(
+                    currentHealthUnits: 5,
+                    maximumHealthUnits: 8,
+                    currentMagic: 24,
+                    maximumMagic: 48,
+                    rupees: 37,
+                    smallKeyCount: 2,
+                    bButtonItem: .bomb
+                ),
+                contentLoader: StubContentLoader(),
+                sceneLoader: UITestSceneLoader(),
+                suspender: { _ in }
+            )
+        )
     }
 
     func testRootViewStateMatchesRuntimeState() {
@@ -103,6 +127,50 @@ final class OOTUITests: XCTestCase {
         XCTAssertEqual(spawnConfiguration.playerYaw, Float(Int16(0x4000)) * (.pi / 32_768.0), accuracy: 0.000_1)
         XCTAssertEqual(spawnConfiguration.collision, scene.collision)
     }
+
+    func testGameplayHUDArtLibraryLoadsKnownGameplayKeepTextures() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString,
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let descriptors = [
+            TextureDescriptor(format: .rgba16, width: 1, height: 1, path: "textures/gDropRecoveryHeartTex.tex.bin"),
+            TextureDescriptor(format: .rgba16, width: 1, height: 1, path: "textures/gDropMagicSmallTex.tex.bin"),
+            TextureDescriptor(format: .rgba16, width: 1, height: 1, path: "textures/gRupeeGreenTex.tex.bin"),
+            TextureDescriptor(format: .rgba16, width: 1, height: 1, path: "textures/gUnusedBombIconTex.tex.bin"),
+            TextureDescriptor(format: .rgba16, width: 1, height: 1, path: "textures/gUnusedArrowIconTex.tex.bin"),
+        ]
+
+        var textureURLs: [UInt32: URL] = [:]
+        for descriptor in descriptors {
+            let textureName = URL(fileURLWithPath: descriptor.path)
+                .deletingPathExtension()
+                .deletingPathExtension()
+                .lastPathComponent
+            let textureURL = directory.appendingPathComponent("\(textureName).tex.bin")
+            try Data([255, 64, 32, 255]).write(to: textureURL)
+            textureURLs[OOTAssetID.stableID(for: textureName)] = textureURL
+        }
+
+        let art = GameplayHUDArtLibrary.load(
+            contentLoader: HUDArtContentLoader(
+                object: LoadedObject(
+                    manifest: ObjectManifest(name: "gameplay_keep", textures: descriptors),
+                    textureAssetURLs: textureURLs
+                )
+            )
+        )
+
+        XCTAssertNotNil(art.heart)
+        XCTAssertNotNil(art.magic)
+        XCTAssertNotNil(art.rupee)
+        XCTAssertNotNil(art.image(for: .bomb))
+        XCTAssertNotNil(art.image(for: .bow))
+    }
+
     func testAppRuntimeLoadsRealExtractedSceneViewerContentWhenConfigured() async throws {
         guard let contentRootPath = ProcessInfo.processInfo.environment["SWIFTOOT_REAL_CONTENT_ROOT"] else {
             throw XCTSkip("Set SWIFTOOT_REAL_CONTENT_ROOT to run the real-content scene viewer validation.")
@@ -334,4 +402,14 @@ private struct UITestSceneLoader: SceneLoading {
 
 private struct StubContentLoader: ContentLoading {
     func loadInitialContent() async throws {}
+}
+
+private struct HUDArtContentLoader: ContentLoading {
+    let object: LoadedObject
+
+    func loadInitialContent() async throws {}
+
+    func loadObject(named name: String) throws -> LoadedObject {
+        object
+    }
 }
