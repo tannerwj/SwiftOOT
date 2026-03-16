@@ -70,6 +70,8 @@ public enum PlayerAnimationClip: String, Sendable, Equatable {
     case idle
     case walk
     case run
+    case itemGetA
+    case itemGetB
 }
 
 public struct PlayerAnimationState: Sendable, Equatable {
@@ -110,6 +112,7 @@ public struct PlayerState: Sendable, Equatable {
     public var locomotionState: PlayerLocomotionState
     public var animationState: PlayerAnimationState
     public var floorHeight: Float?
+    public var presentationMode: PlayerPresentationMode
 
     public init(
         position: Vec3f = Vec3f(x: 0, y: 0, z: 0),
@@ -118,7 +121,8 @@ public struct PlayerState: Sendable, Equatable {
         isGrounded: Bool = true,
         locomotionState: PlayerLocomotionState = .idle,
         animationState: PlayerAnimationState = PlayerAnimationState(),
-        floorHeight: Float? = nil
+        floorHeight: Float? = nil,
+        presentationMode: PlayerPresentationMode = .normal
     ) {
         self.position = position
         self.velocity = velocity
@@ -127,6 +131,7 @@ public struct PlayerState: Sendable, Equatable {
         self.locomotionState = locomotionState
         self.animationState = animationState
         self.floorHeight = floorHeight
+        self.presentationMode = presentationMode
     }
 }
 
@@ -233,7 +238,12 @@ extension PlayerState {
         )
 
         var animationState = animationState
-        animationState.transition(to: animationClip(for: locomotionState))
+        animationState.transition(
+            to: animationClip(
+                for: locomotionState,
+                presentationMode: presentationMode
+            )
+        )
         animationState.currentFrame += animationPlaybackSpeed(for: locomotionState)
         animationState.morphWeight = max(0, animationState.morphWeight - configuration.animationMorphDecay)
         if animationState.morphWeight == 0 {
@@ -247,7 +257,8 @@ extension PlayerState {
             isGrounded: isGrounded,
             locomotionState: locomotionState,
             animationState: animationState,
-            floorHeight: floorHeight
+            floorHeight: floorHeight,
+            presentationMode: presentationMode
         )
     }
 
@@ -346,7 +357,19 @@ extension PlayerState {
         return .idle
     }
 
-    private func animationClip(for locomotionState: PlayerLocomotionState) -> PlayerAnimationClip {
+    private func animationClip(
+        for locomotionState: PlayerLocomotionState,
+        presentationMode: PlayerPresentationMode
+    ) -> PlayerAnimationClip {
+        switch presentationMode {
+        case .normal:
+            break
+        case .itemGetA:
+            return .itemGetA
+        case .itemGetB:
+            return .itemGetB
+        }
+
         switch locomotionState {
         case .idle, .falling:
             return .idle
@@ -376,7 +399,7 @@ extension Vec3f {
         self.init(x: vector.x, y: vector.y, z: vector.z)
     }
 
-    var simd: SIMD3<Float> {
+    public var simd: SIMD3<Float> {
         SIMD3<Float>(x, y, z)
     }
 }

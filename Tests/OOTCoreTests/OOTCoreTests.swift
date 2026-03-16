@@ -1117,6 +1117,203 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testTreasureChestInteractionStartsItemGetFlowAndPersistsTreasureFlagAcrossReload() throws {
+        let chestActorID = 10
+        let chestParams = makeChestParams(type: 0, getItemID: 0x41, treasureFlag: 3)
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(
+                            id: chestActorID,
+                            name: "ACTOR_EN_BOX",
+                            position: Vector3s(x: 0, y: 0, z: -36),
+                            params: chestParams
+                        ),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: chestActorID, name: "ACTOR_EN_BOX", category: .chest),
+            ]
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+        XCTAssertEqual(runtime.gameplayActionLabel, "Open")
+
+        runtime.handlePrimaryGameplayInput()
+
+        XCTAssertEqual(runtime.itemGetSequence?.reward, .dungeonMap)
+        XCTAssertTrue(runtime.inventoryState.hasOpenedTreasure(TreasureFlagKey(
+            scene: SceneIdentity(id: 0x55, name: "test_scene"),
+            flag: 3
+        )))
+        XCTAssertEqual((runtime.actors.first as? TreasureChestActor)?.isOpened, true)
+
+        for _ in 0..<24 {
+            runtime.updateFrame()
+        }
+
+        XCTAssertEqual(
+            runtime.inventoryState.dungeonState(for: SceneIdentity(id: 0x55, name: "test_scene")).hasMap,
+            true
+        )
+        XCTAssertEqual(runtime.activeMessagePresentation?.textRuns.first?.text, "Dungeon Map\n")
+
+        runtime.handlePrimaryGameplayInput()
+        for _ in 0..<8 {
+            runtime.updateFrame()
+        }
+
+        XCTAssertNil(runtime.itemGetSequence)
+
+        try runtime.loadScene(id: 0x55)
+
+        XCTAssertNil(runtime.gameplayActionLabel)
+        XCTAssertEqual((runtime.actors.first as? TreasureChestActor)?.isOpened, true)
+    }
+
+    @MainActor
+    func testContinuePreservesChestRewardStateAcrossTitleReturn() async throws {
+        let chestActorID = 10
+        let chestParams = makeChestParams(type: 0, getItemID: 0x41, treasureFlag: 3)
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                sceneName: "spot04",
+                roomSpawns: [
+                    0: [
+                        makeSpawn(
+                            id: chestActorID,
+                            name: "ACTOR_EN_BOX",
+                            position: Vector3s(x: 0, y: 0, z: -36),
+                            params: chestParams
+                        ),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: chestActorID, name: "ACTOR_EN_BOX", category: .chest),
+            ]
+        )
+        let runtime = makeRuntime(
+            saveContext: SaveContext(
+                slots: [
+                    SaveSlot(
+                        id: 0,
+                        playerName: "Link",
+                        locationName: "spot04",
+                        hearts: 3,
+                        hasSaveData: true
+                    ),
+                    .empty(id: 1),
+                    .empty(id: 2),
+                ]
+            ),
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+        let treasureFlag = TreasureFlagKey(
+            scene: SceneIdentity(id: 0x55, name: "spot04"),
+            flag: 3
+        )
+
+        await runtime.start()
+        runtime.chooseTitleOption(.continueGame)
+        runtime.confirmSelectedSaveSlot()
+        try runtime.loadScene(id: 0x55)
+
+        XCTAssertEqual(runtime.currentState, .gameplay)
+        XCTAssertEqual(runtime.playState?.entryMode, .continueGame)
+        XCTAssertEqual(runtime.gameplayActionLabel, "Open")
+
+        runtime.handlePrimaryGameplayInput()
+        for _ in 0..<24 {
+            runtime.updateFrame()
+        }
+
+        XCTAssertTrue(runtime.inventoryState.hasOpenedTreasure(treasureFlag))
+        XCTAssertTrue(runtime.inventoryState.dungeonState(for: treasureFlag.scene).hasMap)
+        XCTAssertTrue(runtime.saveContext.slots[0].inventoryState.hasOpenedTreasure(treasureFlag))
+        XCTAssertTrue(runtime.saveContext.slots[0].inventoryState.dungeonState(for: treasureFlag.scene).hasMap)
+
+        runtime.handlePrimaryGameplayInput()
+        for _ in 0..<8 {
+            runtime.updateFrame()
+        }
+
+        runtime.returnToTitleScreen()
+        XCTAssertEqual(runtime.currentState, .titleScreen)
+
+        runtime.chooseTitleOption(.continueGame)
+        runtime.confirmSelectedSaveSlot()
+        try runtime.loadScene(id: 0x55)
+
+        XCTAssertEqual(runtime.currentState, .gameplay)
+        XCTAssertEqual(runtime.playState?.entryMode, .continueGame)
+        XCTAssertEqual(runtime.playState?.currentSceneName, "spot04")
+        XCTAssertTrue(runtime.inventoryState.hasOpenedTreasure(treasureFlag))
+        XCTAssertTrue(runtime.inventoryState.dungeonState(for: treasureFlag.scene).hasMap)
+        XCTAssertTrue(runtime.saveContext.slots[0].inventoryState.hasOpenedTreasure(treasureFlag))
+        XCTAssertTrue(runtime.saveContext.slots[0].inventoryState.dungeonState(for: treasureFlag.scene).hasMap)
+        XCTAssertNil(runtime.gameplayActionLabel)
+        XCTAssertEqual((runtime.actors.first as? TreasureChestActor)?.isOpened, true)
+    }
+
+    func testTreasureChestRewardMappingCoversAllM4Items() {
+        XCTAssertEqual(TreasureChestReward(getItemID: 0x41), .dungeonMap)
+        XCTAssertEqual(TreasureChestReward(getItemID: 0x40), .compass)
+        XCTAssertEqual(TreasureChestReward(getItemID: 0x3F), .bossKey)
+        XCTAssertEqual(TreasureChestReward(getItemID: 0x05), .slingshot)
+        XCTAssertEqual(TreasureChestReward(getItemID: 0x3D), .heartContainer)
+        XCTAssertEqual(TreasureChestReward(getItemID: 0x42), .smallKey)
+        XCTAssertEqual(TreasureChestReward(getItemID: 0x02), .dekuNuts(5))
+        XCTAssertEqual(TreasureChestReward(getItemID: 0x64), .dekuNuts(10))
+        XCTAssertEqual(TreasureChestReward(getItemID: 0x07), .dekuSticks(1))
+        XCTAssertEqual(TreasureChestReward(getItemID: 0x61), .dekuSticks(5))
+        XCTAssertEqual(TreasureChestReward(getItemID: 0x62), .dekuSticks(10))
+    }
+
+    func testGameplayInventoryAppliesMajorChestRewardsToHUDRelevantState() {
+        var inventory = GameplayInventoryState.starter(hearts: 3)
+        let scene = SceneIdentity(id: 0x55, name: "test_scene")
+
+        inventory.apply(.slingshot, in: scene)
+        inventory.apply(.smallKey, in: scene)
+        inventory.apply(.heartContainer, in: scene)
+        inventory.apply(.dekuNuts(5), in: scene)
+        inventory.apply(.dekuSticks(10), in: scene)
+
+        XCTAssertTrue(inventory.hasSlingshot)
+        XCTAssertEqual(inventory.smallKeyCount(for: scene), 1)
+        XCTAssertEqual(inventory.maximumHealthUnits, 8)
+        XCTAssertEqual(inventory.currentHealthUnits, 8)
+        XCTAssertEqual(inventory.dekuNutCount, 5)
+        XCTAssertEqual(inventory.dekuStickCount, 10)
+    }
+
+    @MainActor
     func testDrawPassesOnlyCallMatchingActors() throws {
         let recorder = EventRecorder()
         var registry = ActorRegistry()
@@ -1435,6 +1632,14 @@ private func makeActorTableEntry(
             objectID: objectID
         )
     )
+}
+
+private func makeChestParams(
+    type: Int,
+    getItemID: Int,
+    treasureFlag: Int
+) -> Int16 {
+    Int16(bitPattern: UInt16((type << 12) | (getItemID << 5) | treasureFlag))
 }
 
 private struct MockSceneLoader: SceneLoading {

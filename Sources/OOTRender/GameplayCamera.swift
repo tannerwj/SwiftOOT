@@ -14,19 +14,26 @@ public struct GameplayCameraConfiguration: Sendable, Equatable {
     public var playerPosition: SIMD3<Float>
     public var playerYaw: Float
     public var headHeight: Float
+    public var presentationOverride: GameplayCameraPresentationOverride?
     public var collision: CollisionMesh?
 
     public init(
         playerPosition: SIMD3<Float>,
         playerYaw: Float,
         headHeight: Float = Self.defaultHeadHeight,
+        presentationOverride: GameplayCameraPresentationOverride? = nil,
         collision: CollisionMesh? = nil
     ) {
         self.playerPosition = playerPosition
         self.playerYaw = playerYaw
         self.headHeight = headHeight
+        self.presentationOverride = presentationOverride
         self.collision = collision
     }
+}
+
+public enum GameplayCameraPresentationOverride: Sendable, Equatable {
+    case itemGet(itemPosition: SIMD3<Float>, playerYaw: Float)
 }
 
 struct GameplayCameraSnapshot: Sendable, Equatable {
@@ -218,6 +225,37 @@ private extension GameplayCameraController {
         collisionPadding: Float
     ) -> DesiredPose {
         let focusTarget = configuration.playerPosition + SIMD3<Float>(0, configuration.headHeight, 0)
+
+        if let presentationOverride = configuration.presentationOverride {
+            switch presentationOverride {
+            case .itemGet(let itemPosition, let playerYaw):
+                let desiredEye =
+                    itemPosition +
+                    gameplayOrbitalOffset(
+                        azimuth: playerYaw + .pi,
+                        elevation: 0.08,
+                        distance: followDistance * 0.42
+                    ) +
+                    SIMD3<Float>(0, 16, 0)
+                let collisionCorrectedEye = correctedEyePosition(
+                    from: itemPosition,
+                    to: desiredEye,
+                    collision: configuration.collision,
+                    padding: collisionPadding
+                )
+                let orientation = gameplayLookRotationQuaternion(
+                    eye: collisionCorrectedEye,
+                    center: itemPosition + SIMD3<Float>(0, 4, 0)
+                )
+                return DesiredPose(
+                    mode: .normal,
+                    eyePosition: collisionCorrectedEye,
+                    focusTarget: itemPosition,
+                    orientation: orientation,
+                    fieldOfView: Float.pi / 4.4
+                )
+            }
+        }
 
         if let fixedCamera = resolvedFixedCamera(in: configuration) {
             let forward = fixedCamera.forwardVector
