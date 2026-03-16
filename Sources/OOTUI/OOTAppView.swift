@@ -1,3 +1,5 @@
+import AppKit
+import Foundation
 import SwiftUI
 import OOTCore
 import OOTRender
@@ -12,9 +14,17 @@ enum OOTRootViewState: Equatable {
 
 public struct OOTAppView: View {
     let runtime: GameRuntime
+    let developerHarness: DeveloperHarnessConfiguration?
+    let startupManagedExternally: Bool
 
-    public init(runtime: GameRuntime) {
+    public init(
+        runtime: GameRuntime,
+        developerHarness: DeveloperHarnessConfiguration? = nil,
+        startupManagedExternally: Bool = false
+    ) {
         self.runtime = runtime
+        self.developerHarness = developerHarness
+        self.startupManagedExternally = startupManagedExternally
     }
 
     nonisolated static func rootViewState(for state: GameState) -> OOTRootViewState {
@@ -54,8 +64,73 @@ public struct OOTAppView: View {
             }
         }
         .task {
-            await runtime.start()
+            guard !startupManagedExternally else {
+                return
+            }
+
+            do {
+                if let developerHarness, developerHarness.isEnabled {
+                    try await DeveloperHarnessRunner.run(
+                        configuration: developerHarness,
+                        runtime: runtime,
+                        log: writeHarnessNoteToStderr
+                    )
+                    if developerHarness.captureRequested {
+                        NSApplication.shared.terminate(nil)
+                    }
+                } else {
+                    await runtime.start()
+                }
+            } catch {
+                runtime.errorMessage = error.localizedDescription
+                writeHarnessFailureToStderr(error.localizedDescription)
+                if developerHarness?.captureRequested == true {
+                    NSApplication.shared.terminate(nil)
+                }
+            }
         }
+    }
+}
+
+private extension OOTAppView {
+    func writeHarnessFailureToStderr(_ message: String) {
+        let line = "SwiftOOT harness failed: \(message)\n"
+        guard let data = line.data(using: .utf8) else {
+            return
+        }
+        try? FileHandle.standardError.write(contentsOf: data)
+        appendHarnessTrace(line)
+    }
+
+    func writeHarnessNoteToStderr(_ message: String) {
+        let line = "SwiftOOT harness: \(message)\n"
+        guard let data = line.data(using: .utf8) else {
+            return
+        }
+        try? FileHandle.standardError.write(contentsOf: data)
+        appendHarnessTrace(line)
+    }
+
+    func appendHarnessTrace(_ line: String) {
+        guard
+            let directory = (developerHarness?.captureStateURL ?? developerHarness?.captureFrameURL)?
+                .deletingLastPathComponent()
+        else {
+            return
+        }
+
+        let fileManager = FileManager.default
+        let logURL = directory.appendingPathComponent("harness.log")
+        try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
+
+        if let handle = try? FileHandle(forWritingTo: logURL) {
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: Data(line.utf8))
+            try? handle.close()
+            return
+        }
+
+        try? Data(line.utf8).write(to: logURL, options: .atomic)
     }
 }
 
@@ -329,7 +404,7 @@ private struct GameplayShellView: View {
             }
 
             while !Task.isCancelled && runtime.currentState == .gameplay {
-                inputManager?.sync()
+                inputManager?.sync(frame: runtime.gameTime.frameCount)
                 runtime.updateFrame()
                 try? await Task.sleep(for: .milliseconds(16))
             }

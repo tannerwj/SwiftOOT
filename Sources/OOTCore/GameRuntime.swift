@@ -565,6 +565,9 @@ public final class GameRuntime {
     @ObservationIgnored
     private var sceneManager: SceneManager?
 
+    @ObservationIgnored
+    private var fixedTimeOfDayOverride: Double?
+
     public init(
         currentState: GameState = .boot,
         playState: PlayState? = nil,
@@ -679,6 +682,58 @@ public final class GameRuntime {
         )
     }
 
+    public func developerRuntimeStateSnapshot() -> DeveloperRuntimeStateSnapshot {
+        let talkTarget = resolveActiveTalkActor()
+        let message = activeMessagePresentation.map { presentation in
+            DeveloperRuntimeStateSnapshot.MessageSnapshot(
+                messageID: presentation.messageID,
+                phase: presentation.phase.rawValue,
+                variant: presentation.variant.rawValue,
+                selectedChoiceIndex: presentation.choiceState?.selectedIndex,
+                choiceCount: presentation.choiceState?.options.count ?? 0
+            )
+        }
+
+        return DeveloperRuntimeStateSnapshot(
+            gameState: currentState,
+            frameCount: gameTime.frameCount,
+            timeOfDay: gameTime.timeOfDay,
+            sceneName: playState?.currentSceneName ?? loadedScene?.manifest.title ?? loadedScene?.manifest.name,
+            sceneID: playState?.currentSceneID ?? loadedScene?.manifest.id,
+            roomID: playState?.currentRoomID,
+            entranceIndex: playState?.currentEntranceIndex,
+            spawnIndex: playState?.currentSpawnIndex,
+            activeRoomIDs: Array(playState?.activeRoomIDs.sorted() ?? []),
+            loadedObjectIDs: playState?.loadedObjectIDs ?? [],
+            playerName: playState?.playerName,
+            player: playerState.map { playerState in
+                DeveloperRuntimeStateSnapshot.PlayerSnapshot(
+                    position: .init(playerState.position),
+                    velocity: .init(playerState.velocity),
+                    facingRadians: playerState.facingRadians,
+                    isGrounded: playerState.isGrounded,
+                    locomotionState: playerState.locomotionState.rawValue,
+                    animationClip: playerState.animationState.currentClip.rawValue,
+                    animationFrame: playerState.animationState.currentFrame,
+                    floorHeight: playerState.floorHeight
+                )
+            },
+            message: message,
+            talkTarget: talkTarget.map { target in
+                DeveloperRuntimeStateSnapshot.TalkTargetSnapshot(
+                    actorID: target.actor.profile.id,
+                    actorType: String(describing: type(of: target.actor)),
+                    prompt: target.actor.talkPrompt,
+                    position: .init(target.actor.position),
+                    planarDistance: sqrt(target.distanceSquared),
+                    facingAlignment: target.facingAlignment
+                )
+            },
+            actionLabel: gameplayActionLabel,
+            statusMessage: statusMessage,
+            errorMessage: errorMessage
+        )
+    }
     public func start() async {
         guard !hasStarted else {
             return
@@ -701,6 +756,65 @@ public final class GameRuntime {
         transition(to: .consoleLogo)
         await suspender(consoleLogoDuration)
         transition(to: .titleScreen)
+    }
+
+    public func launchDeveloperScene(
+        _ configuration: DeveloperSceneLaunchConfiguration
+    ) async throws {
+        guard !hasStarted else {
+            return
+        }
+
+        hasStarted = true
+        currentState = .boot
+        statusMessage = nil
+        errorMessage = nil
+        fileSelectMode = nil
+        selectedTitleOption = .newGame
+        saveContext.selectedSlotIndex = 0
+        if !saveContext.slots.isEmpty {
+            saveContext.slots[0] = SaveSlot.starter(id: 0)
+        }
+        hudState = .starter(hearts: 3)
+        fixedTimeOfDayOverride = configuration.fixedTimeOfDay.map(Self.normalizedTimeOfDay)
+
+        do {
+            try await contentLoader.loadInitialContent()
+        } catch {
+            statusMessage = "Initial content load failed. Continuing with placeholder content."
+            telemetryPublisher.publish("gameRuntime.contentLoadFailed")
+        }
+
+        loadMessageCatalogIfAvailable()
+
+        let availableScenes = try loadAvailableScenes()
+        self.availableScenes = availableScenes
+
+        let sceneID = try resolveDeveloperSceneID(
+            selection: configuration.scene,
+            availableScenes: availableScenes
+        )
+        let manifest = try sceneLoader.loadSceneManifest(id: sceneID)
+        let sceneName = manifest.title ?? manifest.name
+
+        playState = PlayState(
+            activeSaveSlot: 0,
+            entryMode: .newGame,
+            currentSceneName: sceneName,
+            currentSceneID: sceneID,
+            currentEntranceIndex: configuration.entranceIndex,
+            currentSpawnIndex: configuration.spawnIndex,
+            playerName: "Link"
+        )
+
+        try loadScene(
+            id: sceneID,
+            entranceIndex: configuration.entranceIndex,
+            spawnIndex: configuration.spawnIndex
+        )
+        if let fixedTimeOfDayOverride {
+            gameTime.timeOfDay = fixedTimeOfDayOverride
+        }
     }
 
     public func bootstrapSceneViewer() async {
@@ -888,6 +1002,7 @@ public final class GameRuntime {
     public func loadScene(
         id sceneID: Int,
         entranceIndex: Int? = nil,
+        spawnIndex: Int? = nil,
         activeRoomIDs: Set<Int>? = nil
     ) throws {
         loadMessageCatalogIfAvailable()
@@ -900,6 +1015,7 @@ public final class GameRuntime {
             actorTable: actorTableEntries,
             entranceTable: entranceTableEntries,
             entranceIndex: entranceIndex,
+            spawnIndex: spawnIndex,
             activeRoomIDs: activeRoomIDs
         )
         let selectedRooms = manager.state.activeRoomIDs
@@ -1059,6 +1175,9 @@ public final class GameRuntime {
         }
 
         gameTime.advance()
+        if let fixedTimeOfDayOverride {
+            gameTime.timeOfDay = fixedTimeOfDayOverride
+        }
 
         let playerInput = isGameplayPresentationActive ? ControllerInputState() : controllerInputState
 
@@ -1131,6 +1250,12 @@ public final class GameRuntime {
     }
 
     func advanceGameTime(byRealSeconds realSeconds: Double) {
+        guard fixedTimeOfDayOverride == nil else {
+            if let fixedTimeOfDayOverride {
+                gameTime.timeOfDay = fixedTimeOfDayOverride
+            }
+            return
+        }
         gameTime = timeSystem.advance(gameTime, byRealSeconds: realSeconds)
     }
 
@@ -1145,6 +1270,9 @@ public final class GameRuntime {
     private func transition(to nextState: GameState) {
         currentState = nextState
         gameTime.advance()
+        if let fixedTimeOfDayOverride {
+            gameTime.timeOfDay = fixedTimeOfDayOverride
+        }
         if nextState == .gameplay {
             startTimeLoop()
         } else {
@@ -1369,6 +1497,44 @@ public final class GameRuntime {
         return entry.segmentName
     }
 
+    private func resolveDeveloperSceneID(
+        selection: DeveloperSceneSelection?,
+        availableScenes: [SceneTableEntry]
+    ) throws -> Int {
+        guard !availableScenes.isEmpty else {
+            throw DeveloperSceneLaunchError.noAvailableScenes
+        }
+
+        switch selection {
+        case .id(let id):
+            guard availableScenes.contains(where: { $0.index == id }) else {
+                throw DeveloperSceneLaunchError.unknownSceneID(id)
+            }
+            return id
+        case .name(let name):
+            let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let matchedScene = availableScenes.first(where: { entry in
+                Self.sceneName(for: entry).localizedCaseInsensitiveCompare(normalizedName) == .orderedSame ||
+                    entry.enumName.localizedCaseInsensitiveCompare(normalizedName) == .orderedSame ||
+                    entry.title?.localizedCaseInsensitiveCompare(normalizedName) == .orderedSame
+            }) {
+                return matchedScene.index
+            }
+
+            throw DeveloperSceneLaunchError.unknownSceneName(normalizedName)
+        case nil:
+            return
+                availableScenes.first(where: { Self.sceneName(for: $0) == "spot04" })?.index ??
+                availableScenes.first?.index ??
+                0
+        }
+    }
+
+    nonisolated private static func normalizedTimeOfDay(_ timeOfDay: Double) -> Double {
+        let normalized = timeOfDay.truncatingRemainder(dividingBy: 24)
+        return normalized >= 0 ? normalized : normalized + 24
+    }
+
     private func activateSceneContentIfAvailable() {
         guard let playState else {
             actorContext = nil
@@ -1411,13 +1577,17 @@ public final class GameRuntime {
         actorTable: [Int: ActorTableEntry],
         preferredSpawnIndex: Int?
     ) -> PlayerState {
-        let sceneSpawn = resolvedSceneSpawn(
+        let preferredSceneSpawn = preferredSpawnIndex.flatMap { index in
+            let spawns = scene.spawns?.spawns ?? scene.sceneHeader?.spawns ?? []
+            return spawns.first(where: { $0.index == index })
+        }
+        let defaultSceneSpawn = resolvedSceneSpawn(
             in: scene,
-            preferredSpawnIndex: preferredSpawnIndex
+            preferredSpawnIndex: nil
         )
         let fallbackPosition = defaultPlayerSpawn(
             in: scene,
-            preferredSpawnPosition: sceneSpawn.map { Vec3f($0.position).simd }
+            preferredSpawnPosition: (preferredSceneSpawn ?? defaultSceneSpawn).map { Vec3f($0.position).simd }
         )
         let playerSpawn = scene.actors?.rooms
             .flatMap(\.actors)
@@ -1432,8 +1602,9 @@ public final class GameRuntime {
 
         let collisionSystem = CollisionSystem(scene: scene)
         let rawPosition =
+            preferredSceneSpawn.map { Vec3f($0.position).simd } ??
             playerSpawn.map { Vec3f($0.position).simd } ??
-            sceneSpawn.map { Vec3f($0.position).simd } ??
+            defaultSceneSpawn.map { Vec3f($0.position).simd } ??
             fallbackPosition
         let probePosition = rawPosition + SIMD3<Float>(0, movementConfiguration.floorProbeHeight, 0)
         let floorHit = collisionSystem.findFloor(at: probePosition)
@@ -1444,10 +1615,12 @@ public final class GameRuntime {
         )
 
         let facingRadians: Float
-        if let playerSpawn {
+        if let preferredSceneSpawn {
+            facingRadians = rawRotationToRadians(Float(preferredSceneSpawn.rotation.y))
+        } else if let playerSpawn {
             facingRadians = rawRotationToRadians(Float(playerSpawn.rotation.y))
-        } else if let sceneSpawn {
-            facingRadians = rawRotationToRadians(Float(sceneSpawn.rotation.y))
+        } else if let defaultSceneSpawn {
+            facingRadians = rawRotationToRadians(Float(defaultSceneSpawn.rotation.y))
         } else {
             facingRadians = 0
         }
@@ -1596,6 +1769,11 @@ public final class GameRuntime {
     }
 
     private func synchronizeGameTime(with scene: LoadedScene?) {
+        if let fixedTimeOfDayOverride {
+            gameTime.timeOfDay = fixedTimeOfDayOverride
+            return
+        }
+
         guard let timeOfDay = timeSystem.initialTimeOfDay(for: scene?.environment) else {
             return
         }
@@ -1604,6 +1782,10 @@ public final class GameRuntime {
     }
 
     private func startTimeLoop() {
+        guard fixedTimeOfDayOverride == nil else {
+            return
+        }
+
         guard timeTask == nil else {
             return
         }
