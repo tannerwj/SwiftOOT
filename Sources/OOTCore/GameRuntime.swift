@@ -92,19 +92,23 @@ public struct SaveSlot: Identifiable, Codable, Sendable, Equatable {
     public var locationName: String
     public var hearts: Int
     public var hasSaveData: Bool
+    public var inventoryState: GameplayInventoryState
 
     public init(
         id: Int,
         playerName: String = "Empty Slot",
         locationName: String = "Unused",
         hearts: Int = 3,
-        hasSaveData: Bool = false
+        hasSaveData: Bool = false,
+        inventoryState: GameplayInventoryState? = nil
     ) {
+        let resolvedInventoryState = inventoryState ?? .starter(hearts: hearts)
         self.id = id
         self.playerName = playerName
         self.locationName = locationName
-        self.hearts = hearts
+        self.hearts = max(1, resolvedInventoryState.maximumHealthUnits / 2)
         self.hasSaveData = hasSaveData
+        self.inventoryState = resolvedInventoryState
     }
 
     public static func empty(id: Int) -> Self {
@@ -117,8 +121,50 @@ public struct SaveSlot: Identifiable, Codable, Sendable, Equatable {
             playerName: "Link",
             locationName: "Kokiri Forest",
             hearts: 3,
-            hasSaveData: true
+            hasSaveData: true,
+            inventoryState: .starter(hearts: 3)
         )
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case playerName
+        case locationName
+        case hearts
+        case hasSaveData
+        case inventoryState
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let id = try container.decode(Int.self, forKey: .id)
+        let playerName = try container.decode(String.self, forKey: .playerName)
+        let locationName = try container.decode(String.self, forKey: .locationName)
+        let hearts = try container.decode(Int.self, forKey: .hearts)
+        let hasSaveData = try container.decode(Bool.self, forKey: .hasSaveData)
+        let inventoryState = try container.decodeIfPresent(
+            GameplayInventoryState.self,
+            forKey: .inventoryState
+        ) ?? .starter(hearts: hearts)
+
+        self.init(
+            id: id,
+            playerName: playerName,
+            locationName: locationName,
+            hearts: hearts,
+            hasSaveData: hasSaveData,
+            inventoryState: inventoryState
+        )
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(playerName, forKey: .playerName)
+        try container.encode(locationName, forKey: .locationName)
+        try container.encode(hearts, forKey: .hearts)
+        try container.encode(hasSaveData, forKey: .hasSaveData)
+        try container.encode(inventoryState, forKey: .inventoryState)
     }
 }
 
@@ -767,6 +813,7 @@ public final class GameRuntime {
     }
 
     public func returnToTitleScreen() {
+        persistActiveSaveSlotState()
         fileSelectMode = nil
         statusMessage = nil
         inputState.record(.cancel, selectionIndex: saveContext.selectedSlotIndex)
@@ -795,7 +842,7 @@ public final class GameRuntime {
         let normalizedIndex = normalizedSlotIndex(index)
         let slot = SaveSlot.starter(id: normalizedIndex)
         saveContext.slots[normalizedIndex] = slot
-        inventoryState = .starter(hearts: slot.hearts)
+        inventoryState = slot.inventoryState
         hudState = .starter(hearts: slot.hearts)
         synchronizeHUDStateWithInventory()
         itemGetSequence = nil
@@ -808,6 +855,7 @@ public final class GameRuntime {
         fileSelectMode = nil
         statusMessage = nil
         activateSceneContentIfAvailable()
+        persistActiveSaveSlotState()
         transition(to: .gameplay)
     }
 
@@ -821,7 +869,7 @@ public final class GameRuntime {
             return
         }
 
-        inventoryState = .starter(hearts: slot.hearts)
+        inventoryState = slot.inventoryState
         hudState = .starter(hearts: slot.hearts)
         synchronizeHUDStateWithInventory()
         itemGetSequence = nil
@@ -913,6 +961,7 @@ public final class GameRuntime {
         errorMessage = nil
         synchronizeGameTime(with: loadedScene)
         synchronizeHUDStateWithInventory()
+        persistActiveSaveSlotState(sceneName: playState.currentSceneName)
         currentState = .gameplay
         startTimeLoop()
     }
@@ -1167,6 +1216,7 @@ public final class GameRuntime {
         }
 
         inventoryState.markTreasureOpened(request.treasureFlag)
+        persistActiveSaveSlotState()
         itemGetSequence = ItemGetSequenceState(
             reward: request.reward,
             chestSize: request.chestSize,
@@ -1192,6 +1242,7 @@ public final class GameRuntime {
                         itemGetSequence.reward,
                         in: itemGetSequence.treasureFlag.scene
                     )
+                    persistActiveSaveSlotState()
                     itemGetSequence.rewardApplied = true
                     synchronizeHUDStateWithInventory()
                 }
@@ -1243,6 +1294,26 @@ public final class GameRuntime {
         if inventoryState.hasSlingshot {
             hudState.bButtonItem = .slingshot
         }
+    }
+
+    private func persistActiveSaveSlotState(sceneName: String? = nil) {
+        guard let playState else {
+            return
+        }
+
+        let index = normalizedSlotIndex(playState.activeSaveSlot)
+        guard saveContext.slots[index].hasSaveData else {
+            return
+        }
+
+        saveContext.slots[index] = SaveSlot(
+            id: index,
+            playerName: playState.playerName,
+            locationName: sceneName ?? playState.currentSceneName,
+            hearts: max(1, inventoryState.maximumHealthUnits / 2),
+            hasSaveData: true,
+            inventoryState: inventoryState
+        )
     }
 
     private struct SceneViewerSnapshot: Sendable {

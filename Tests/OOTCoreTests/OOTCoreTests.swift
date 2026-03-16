@@ -1121,6 +1121,101 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual((runtime.actors.first as? TreasureChestActor)?.isOpened, true)
     }
 
+    @MainActor
+    func testContinuePreservesChestRewardStateAcrossTitleReturn() async throws {
+        let chestActorID = 10
+        let chestParams = makeChestParams(type: 0, getItemID: 0x41, treasureFlag: 3)
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                sceneName: "spot04",
+                roomSpawns: [
+                    0: [
+                        makeSpawn(
+                            id: chestActorID,
+                            name: "ACTOR_EN_BOX",
+                            position: Vector3s(x: 0, y: 0, z: -36),
+                            params: chestParams
+                        ),
+                    ],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: chestActorID, name: "ACTOR_EN_BOX", category: .chest),
+            ]
+        )
+        let runtime = makeRuntime(
+            saveContext: SaveContext(
+                slots: [
+                    SaveSlot(
+                        id: 0,
+                        playerName: "Link",
+                        locationName: "spot04",
+                        hearts: 3,
+                        hasSaveData: true
+                    ),
+                    .empty(id: 1),
+                    .empty(id: 2),
+                ]
+            ),
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+        let treasureFlag = TreasureFlagKey(
+            scene: SceneIdentity(id: 0x55, name: "spot04"),
+            flag: 3
+        )
+
+        await runtime.start()
+        runtime.chooseTitleOption(.continueGame)
+        runtime.confirmSelectedSaveSlot()
+        try runtime.loadScene(id: 0x55)
+
+        XCTAssertEqual(runtime.currentState, .gameplay)
+        XCTAssertEqual(runtime.playState?.entryMode, .continueGame)
+        XCTAssertEqual(runtime.gameplayActionLabel, "Open")
+
+        runtime.handlePrimaryGameplayInput()
+        for _ in 0..<24 {
+            runtime.updateFrame()
+        }
+
+        XCTAssertTrue(runtime.inventoryState.hasOpenedTreasure(treasureFlag))
+        XCTAssertTrue(runtime.inventoryState.dungeonState(for: treasureFlag.scene).hasMap)
+        XCTAssertTrue(runtime.saveContext.slots[0].inventoryState.hasOpenedTreasure(treasureFlag))
+        XCTAssertTrue(runtime.saveContext.slots[0].inventoryState.dungeonState(for: treasureFlag.scene).hasMap)
+
+        runtime.handlePrimaryGameplayInput()
+        for _ in 0..<8 {
+            runtime.updateFrame()
+        }
+
+        runtime.returnToTitleScreen()
+        XCTAssertEqual(runtime.currentState, .titleScreen)
+
+        runtime.chooseTitleOption(.continueGame)
+        runtime.confirmSelectedSaveSlot()
+        try runtime.loadScene(id: 0x55)
+
+        XCTAssertEqual(runtime.currentState, .gameplay)
+        XCTAssertEqual(runtime.playState?.entryMode, .continueGame)
+        XCTAssertEqual(runtime.playState?.currentSceneName, "spot04")
+        XCTAssertTrue(runtime.inventoryState.hasOpenedTreasure(treasureFlag))
+        XCTAssertTrue(runtime.inventoryState.dungeonState(for: treasureFlag.scene).hasMap)
+        XCTAssertTrue(runtime.saveContext.slots[0].inventoryState.hasOpenedTreasure(treasureFlag))
+        XCTAssertTrue(runtime.saveContext.slots[0].inventoryState.dungeonState(for: treasureFlag.scene).hasMap)
+        XCTAssertNil(runtime.gameplayActionLabel)
+        XCTAssertEqual((runtime.actors.first as? TreasureChestActor)?.isOpened, true)
+    }
+
     func testTreasureChestRewardMappingCoversAllM4Items() {
         XCTAssertEqual(TreasureChestReward(getItemID: 0x41), .dungeonMap)
         XCTAssertEqual(TreasureChestReward(getItemID: 0x40), .compass)
