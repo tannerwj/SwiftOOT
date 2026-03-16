@@ -37,6 +37,14 @@ final class OOTUITests: XCTestCase {
             )
         )
         _ = ActionPromptView(label: "Talk")
+        _ = ItemGetView(
+            state: ItemGetOverlayState(
+                title: "Compass",
+                description: "Reveals hidden treasure in the dungeon.",
+                iconName: "location.north.line.fill",
+                phase: .displayingText
+            )
+        )
         _ = GameplayHUDView(
             runtime: GameRuntime(
                 playState: PlayState(
@@ -128,6 +136,36 @@ final class OOTUITests: XCTestCase {
         XCTAssertEqual(spawnConfiguration.playerPosition, SIMD3<Float>(100, 20, -40))
         XCTAssertEqual(spawnConfiguration.playerYaw, Float(Int16(0x4000)) * (.pi / 32_768.0), accuracy: 0.000_1)
         XCTAssertEqual(spawnConfiguration.collision, scene.collision)
+    }
+
+    func testGameplayCameraConfigurationCarriesItemGetPresentationOverride() throws {
+        let scene = makeLoadedScene()
+        let playerState = PlayerState(
+            position: Vec3f(x: 12, y: 34, z: 56),
+            facingRadians: .pi / 4
+        )
+        let sequence = ItemGetSequenceState(
+            reward: .bossKey,
+            chestSize: .large,
+            treasureFlag: TreasureFlagKey(
+                scene: SceneIdentity(id: scene.manifest.id, name: scene.manifest.name),
+                flag: 2
+            ),
+            itemWorldPosition: Vec3f(x: 12, y: 92, z: 56)
+        )
+
+        let configuration = try XCTUnwrap(
+            SceneRenderPayloadBuilder.makeGameplayCameraConfiguration(
+                scene: scene,
+                playerState: playerState,
+                itemGetSequence: sequence
+            )
+        )
+
+        XCTAssertEqual(
+            configuration.presentationOverride,
+            .itemGet(itemPosition: SIMD3<Float>(12, 92, 56), playerYaw: .pi / 4)
+        )
     }
 
     func testGameplayHUDArtLibraryLoadsKnownGameplayKeepTextures() throws {

@@ -316,6 +316,27 @@ public struct PlayState: Codable, Equatable, @unchecked Sendable {
         actorRuntimeHooks?.requestMessage(messageID)
     }
 
+    @MainActor
+    public func requestChestOpen(_ request: TreasureChestOpenRequest) -> Bool {
+        actorRuntimeHooks?.requestChestOpen(request) ?? false
+    }
+
+    @MainActor
+    public func isTreasureOpened(_ key: TreasureFlagKey) -> Bool {
+        actorRuntimeHooks?.isTreasureOpened(key) ?? false
+    }
+
+    public var currentSceneIdentity: SceneIdentity? {
+        guard currentSceneName.isEmpty == false else {
+            return nil
+        }
+
+        return SceneIdentity(
+            id: currentSceneID,
+            name: currentSceneName
+        )
+    }
+
     func withActorRuntime(
         scene: LoadedScene,
         actorTable: [Int: ActorTableEntry],
@@ -437,6 +458,7 @@ public final class GameRuntime {
     public var inputState: InputState
     public var controllerInputState: ControllerInputState
     public var hudState: GameplayHUDState
+    public var inventoryState: GameplayInventoryState
     public var selectedTitleOption: TitleMenuOption
     public var fileSelectMode: FileSelectMode?
     public var statusMessage: String?
@@ -447,6 +469,7 @@ public final class GameRuntime {
     public var textureAssetURLs: [UInt32: URL]
     public var errorMessage: String?
     public var messageContext: MessageContext
+    public var itemGetSequence: ItemGetSequenceState?
 
     @ObservationIgnored
     public let contentLoader: any ContentLoading
@@ -502,6 +525,7 @@ public final class GameRuntime {
         inputState: InputState = InputState(),
         controllerInputState: ControllerInputState = ControllerInputState(),
         hudState: GameplayHUDState = GameplayHUDState(),
+        inventoryState: GameplayInventoryState = .starter(hearts: 3),
         selectedTitleOption: TitleMenuOption = .newGame,
         fileSelectMode: FileSelectMode? = nil,
         statusMessage: String? = nil,
@@ -512,6 +536,7 @@ public final class GameRuntime {
         textureAssetURLs: [UInt32: URL] = [:],
         errorMessage: String? = nil,
         messageContext: MessageContext = MessageContext(),
+        itemGetSequence: ItemGetSequenceState? = nil,
         contentLoader: (any ContentLoading)? = nil,
         sceneLoader: (any SceneLoading)? = nil,
         telemetryPublisher: (any TelemetryPublishing)? = nil,
@@ -532,6 +557,7 @@ public final class GameRuntime {
         self.inputState = inputState
         self.controllerInputState = controllerInputState
         self.hudState = hudState
+        self.inventoryState = inventoryState
         self.selectedTitleOption = selectedTitleOption
         self.fileSelectMode = fileSelectMode
         self.statusMessage = statusMessage
@@ -542,6 +568,7 @@ public final class GameRuntime {
         self.textureAssetURLs = textureAssetURLs
         self.errorMessage = errorMessage
         self.messageContext = messageContext
+        self.itemGetSequence = itemGetSequence
         let resolvedSceneLoader = sceneLoader ?? SceneLoader()
         self.sceneLoader = resolvedSceneLoader
         self.contentLoader = contentLoader ?? ContentLoader(sceneLoader: resolvedSceneLoader)
@@ -567,10 +594,16 @@ public final class GameRuntime {
     }
 
     public var activeMessagePresentation: MessagePresentation? {
-        messageContext.activePresentation
+        itemGetSequence?.phase == .displayingText ? itemGetSequence?.messagePresentation : messageContext.activePresentation
     }
 
     public var gameplayActionLabel: String? {
+        if itemGetSequence?.phase == .displayingText {
+            return "Next"
+        }
+        if itemGetSequence != nil {
+            return nil
+        }
         if messageContext.canRequestChoiceSelection {
             return "Choose"
         }
@@ -582,6 +615,19 @@ public final class GameRuntime {
 
     public var gameplayHUDActionLabel: String {
         gameplayActionLabel ?? hudState.actionLabelOverride ?? hudState.bButtonItem.actionLabel
+    }
+
+    public var activeItemGetOverlay: ItemGetOverlayState? {
+        guard let itemGetSequence else {
+            return nil
+        }
+
+        return ItemGetOverlayState(
+            title: itemGetSequence.reward.title,
+            description: itemGetSequence.reward.description,
+            iconName: itemGetSequence.reward.iconName,
+            phase: itemGetSequence.phase
+        )
     }
 
     public func start() async {
@@ -742,7 +788,10 @@ public final class GameRuntime {
         let normalizedIndex = normalizedSlotIndex(index)
         let slot = SaveSlot.starter(id: normalizedIndex)
         saveContext.slots[normalizedIndex] = slot
+        inventoryState = .starter(hearts: slot.hearts)
         hudState = .starter(hearts: slot.hearts)
+        synchronizeHUDStateWithInventory()
+        itemGetSequence = nil
         playState = PlayState(
             activeSaveSlot: normalizedIndex,
             entryMode: .newGame,
@@ -765,7 +814,10 @@ public final class GameRuntime {
             return
         }
 
+        inventoryState = .starter(hearts: slot.hearts)
         hudState = .starter(hearts: slot.hearts)
+        synchronizeHUDStateWithInventory()
+        itemGetSequence = nil
         playState = PlayState(
             activeSaveSlot: normalizedIndex,
             entryMode: .continueGame,
@@ -808,6 +860,12 @@ public final class GameRuntime {
             },
             messageHandler: { [weak self] messageID in
                 self?.enqueueMessage(id: messageID)
+            },
+            chestOpenHandler: { [weak self] request in
+                self?.beginChestOpenSequence(request) ?? false
+            },
+            treasureQueryHandler: { [weak self] key in
+                self?.inventoryState.hasOpenedTreasure(key) ?? false
             }
         )
         let basePlayState = playState ?? PlayState(
@@ -847,6 +905,7 @@ public final class GameRuntime {
         sceneViewerState = .running
         errorMessage = nil
         synchronizeGameTime(with: loadedScene)
+        synchronizeHUDStateWithInventory()
         currentState = .gameplay
         startTimeLoop()
     }
@@ -945,7 +1004,7 @@ public final class GameRuntime {
 
         gameTime.advance()
 
-        let playerInput = messageContext.isPresenting ? ControllerInputState() : controllerInputState
+        let playerInput = isGameplayPresentationActive ? ControllerInputState() : controllerInputState
 
         if let playerState {
             self.playerState = playerState.updating(
@@ -956,6 +1015,7 @@ public final class GameRuntime {
         }
 
         applyGameplayControllerInput()
+        advanceItemGetSequenceIfNeeded()
 
         guard let actorContext, let playState else {
             messageContext.tick(playerName: self.playState?.playerName ?? "Link")
@@ -976,6 +1036,11 @@ public final class GameRuntime {
         }
 
         let playerName = playState?.playerName ?? "Link"
+
+        if handleItemGetPrimaryInput() {
+            inputState.record(.confirm, selectionIndex: 0)
+            return
+        }
 
         if messageContext.isPresenting {
             messageContext.advanceOrConfirm(playerName: playerName)
@@ -1076,6 +1141,100 @@ public final class GameRuntime {
         }
 
         return currentStick.y > 0 ? -1 : 1
+    }
+
+    private var isGameplayPresentationActive: Bool {
+        messageContext.isPresenting || itemGetSequence?.isSuspendingGameplay == true
+    }
+
+    private func beginChestOpenSequence(_ request: TreasureChestOpenRequest) -> Bool {
+        guard currentState == .gameplay else {
+            return false
+        }
+        guard itemGetSequence == nil else {
+            return false
+        }
+        guard inventoryState.hasOpenedTreasure(request.treasureFlag) == false else {
+            return false
+        }
+
+        inventoryState.markTreasureOpened(request.treasureFlag)
+        itemGetSequence = ItemGetSequenceState(
+            reward: request.reward,
+            chestSize: request.chestSize,
+            treasureFlag: request.treasureFlag,
+            itemWorldPosition: itemGetWorldPosition()
+        )
+        playerState?.presentationMode = request.reward.playerPresentationMode
+        return true
+    }
+
+    private func advanceItemGetSequenceIfNeeded() {
+        guard var itemGetSequence else {
+            return
+        }
+
+        switch itemGetSequence.phase {
+        case .raising:
+            itemGetSequence.phaseFrameCount += 1
+            itemGetSequence.itemWorldPosition = itemGetWorldPosition()
+            if itemGetSequence.phaseFrameCount >= 24 {
+                if itemGetSequence.rewardApplied == false {
+                    inventoryState.apply(
+                        itemGetSequence.reward,
+                        in: itemGetSequence.treasureFlag.scene
+                    )
+                    itemGetSequence.rewardApplied = true
+                    synchronizeHUDStateWithInventory()
+                }
+                itemGetSequence.phase = .displayingText
+                itemGetSequence.phaseFrameCount = 0
+            }
+        case .displayingText:
+            itemGetSequence.itemWorldPosition = itemGetWorldPosition()
+        case .closing:
+            itemGetSequence.phaseFrameCount += 1
+            itemGetSequence.itemWorldPosition = itemGetWorldPosition()
+            if itemGetSequence.phaseFrameCount >= 8 {
+                self.itemGetSequence = nil
+                playerState?.presentationMode = .normal
+                return
+            }
+        }
+
+        self.itemGetSequence = itemGetSequence
+        if itemGetSequence.phase != .closing {
+            playerState?.presentationMode = itemGetSequence.reward.playerPresentationMode
+        }
+    }
+
+    private func handleItemGetPrimaryInput() -> Bool {
+        guard var itemGetSequence else {
+            return false
+        }
+        guard itemGetSequence.phase == .displayingText else {
+            return true
+        }
+
+        itemGetSequence.phase = .closing
+        itemGetSequence.phaseFrameCount = 0
+        self.itemGetSequence = itemGetSequence
+        return true
+    }
+
+    private func itemGetWorldPosition() -> Vec3f {
+        let basePosition = playerState?.position.simd ?? .zero
+        return Vec3f(basePosition + SIMD3<Float>(0, 58, 0))
+    }
+
+    private func synchronizeHUDStateWithInventory() {
+        let currentSceneIdentity = playState?.currentSceneIdentity ?? SceneIdentity(id: selectedSceneID, name: playState?.currentSceneName ?? loadedScene?.manifest.name ?? "Unknown")
+        hudState.currentHealthUnits = inventoryState.currentHealthUnits
+        hudState.maximumHealthUnits = inventoryState.maximumHealthUnits
+        hudState.smallKeyCount = inventoryState.smallKeyCount(for: currentSceneIdentity)
+        if inventoryState.hasSlingshot {
+            hudState.bButtonItem = .slingshot
+        }
     }
 
     private struct SceneViewerSnapshot: Sendable {

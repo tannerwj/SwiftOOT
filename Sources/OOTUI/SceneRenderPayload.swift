@@ -14,6 +14,7 @@ struct SceneRenderPayload {
     let roomCount: Int
     let vertexCount: Int
     let playerRenderAssets: PlayerRenderAssets?
+    let chestRenderAssets: ChestRenderAssets?
 }
 
 struct PlayerRenderAssets {
@@ -21,6 +22,8 @@ struct PlayerRenderAssets {
         let idle: ObjectAnimationData
         let walk: ObjectAnimationData
         let run: ObjectAnimationData
+        let itemGetA: ObjectAnimationData
+        let itemGetB: ObjectAnimationData
     }
 
     let skeleton: SkeletonData
@@ -52,6 +55,10 @@ struct PlayerRenderAssets {
             return animationLibrary.walk
         case .run:
             return animationLibrary.run
+        case .itemGetA:
+            return animationLibrary.itemGetA
+        case .itemGetB:
+            return animationLibrary.itemGetB
         }
     }
 
@@ -71,6 +78,54 @@ struct PlayerRenderAssets {
             SIMD4<Float>(0, 0, 0, 1)
         )
         return translation * rotation
+    }
+}
+
+struct ChestRenderAssets {
+    let skeleton: SkeletonData
+    let skeletonAsset: OOTRenderSkeletonAsset
+    let openAnimation: ObjectAnimationData?
+
+    @MainActor
+    func makeSkeleton(for chest: TreasureChestActor) -> OOTRenderSkeleton {
+        OOTRenderSkeleton(
+            name: "Chest-\(chest.position.x)-\(chest.position.z)",
+            skeleton: skeleton,
+            asset: skeletonAsset,
+            animationState: OOTSkeletonAnimationState(
+                animation: openAnimation,
+                currentFrame: Float(openAnimation?.frameCount ?? 1) * chest.lidOpenProgress,
+                playbackMode: .hold
+            ),
+            modelMatrix: makeModelMatrix(for: chest),
+            rootLimbIndex: 0
+        )
+    }
+
+    @MainActor
+    private func makeModelMatrix(for chest: TreasureChestActor) -> simd_float4x4 {
+        let scale = chest.renderScale
+        let translation = simd_float4x4(
+            SIMD4<Float>(1, 0, 0, 0),
+            SIMD4<Float>(0, 1, 0, 0),
+            SIMD4<Float>(0, 0, 1, 0),
+            SIMD4<Float>(chest.position.x, chest.position.y, chest.position.z, 1)
+        )
+        let cosine = cos(chest.renderYawRadians)
+        let sine = sin(chest.renderYawRadians)
+        let rotation = simd_float4x4(
+            SIMD4<Float>(cosine, 0, -sine, 0),
+            SIMD4<Float>(0, 1, 0, 0),
+            SIMD4<Float>(sine, 0, cosine, 0),
+            SIMD4<Float>(0, 0, 0, 1)
+        )
+        let scaling = simd_float4x4(
+            SIMD4<Float>(scale, 0, 0, 0),
+            SIMD4<Float>(0, scale, 0, 0),
+            SIMD4<Float>(0, 0, scale, 0),
+            SIMD4<Float>(0, 0, 0, 1)
+        )
+        return translation * rotation * scaling
     }
 }
 
@@ -95,8 +150,14 @@ enum SceneRenderPayloadBuilder {
 
         var mergedTextureAssetURLs = textureAssetURLs
         let playerRenderAssets = try makePlayerRenderAssets(contentLoader: contentLoader)
+        let chestRenderAssets = try makeChestRenderAssets(contentLoader: contentLoader)
         if let playerRenderAssets {
             for (assetID, url) in playerRenderAssets.textureAssetURLs {
+                mergedTextureAssetURLs[assetID] = url
+            }
+        }
+        if let chestRenderAssets {
+            for (assetID, url) in chestRenderAssets.textureAssetURLs {
                 mergedTextureAssetURLs[assetID] = url
             }
         }
@@ -114,26 +175,42 @@ enum SceneRenderPayloadBuilder {
             gameplayCameraConfiguration: gameplayCameraConfiguration,
             roomCount: scene.rooms.count,
             vertexCount: vertexCount,
-            playerRenderAssets: playerRenderAssets?.assets
+            playerRenderAssets: playerRenderAssets?.assets,
+            chestRenderAssets: chestRenderAssets?.assets
         )
     }
 
+    @MainActor
     static func renderScene(
         from payload: SceneRenderPayload,
-        playerState: PlayerState?
+        playerState: PlayerState?,
+        actors: [any Actor] = []
     ) -> OOTRenderScene {
         var scene = payload.baseScene
+        var skeletons: [OOTRenderSkeleton] = []
+
         if let playerState, let playerRenderAssets = payload.playerRenderAssets {
-            scene.skeletons = [playerRenderAssets.makeSkeleton(for: playerState)]
-        } else {
-            scene.skeletons = []
+            skeletons.append(playerRenderAssets.makeSkeleton(for: playerState))
         }
+        if let chestRenderAssets = payload.chestRenderAssets {
+            skeletons.append(
+                contentsOf: actors.compactMap { actor in
+                    guard let chest = actor as? TreasureChestActor else {
+                        return nil
+                    }
+
+                    return chestRenderAssets.makeSkeleton(for: chest)
+                }
+            )
+        }
+        scene.skeletons = skeletons
         return scene
     }
 
     static func makeGameplayCameraConfiguration(
         scene: LoadedScene,
-        playerState: PlayerState?
+        playerState: PlayerState?,
+        itemGetSequence: ItemGetSequenceState? = nil
     ) -> GameplayCameraConfiguration? {
         if let playerState {
             return GameplayCameraConfiguration(
@@ -143,6 +220,12 @@ enum SceneRenderPayloadBuilder {
                     playerState.position.z
                 ),
                 playerYaw: playerState.facingRadians,
+                presentationOverride: itemGetSequence.map {
+                    GameplayCameraPresentationOverride.itemGet(
+                        itemPosition: $0.itemWorldPosition.simd,
+                        playerYaw: playerState.facingRadians
+                    )
+                },
                 collision: scene.collision
             )
         }
@@ -217,6 +300,46 @@ enum SceneRenderPayloadBuilder {
         return (assets, loadedObject.textureAssetURLs)
     }
 
+    private static func makeChestRenderAssets(
+        contentLoader: any ContentLoading
+    ) throws -> (assets: ChestRenderAssets, textureAssetURLs: [UInt32: URL])? {
+        guard let loadedObject = try? contentLoader.loadObject(named: "object_box") else {
+            return nil
+        }
+
+        guard
+            let skeleton = loadedObject.skeletonsByName.sorted(by: { $0.key < $1.key }).first?.value
+        else {
+            return nil
+        }
+
+        let displayListsByAddress: [UInt32: [F3DEX2Command]] = Dictionary(
+            uniqueKeysWithValues: loadedObject.manifest.meshes.compactMap { mesh in
+                guard let displayList = loadedObject.displayListsByPath[mesh.displayListPath] else {
+                    return nil
+                }
+
+                return (OOTAssetID.stableID(for: mesh.name), displayList)
+            }
+        )
+
+        let animations = loadedObject.animationsByName.values.sorted { $0.name < $1.name }
+        let assets = ChestRenderAssets(
+            skeleton: skeleton,
+            skeletonAsset: OOTRenderSkeletonAsset(
+                displayListsByPath: loadedObject.displayListsByPath,
+                displayListsByAddress: displayListsByAddress,
+                segmentData: makeSegmentData(vertexDataByPath: loadedObject.vertexDataByPath)
+            ),
+            openAnimation: selectAnimation(
+                matching: ["treasurechestanim", "open"],
+                from: animations
+            ) ?? animations.first
+        )
+
+        return (assets, loadedObject.textureAssetURLs)
+    }
+
     private static func makeAnimationLibrary(
         from animationsByName: [String: ObjectAnimationData]
     ) -> PlayerRenderAssets.AnimationLibrary {
@@ -233,7 +356,9 @@ enum SceneRenderPayloadBuilder {
         return PlayerRenderAssets.AnimationLibrary(
             idle: selectAnimation(matching: ["idle", "wait"], from: sortedAnimations) ?? fallback,
             walk: selectAnimation(matching: ["walk"], from: sortedAnimations) ?? fallback,
-            run: selectAnimation(matching: ["run"], from: sortedAnimations) ?? selectAnimation(matching: ["jog"], from: sortedAnimations) ?? fallback
+            run: selectAnimation(matching: ["run"], from: sortedAnimations) ?? selectAnimation(matching: ["jog"], from: sortedAnimations) ?? fallback,
+            itemGetA: selectAnimation(matching: ["get_itema", "getitema", "itema", "demo_get_itema"], from: sortedAnimations) ?? fallback,
+            itemGetB: selectAnimation(matching: ["get_itemb", "getitemb", "itemb", "demo_get_itemb"], from: sortedAnimations) ?? fallback
         )
     }
 

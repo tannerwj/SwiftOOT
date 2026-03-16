@@ -2,6 +2,7 @@ import CoreGraphics
 import XCTest
 @testable import OOTDataModel
 @testable import OOTRender
+import simd
 
 final class GameplayCameraTests: XCTestCase {
     func testNormalModeTargetsHeadHeightAndSmoothsTowardUpdatedPlayerPosition() {
@@ -90,6 +91,26 @@ final class GameplayCameraTests: XCTestCase {
         XCTAssertEqual(snapshot.mode, .normal)
         XCTAssertGreaterThan(snapshot.eyePosition.z, -64)
         XCTAssertLessThan(snapshot.eyePosition.z, 0)
+    }
+
+    func testItemGetPresentationOverrideZoomsCameraTowardHeldItem() {
+        let controller = GameplayCameraController(
+            sceneBounds: sceneBounds,
+            configuration: GameplayCameraConfiguration(
+                playerPosition: SIMD3<Float>(0, 0, 0),
+                playerYaw: 0,
+                presentationOverride: .itemGet(
+                    itemPosition: SIMD3<Float>(0, 58, 0),
+                    playerYaw: 0
+                )
+            )
+        )
+
+        let snapshot = controller.advance()
+
+        XCTAssertLessThan(snapshot.fieldOfView, Float.pi / 3.0)
+        XCTAssertLessThan(simd_distance(snapshot.eyePosition, snapshot.focusTarget), 120)
+        XCTAssertEqual(snapshot.focusTarget.y, 58, accuracy: 0.000_1)
     }
 }
 

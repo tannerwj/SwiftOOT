@@ -262,7 +262,8 @@ private struct GameplayShellView: View {
                         sceneIdentity: renderPayload.sceneID,
                         scene: SceneRenderPayloadBuilder.renderScene(
                             from: renderPayload,
-                            playerState: runtime.playerState
+                            playerState: runtime.playerState,
+                            actors: runtime.actors
                         ),
                         timeOfDay: runtime.gameTime.timeOfDay,
                         textureBindings: renderPayload.textureBindings,
@@ -270,7 +271,8 @@ private struct GameplayShellView: View {
                         gameplayCameraConfiguration: runtime.loadedScene.flatMap {
                             SceneRenderPayloadBuilder.makeGameplayCameraConfiguration(
                                 scene: $0,
-                                playerState: runtime.playerState
+                                playerState: runtime.playerState,
+                                itemGetSequence: runtime.itemGetSequence
                             )
                         }
                     ) { stats in
@@ -294,6 +296,13 @@ private struct GameplayShellView: View {
                 if runtime.playState != nil {
                     GameplayHUDView(runtime: runtime)
                         .transition(.opacity)
+                }
+
+                if let itemGetOverlay = runtime.activeItemGetOverlay {
+                    ItemGetView(state: itemGetOverlay)
+                        .padding(.top, 28)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
                 }
 
                 VStack(spacing: 16) {

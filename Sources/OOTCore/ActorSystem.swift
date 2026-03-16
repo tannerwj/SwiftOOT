@@ -186,13 +186,19 @@ public final class PlaceholderActor: DamageableBaseActor {}
 public final class ActorRuntimeHooks: @unchecked Sendable {
     private let destroyHandler: @MainActor (any Actor) -> Void
     private let messageHandler: @MainActor (Int) -> Void
+    private let chestOpenHandler: @MainActor (TreasureChestOpenRequest) -> Bool
+    private let treasureQueryHandler: @MainActor (TreasureFlagKey) -> Bool
 
     public init(
         destroyHandler: @escaping @MainActor (any Actor) -> Void,
-        messageHandler: @escaping @MainActor (Int) -> Void
+        messageHandler: @escaping @MainActor (Int) -> Void,
+        chestOpenHandler: @escaping @MainActor (TreasureChestOpenRequest) -> Bool,
+        treasureQueryHandler: @escaping @MainActor (TreasureFlagKey) -> Bool
     ) {
         self.destroyHandler = destroyHandler
         self.messageHandler = messageHandler
+        self.chestOpenHandler = chestOpenHandler
+        self.treasureQueryHandler = treasureQueryHandler
     }
 
     public func requestDestroy(_ actor: any Actor) {
@@ -201,6 +207,14 @@ public final class ActorRuntimeHooks: @unchecked Sendable {
 
     public func requestMessage(_ messageID: Int) {
         messageHandler(messageID)
+    }
+
+    public func requestChestOpen(_ request: TreasureChestOpenRequest) -> Bool {
+        chestOpenHandler(request)
+    }
+
+    public func isTreasureOpened(_ key: TreasureFlagKey) -> Bool {
+        treasureQueryHandler(key)
     }
 }
 
@@ -259,6 +273,12 @@ public struct ActorRegistry {
                 .filter { $0.enumName == "ACTOR_EN_KO" }
                 .map(\.id)
         ) { KokiriChildActor(spawnRecord: $0) }
+
+        registry.register(
+            actorIDs: actorTable
+                .filter { $0.enumName == "ACTOR_EN_BOX" }
+                .map(\.id)
+        ) { TreasureChestActor(spawnRecord: $0) }
 
         return registry
     }
