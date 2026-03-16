@@ -119,6 +119,7 @@ public struct ActorSpawnRecord: Sendable, Equatable {
 @MainActor
 open class BaseActor: Actor {
     public let profile: ActorProfile
+    public let category: ActorCategory
     public var position: Vec3f
     public var rotation: Vec3s
     public let params: UInt16
@@ -129,6 +130,7 @@ open class BaseActor: Actor {
 
     public init(spawnRecord: ActorSpawnRecord) {
         profile = spawnRecord.tableEntry.profile
+        category = spawnRecord.category
         position = Vec3f(spawnRecord.spawn.position)
         rotation = spawnRecord.spawn.rotation
         params = UInt16(bitPattern: spawnRecord.spawn.params)
@@ -151,6 +153,42 @@ open class DamageableBaseActor: BaseActor, DamageableActor {
         self.hitPoints = hitPoints
         super.init(spawnRecord: spawnRecord)
     }
+}
+
+@MainActor
+open class CombatantBaseActor: DamageableBaseActor, CombatActor {
+    public var combatProfile: ActorCombatProfile
+    public var combatState: ActorCombatState
+
+    public init(
+        spawnRecord: ActorSpawnRecord,
+        hitPoints: Int = 1,
+        combatProfile: ActorCombatProfile = ActorCombatProfile()
+    ) {
+        self.combatProfile = combatProfile
+        self.combatState = ActorCombatState()
+        super.init(spawnRecord: spawnRecord, hitPoints: hitPoints)
+    }
+
+    open var targetingRange: Float {
+        combatProfile.targetingRange
+    }
+
+    open var targetAnchorHeight: Float {
+        combatProfile.targetAnchorHeight
+    }
+
+    open var isTargetable: Bool {
+        hitPoints > 0
+    }
+
+    open var activeAttacks: [CombatAttackDefinition] {
+        []
+    }
+
+    open func combatDidReceiveHit(_ hit: CombatHit, playState: PlayState) {}
+
+    open func combatDidBlockHit(_ hit: CombatHit, playState: PlayState) {}
 }
 
 @MainActor
@@ -181,6 +219,30 @@ public final class GenericPropActor: DamageableBaseActor {}
 
 @MainActor
 public final class PlaceholderActor: DamageableBaseActor {}
+
+@MainActor
+public final class PlaceholderCombatActor: CombatantBaseActor {
+    public init(spawnRecord: ActorSpawnRecord) {
+        let hitPoints = spawnRecord.category == .boss ? 6 : 3
+        super.init(
+            spawnRecord: spawnRecord,
+            hitPoints: hitPoints,
+            combatProfile: ActorCombatProfile(
+                hurtboxRadius: 20,
+                hurtboxHeight: 52,
+                targetAnchorHeight: 52,
+                targetingRange: 320,
+                damageTable: DamageTable(
+                    defaultEffect: DamageEffect(damage: 1, knockbackDistance: 18),
+                    overrides: [
+                        .swordJump: DamageEffect(damage: 2, knockbackDistance: 26),
+                        .swordSpin: DamageEffect(damage: 2, knockbackDistance: 22),
+                    ]
+                )
+            )
+        )
+    }
+}
 
 @MainActor
 public final class ActorRuntimeHooks: @unchecked Sendable {
@@ -279,6 +341,15 @@ public struct ActorRegistry {
                 .filter { $0.enumName == "ACTOR_EN_BOX" }
                 .map(\.id)
         ) { TreasureChestActor(spawnRecord: $0) }
+
+        registry.register(
+            actorIDs: actorTable
+                .filter {
+                    let category = ActorCategory(rawValue: $0.profile.category)
+                    return category == .enemy || category == .boss
+                }
+                .map(\.id)
+        ) { PlaceholderCombatActor(spawnRecord: $0) }
 
         return registry
     }

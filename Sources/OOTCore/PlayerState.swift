@@ -109,6 +109,7 @@ public struct PlayerState: Sendable, Equatable {
     public var velocity: Vec3f
     public var facingRadians: Float
     public var isGrounded: Bool
+    public var isStrafing: Bool
     public var locomotionState: PlayerLocomotionState
     public var animationState: PlayerAnimationState
     public var floorHeight: Float?
@@ -119,6 +120,7 @@ public struct PlayerState: Sendable, Equatable {
         velocity: Vec3f = Vec3f(x: 0, y: 0, z: 0),
         facingRadians: Float = 0,
         isGrounded: Bool = true,
+        isStrafing: Bool = false,
         locomotionState: PlayerLocomotionState = .idle,
         animationState: PlayerAnimationState = PlayerAnimationState(),
         floorHeight: Float? = nil,
@@ -128,6 +130,7 @@ public struct PlayerState: Sendable, Equatable {
         self.velocity = velocity
         self.facingRadians = facingRadians
         self.isGrounded = isGrounded
+        self.isStrafing = isStrafing
         self.locomotionState = locomotionState
         self.animationState = animationState
         self.floorHeight = floorHeight
@@ -176,21 +179,33 @@ extension PlayerState {
     func updating(
         input: ControllerInputState,
         movementReferenceYaw: Float?,
+        lockOnTargetPosition: SIMD3<Float>? = nil,
         collisionSystem: CollisionSystem?,
-        configuration: PlayerMovementConfiguration
+        configuration: PlayerMovementConfiguration,
+        forcedDisplacement: SIMD3<Float> = .zero
     ) -> PlayerState {
         let stick = input.stick.normalized
+        let lockOnYaw = lockOnTargetPosition.map { target in
+            let planarOffset = SIMD2<Float>(target.x - position.x, target.z - position.z)
+            guard simd_length_squared(planarOffset) > 0.000_1 else {
+                return facingRadians
+            }
+
+            return atan2(planarOffset.x, -planarOffset.y)
+        }
         let desiredDisplacement = desiredMovement(
             for: stick,
-            referenceYaw: movementReferenceYaw ?? facingRadians,
+            referenceYaw: lockOnYaw ?? movementReferenceYaw ?? facingRadians,
             configuration: configuration
-        )
+        ) + forcedDisplacement
 
         var nextPosition = position.simd
         var nextVelocity = velocity.simd
         var nextFacingRadians = facingRadians
 
-        if simd_length_squared(desiredDisplacement) > 0.000_1 {
+        if let lockOnYaw {
+            nextFacingRadians = lockOnYaw
+        } else if simd_length_squared(desiredDisplacement) > 0.000_1 {
             nextFacingRadians = atan2(desiredDisplacement.x, -desiredDisplacement.z)
         }
 
@@ -255,6 +270,7 @@ extension PlayerState {
             velocity: Vec3f(nextVelocity),
             facingRadians: nextFacingRadians,
             isGrounded: isGrounded,
+            isStrafing: lockOnTargetPosition != nil,
             locomotionState: locomotionState,
             animationState: animationState,
             floorHeight: floorHeight,

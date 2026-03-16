@@ -112,6 +112,25 @@ final class GameplayCameraTests: XCTestCase {
         XCTAssertLessThan(simd_distance(snapshot.eyePosition, snapshot.focusTarget), 120)
         XCTAssertEqual(snapshot.focusTarget.y, 58, accuracy: 0.000_1)
     }
+
+    func testLockOnModeFramesTargetBetweenPlayerAndEnemy() {
+        let controller = GameplayCameraController(
+            sceneBounds: sceneBounds,
+            configuration: GameplayCameraConfiguration(
+                playerPosition: SIMD3<Float>(0, 0, 0),
+                playerYaw: 0,
+                lockOnTargetPosition: SIMD3<Float>(0, 44, -96)
+            )
+        )
+
+        let snapshot = controller.advance()
+
+        XCTAssertEqual(snapshot.mode, .lockOn)
+        XCTAssertLessThan(snapshot.fieldOfView, Float.pi / 3.0)
+        XCTAssertLessThan(snapshot.focusTarget.z, 0)
+        XCTAssertGreaterThan(snapshot.eyePosition.z, snapshot.focusTarget.z)
+        XCTAssertGreaterThan(snapshot.eyePosition.y, 0)
+    }
 }
 
 private extension GameplayCameraTests {

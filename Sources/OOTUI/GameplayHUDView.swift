@@ -2,10 +2,12 @@ import AppKit
 import OOTContent
 import OOTCore
 import OOTDataModel
+import OOTRender
 import SwiftUI
 
 struct GameplayHUDView: View {
     let runtime: GameRuntime
+    let renderPayload: SceneRenderPayload?
 
     @State
     private var displayedRupees: Int
@@ -22,8 +24,12 @@ struct GameplayHUDView: View {
     @State
     private var heartFlashTask: Task<Void, Never>?
 
-    init(runtime: GameRuntime) {
+    init(
+        runtime: GameRuntime,
+        renderPayload: SceneRenderPayload? = nil
+    ) {
         self.runtime = runtime
+        self.renderPayload = renderPayload
         _displayedRupees = State(initialValue: runtime.hudState.rupees)
         _previousHealthUnits = State(initialValue: runtime.hudState.currentHealthUnits)
     }
@@ -73,6 +79,11 @@ struct GameplayHUDView: View {
                 }
                 .padding(.horizontal, 22)
                 .padding(.bottom, 24)
+
+                if let indicator = lockOnIndicator(in: geometry.size) {
+                    LockOnIndicatorView()
+                        .position(x: indicator.x, y: indicator.y)
+                }
             }
         }
         .allowsHitTesting(false)
@@ -100,6 +111,27 @@ struct GameplayHUDView: View {
 }
 
 private extension GameplayHUDView {
+    func lockOnIndicator(in viewportSize: CGSize) -> CGPoint? {
+        guard
+            let renderPayload,
+            let scene = runtime.loadedScene,
+            let playerState = runtime.playerState,
+            let target = runtime.combatState.lockOnTarget
+        else {
+            return nil
+        }
+
+        return LockOnIndicatorProjector.project(
+            target: target,
+            sceneBounds: renderPayload.baseScene.sceneBounds,
+            scene: scene,
+            playerState: playerState,
+            combatState: runtime.combatState,
+            itemGetSequence: runtime.itemGetSequence,
+            viewportSize: viewportSize
+        )
+    }
+
     var heartStates: [HUDHeartState] {
         let maximumContainers = min(20, max(1, (runtime.hudState.maximumHealthUnits + 1) / 2))
         return (0..<maximumContainers).map { index in
@@ -142,6 +174,52 @@ private extension GameplayHUDView {
                 try? await Task.sleep(for: .milliseconds(80))
             }
         }
+    }
+}
+
+enum LockOnIndicatorProjector {
+    static func project(
+        target: CombatTargetSnapshot,
+        sceneBounds: SceneBounds,
+        scene: LoadedScene,
+        playerState: PlayerState,
+        combatState: GameplayCombatState,
+        itemGetSequence: ItemGetSequenceState?,
+        viewportSize: CGSize
+    ) -> CGPoint? {
+        guard
+            let configuration = SceneRenderPayloadBuilder.makeGameplayCameraConfiguration(
+                scene: scene,
+                playerState: playerState,
+                combatState: combatState,
+                itemGetSequence: itemGetSequence
+            ),
+            let projection = GameplayCameraProjector.project(
+                worldPoint: target.focusPoint.simd + SIMD3<Float>(0, 16, 0),
+                sceneBounds: sceneBounds,
+                configuration: configuration,
+                viewportSize: viewportSize
+            )
+        else {
+            return nil
+        }
+
+        return CGPoint(
+            x: CGFloat(projection.viewportPoint.x),
+            y: CGFloat(projection.viewportPoint.y)
+        )
+    }
+}
+
+private struct LockOnIndicatorView: View {
+    var body: some View {
+        Image(systemName: "triangle.fill")
+            .resizable()
+            .scaledToFit()
+            .frame(width: 16, height: 14)
+            .foregroundStyle(Color(red: 0.98, green: 0.9, blue: 0.2))
+            .shadow(color: .black.opacity(0.7), radius: 2, y: 1)
+            .rotationEffect(.degrees(180))
     }
 }
 
