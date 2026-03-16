@@ -193,6 +193,11 @@ public enum TreasureChestReward: Sendable, Codable, Equatable {
     }
 }
 
+public enum ActorReward: Sendable, Codable, Equatable {
+    case chest(TreasureChestReward)
+    case goldSkulltulaToken
+}
+
 public struct TreasureChestParams: Sendable, Equatable {
     public var type: Int
     public var getItemID: Int
@@ -218,6 +223,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
     public var dungeonStateByScene: [SceneIdentity: DungeonInventoryState]
     public var openedTreasureFlags: Set<TreasureFlagKey>
     public var hasSlingshot: Bool
+    public var goldSkulltulaTokenCount: Int
     public var dekuNutCount: Int
     public var dekuNutCapacity: Int
     public var dekuStickCount: Int
@@ -229,6 +235,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         dungeonStateByScene: [SceneIdentity: DungeonInventoryState] = [:],
         openedTreasureFlags: Set<TreasureFlagKey> = [],
         hasSlingshot: Bool = false,
+        goldSkulltulaTokenCount: Int = 0,
         dekuNutCount: Int = 0,
         dekuNutCapacity: Int = 20,
         dekuStickCount: Int = 0,
@@ -239,6 +246,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         self.dungeonStateByScene = dungeonStateByScene
         self.openedTreasureFlags = openedTreasureFlags
         self.hasSlingshot = hasSlingshot
+        self.goldSkulltulaTokenCount = max(0, goldSkulltulaTokenCount)
         self.dekuNutCount = max(0, dekuNutCount)
         self.dekuNutCapacity = max(0, dekuNutCapacity)
         self.dekuStickCount = max(0, dekuStickCount)
@@ -298,6 +306,18 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         }
 
         dungeonStateByScene[scene] = dungeonState
+    }
+
+    public mutating func apply(
+        _ reward: ActorReward,
+        in scene: SceneIdentity
+    ) {
+        switch reward {
+        case .chest(let chestReward):
+            apply(chestReward, in: scene)
+        case .goldSkulltulaToken:
+            goldSkulltulaTokenCount += 1
+        }
     }
 }
 

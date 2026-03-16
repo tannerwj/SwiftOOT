@@ -372,6 +372,25 @@ public struct PlayState: Codable, Equatable, @unchecked Sendable {
         actorRuntimeHooks?.isTreasureOpened(key) ?? false
     }
 
+    @MainActor
+    public func requestSpawn(
+        _ actor: any Actor,
+        category: ActorCategory,
+        roomID: Int
+    ) {
+        actorRuntimeHooks?.requestSpawn(actor, category: category, roomID: roomID)
+    }
+
+    @MainActor
+    public func requestReward(_ reward: ActorReward) {
+        actorRuntimeHooks?.requestReward(reward)
+    }
+
+    @MainActor
+    public var currentPlayerState: PlayerState? {
+        actorRuntimeHooks?.currentPlayerState()
+    }
+
     public var currentSceneIdentity: SceneIdentity? {
         guard currentSceneName.isEmpty == false else {
             return nil
@@ -1049,6 +1068,12 @@ public final class GameRuntime {
             destroyHandler: { actor in
                 actorContext.requestDestroy(actor)
             },
+            spawnHandler: { actor, category, roomID in
+                actorContext.enqueueSpawn(actor, category: category, roomID: roomID)
+            },
+            playerStateProvider: { [weak self] in
+                self?.playerState
+            },
             messageHandler: { [weak self] messageID in
                 self?.enqueueMessage(id: messageID)
             },
@@ -1057,6 +1082,9 @@ public final class GameRuntime {
             },
             treasureQueryHandler: { [weak self] key in
                 self?.inventoryState.hasOpenedTreasure(key) ?? false
+            },
+            rewardHandler: { [weak self] reward in
+                self?.grantActorReward(reward)
             }
         )
         let basePlayState = playState ?? PlayState(
@@ -1382,6 +1410,16 @@ public final class GameRuntime {
         )
         playerState?.presentationMode = request.reward.playerPresentationMode
         return true
+    }
+
+    private func grantActorReward(_ reward: ActorReward) {
+        guard let scene = playState?.currentSceneIdentity else {
+            return
+        }
+
+        inventoryState.apply(reward, in: scene)
+        persistActiveSaveSlotState()
+        synchronizeHUDStateWithInventory()
     }
 
     private func advanceItemGetSequenceIfNeeded() {

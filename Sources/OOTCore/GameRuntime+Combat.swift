@@ -455,39 +455,66 @@ private extension GameRuntime {
                 continue
             }
 
-            let effect = actor.combatProfile.damageTable.effect(for: attack.element)
-            guard effect.damage > 0 else {
-                attack.hitTargets.insert(actorID)
-                continue
-            }
-
             let direction = normalizedDirection(
                 from: playerState.position.simd,
                 to: actor.position.simd,
                 fallbackYaw: playerState.facingRadians
             )
 
-            actor.hitPoints = max(0, actor.hitPoints - effect.damage)
-            var combatState = actor.combatState
-            combatState.invincibilityFramesRemaining = effect.invincibilityFrames
-            combatState.lastReceivedElement = attack.element
-            combatState.lastReceivedDamage = effect.damage
-            combatState.lastBlockedElement = nil
-            combatState.knockbackFramesRemaining = max(1, min(6, effect.invincibilityFrames / 2))
-            combatState.knockbackVelocity = Vec3f(
-                direction * (effect.knockbackDistance / Float(max(combatState.knockbackFramesRemaining, 1)))
+            let proposedHit = CombatHit(
+                source: .player,
+                element: attack.element,
+                direction: Vec3f(direction),
+                effect: actor.combatProfile.damageTable.effect(for: attack.element)
             )
-            actor.combatState = combatState
-            actor.combatDidReceiveHit(
-                CombatHit(
-                    source: .player,
-                    element: attack.element,
-                    direction: Vec3f(direction),
-                    effect: effect
-                ),
+
+            switch actor.combatHitResolution(
+                for: proposedHit,
+                attackerPosition: playerState.position,
                 playState: playState
-            )
-            attack.hitTargets.insert(actorID)
+            ) {
+            case .ignore:
+                attack.hitTargets.insert(actorID)
+                continue
+            case .block:
+                var combatState = actor.combatState
+                combatState.lastBlockedElement = attack.element
+                actor.combatState = combatState
+                actor.combatDidBlockHit(
+                    CombatHit(
+                        source: .player,
+                        element: attack.element,
+                        direction: Vec3f(direction),
+                        effect: proposedHit.effect,
+                        wasBlocked: true
+                    ),
+                    playState: playState
+                )
+                attack.hitTargets.insert(actorID)
+                continue
+            case .apply(let effect):
+                actor.hitPoints = max(0, actor.hitPoints - effect.damage)
+                var combatState = actor.combatState
+                combatState.invincibilityFramesRemaining = effect.invincibilityFrames
+                combatState.lastReceivedElement = attack.element
+                combatState.lastReceivedDamage = effect.damage
+                combatState.lastBlockedElement = nil
+                combatState.knockbackFramesRemaining = max(1, min(6, effect.invincibilityFrames / 2))
+                combatState.knockbackVelocity = Vec3f(
+                    direction * (effect.knockbackDistance / Float(max(combatState.knockbackFramesRemaining, 1)))
+                )
+                actor.combatState = combatState
+                actor.combatDidReceiveHit(
+                    CombatHit(
+                        source: .player,
+                        element: attack.element,
+                        direction: Vec3f(direction),
+                        effect: effect
+                    ),
+                    playState: playState
+                )
+                attack.hitTargets.insert(actorID)
+            }
         }
 
         activePlayerAttackState = attack

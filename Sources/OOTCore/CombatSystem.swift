@@ -304,6 +304,12 @@ public struct CombatAttackDefinition: Sendable, Equatable {
     }
 }
 
+public enum CombatHitResolution: Sendable, Equatable {
+    case ignore
+    case block
+    case apply(DamageEffect)
+}
+
 @MainActor
 public protocol TargetableActor: Actor {
     var targetingRange: Float { get }
@@ -323,6 +329,11 @@ public protocol CombatActor: DamageableActor, TargetableActor {
     var combatState: ActorCombatState { get set }
     var activeAttacks: [CombatAttackDefinition] { get }
 
+    func combatHitResolution(
+        for hit: CombatHit,
+        attackerPosition: Vec3f?,
+        playState: PlayState
+    ) -> CombatHitResolution
     func combatDidReceiveHit(_ hit: CombatHit, playState: PlayState)
     func combatDidBlockHit(_ hit: CombatHit, playState: PlayState)
 }
@@ -339,6 +350,27 @@ public extension CombatActor {
             radius: combatProfile.hurtboxRadius,
             height: combatProfile.hurtboxHeight
         )
+    }
+
+    func combatHitResolution(
+        for hit: CombatHit,
+        attackerPosition _: Vec3f?,
+        playState _: PlayState
+    ) -> CombatHitResolution {
+        if hit.element == .projectile, combatProfile.blocksProjectiles {
+            return .block
+        }
+
+        if hit.element.isMelee, combatProfile.deflectsMeleeAttacks {
+            return .block
+        }
+
+        let effect = combatProfile.damageTable.effect(for: hit.element)
+        guard effect.damage > 0 else {
+            return .ignore
+        }
+
+        return .apply(effect)
     }
 
     func combatDidReceiveHit(_ hit: CombatHit, playState: PlayState) {}
@@ -407,5 +439,16 @@ public enum CombatCollisionResolver {
         }
 
         return lhs.minimumY <= rhs.maximumY && rhs.minimumY <= lhs.maximumY
+    }
+}
+
+extension DamageElement {
+    var isMelee: Bool {
+        switch self {
+        case .swordSlash, .swordJump, .swordSpin, .melee:
+            return true
+        case .projectile:
+            return false
+        }
     }
 }
