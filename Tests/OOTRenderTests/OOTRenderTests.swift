@@ -31,7 +31,7 @@ final class OOTRenderTests: XCTestCase {
 
     func testFrameUniformsAndCombinerUniformsMatchMetalPacking() {
         XCTAssertEqual(MemoryLayout<FrameUniforms>.stride, 144)
-        XCTAssertEqual(MemoryLayout<CombinerUniforms>.stride, 144)
+        XCTAssertEqual(MemoryLayout<CombinerUniforms>.stride, 160)
     }
 
     func testRendererUsesN64VertexDescriptorLayout() throws {

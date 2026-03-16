@@ -142,6 +142,22 @@ final class OOTUITests: XCTestCase {
             payload: initialPayload,
             expectedSceneName: "spot04"
         )
+        let spot04Metrics = try renderSceneMetrics(payload: initialPayload)
+        XCTAssertLessThan(
+            spot04Metrics.clearSampleFraction,
+            0.80,
+            "Expected spot04 to render substantial scene content beyond the clear/background color."
+        )
+        XCTAssertLessThan(
+            spot04Metrics.nearWhiteSampleFraction,
+            0.55,
+            "Expected spot04 textured output to avoid the previous mostly-white failure mode."
+        )
+        XCTAssertGreaterThan(
+            spot04Metrics.opaqueSampleCount,
+            2_000,
+            "Expected spot04 to cover a meaningful portion of the frame with scene geometry."
+        )
 
         let alternateScene = try XCTUnwrap(
             runtime.availableScenes.first(where: { sceneName(for: $0) != "spot04" }),
@@ -168,9 +184,70 @@ final class OOTUITests: XCTestCase {
             expectedSceneName: sceneName(for: alternateScene)
         )
     }
+
+    func testRealSpot04RenderUsesTexturedSceneOutput() throws {
+        guard let contentRootPath = ProcessInfo.processInfo.environment["SWIFTOOT_REAL_CONTENT_ROOT"] else {
+            throw XCTSkip("Set SWIFTOOT_REAL_CONTENT_ROOT to run the real-content scene render validation.")
+        }
+
+        let contentRoot = URL(fileURLWithPath: contentRootPath, isDirectory: true)
+        let sceneLoader = SceneLoader(contentRoot: contentRoot)
+        let contentLoader = ContentLoader(sceneLoader: sceneLoader)
+        let manifest = try sceneLoader.loadSceneManifest(named: "spot04")
+        let scene = LoadedScene(
+            manifest: manifest,
+            actors: try sceneLoader.loadActors(for: manifest),
+            spawns: try sceneLoader.loadSpawns(for: manifest),
+            environment: try sceneLoader.loadEnvironment(for: manifest),
+            paths: try sceneLoader.loadPaths(for: manifest),
+            exits: try sceneLoader.loadExits(for: manifest),
+            sceneHeader: try sceneLoader.loadSceneHeader(for: manifest),
+            rooms: try manifest.rooms.map { room in
+                LoadedSceneRoom(
+                    manifest: room,
+                    displayList: try sceneLoader.loadRoomDisplayList(for: room),
+                    vertexData: try sceneLoader.loadRoomVertexData(for: room)
+                )
+            }
+        )
+        let textureAssetURLs = try sceneLoader.loadTextureAssetURLs(for: scene)
+        let payload = try SceneRenderPayloadBuilder.makePayload(
+            scene: scene,
+            textureAssetURLs: textureAssetURLs,
+            contentLoader: contentLoader
+        )
+
+        try assertRenderedSceneHasVisibleGeometry(
+            payload: payload,
+            expectedSceneName: "spot04"
+        )
+
+        let metrics = try renderSceneMetrics(payload: payload)
+        XCTAssertLessThan(
+            metrics.clearSampleFraction,
+            0.80,
+            "Expected spot04 to render substantial scene content beyond the clear/background color."
+        )
+        XCTAssertLessThan(
+            metrics.nearWhiteSampleFraction,
+            0.55,
+            "Expected spot04 textured output to avoid the previous mostly-white failure mode."
+        )
+        XCTAssertGreaterThan(
+            metrics.opaqueSampleCount,
+            2_000,
+            "Expected spot04 to cover a meaningful portion of the frame with scene geometry."
+        )
+    }
 }
 
 private extension OOTUITests {
+    struct RenderSceneMetrics {
+        let opaqueSampleCount: Int
+        let clearSampleFraction: Double
+        let nearWhiteSampleFraction: Double
+    }
+
     func makeLoadedScene() -> LoadedScene {
         LoadedScene(
             manifest: SceneManifest(
@@ -232,6 +309,71 @@ private extension OOTUITests {
         payload: SceneRenderPayload,
         expectedSceneName: String
     ) throws {
+        let (renderTarget, reportedStats) = try renderScene(payload: payload)
+
+        XCTAssertEqual(reportedStats.roomCount, payload.roomCount, "Unexpected room count for \(expectedSceneName)")
+        XCTAssertGreaterThan(reportedStats.vertexCount, 0, "Expected rendered vertices for \(expectedSceneName)")
+        XCTAssertGreaterThan(reportedStats.drawCallCount, 0, "Expected draw calls for \(expectedSceneName)")
+        XCTAssertTrue(
+            textureContainsNonClearPixel(renderTarget),
+            "Expected \(expectedSceneName) to render geometry beyond the clear color."
+        )
+    }
+
+    func renderSceneMetrics(
+        payload: SceneRenderPayload
+    ) throws -> RenderSceneMetrics {
+        let (renderTarget, _) = try renderScene(payload: payload)
+        let sampleStride = 4
+        let clearPixel = SIMD4<Int>(52, 155, 45, 255)
+        var opaqueSampleCount = 0
+        var clearSampleCount = 0
+        var nearWhiteSampleCount = 0
+        var totalSamples = 0
+
+        var bytes = [UInt8](repeating: 0, count: renderTarget.width * renderTarget.height * 4)
+        renderTarget.getBytes(
+            &bytes,
+            bytesPerRow: renderTarget.width * 4,
+            from: MTLRegionMake2D(0, 0, renderTarget.width, renderTarget.height),
+            mipmapLevel: 0
+        )
+
+        for y in stride(from: 0, to: renderTarget.height, by: sampleStride) {
+            for x in stride(from: 0, to: renderTarget.width, by: sampleStride) {
+                let offset = ((y * renderTarget.width) + x) * 4
+                let pixel = SIMD4<Int>(
+                    Int(bytes[offset]),
+                    Int(bytes[offset + 1]),
+                    Int(bytes[offset + 2]),
+                    Int(bytes[offset + 3])
+                )
+                totalSamples += 1
+
+                if pixel.w > 0 {
+                    opaqueSampleCount += 1
+                }
+                if abs(pixel.x - clearPixel.x) <= 8 &&
+                    abs(pixel.y - clearPixel.y) <= 8 &&
+                    abs(pixel.z - clearPixel.z) <= 8 {
+                    clearSampleCount += 1
+                }
+                if pixel.x >= 220 && pixel.y >= 220 && pixel.z >= 220 {
+                    nearWhiteSampleCount += 1
+                }
+            }
+        }
+
+        return RenderSceneMetrics(
+            opaqueSampleCount: opaqueSampleCount,
+            clearSampleFraction: Double(clearSampleCount) / Double(max(totalSamples, 1)),
+            nearWhiteSampleFraction: Double(nearWhiteSampleCount) / Double(max(totalSamples, 1))
+        )
+    }
+
+    func renderScene(
+        payload: SceneRenderPayload
+    ) throws -> (texture: MTLTexture, stats: SceneFrameStats) {
         guard MTLCreateSystemDefaultDevice() != nil else {
             throw XCTSkip("Metal is unavailable on this host")
         }
@@ -253,13 +395,7 @@ private extension OOTUITests {
             frameUniforms: renderer.orbitCameraController.frameUniforms()
         )
 
-        XCTAssertEqual(reportedStats.roomCount, payload.roomCount, "Unexpected room count for \(expectedSceneName)")
-        XCTAssertGreaterThan(reportedStats.vertexCount, 0, "Expected rendered vertices for \(expectedSceneName)")
-        XCTAssertGreaterThan(reportedStats.drawCallCount, 0, "Expected draw calls for \(expectedSceneName)")
-        XCTAssertTrue(
-            textureContainsNonClearPixel(renderTarget),
-            "Expected \(expectedSceneName) to render geometry beyond the clear color."
-        )
+        return (renderTarget, reportedStats)
     }
 
     func makeRenderTargetTexture(device: MTLDevice) throws -> MTLTexture {

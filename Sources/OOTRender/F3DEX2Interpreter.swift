@@ -28,6 +28,7 @@ public final class F3DEX2Interpreter {
     private let warningSink: (String) -> Void
     private var rawCombineMode: CombineMode
     private var hasExplicitCombineMode: Bool
+    private var texturesByTMEM: [UInt16: MTLTexture]
 
     public init(
         rspState: RSPState = RSPState(),
@@ -56,6 +57,7 @@ public final class F3DEX2Interpreter {
         self.warningSink = warningSink
         self.rawCombineMode = CombineMode(colorMux: 0, alphaMux: 0)
         self.hasExplicitCombineMode = false
+        self.texturesByTMEM = [:]
         self.drawBatch = DrawBatch(
             renderStateKey: Self.renderStateKey(
                 geometryMode: rspState.geometryMode,
@@ -121,6 +123,7 @@ public final class F3DEX2Interpreter {
                 if textureState.enabled == false {
                     drawBatch.texel0Texture = nil
                     drawBatch.texel1Texture = nil
+                    texturesByTMEM.removeAll(keepingCapacity: true)
                 }
             case .dpSetTextureImage(let descriptor):
                 textureImage = descriptor
@@ -399,7 +402,9 @@ private extension F3DEX2Interpreter {
             drawBatch.combinerUniforms = CombinerUniforms(
                 rdpState: rdpState,
                 geometryMode: rspState.geometryMode,
-                textureScale: Self.textureScale(for: rspState.textureState)
+                textureScale: Self.textureScale(for: rspState.textureState),
+                texel0Clamp: clampMode(for: rspState.textureState.tile),
+                texel1Clamp: clampMode(for: rspState.textureState.tile &+ 1)
             )
             if let environmentFogColor {
                 drawBatch.combinerUniforms.fogColor = environmentFogColor
@@ -407,17 +412,25 @@ private extension F3DEX2Interpreter {
         } else {
             drawBatch.combinerUniforms = CombinerUniforms()
         }
+
+        synchronizeTextures()
     }
 
     func synchronizeTextures() {
-        guard rspState.textureState.enabled, let textureImage else {
+        guard rspState.textureState.enabled else {
             drawBatch.texel0Texture = nil
             drawBatch.texel1Texture = nil
             return
         }
 
-        drawBatch.texel0Texture = textureResolver(textureImage.address)
-        drawBatch.texel1Texture = nil
+        if let textureImage,
+           let texture = textureResolver(textureImage.address),
+           let loadedTile = loadedTileDescriptor() {
+            texturesByTMEM[loadedTile.tmem] = texture
+        }
+
+        drawBatch.texel0Texture = texture(forRenderTile: rspState.textureState.tile)
+        drawBatch.texel1Texture = texture(forRenderTile: rspState.textureState.tile &+ 1)
     }
 
     func flushPendingTriangles(encoder: MTLRenderCommandEncoder) throws {
@@ -498,6 +511,37 @@ private extension F3DEX2Interpreter {
         let scaleS = textureState.scaleS == 0 ? 1.0 : Float(textureState.scaleS) / 65_536.0
         let scaleT = textureState.scaleT == 0 ? 1.0 : Float(textureState.scaleT) / 65_536.0
         return SIMD2<Float>(scaleS, scaleT)
+    }
+
+    func loadedTileDescriptor() -> TileDescriptor? {
+        if let lastLoadBlock {
+            return try? rdpState.tileDescriptor(at: Int(lastLoadBlock.tile))
+        }
+
+        if let lastLoadTile {
+            return try? rdpState.tileDescriptor(at: Int(lastLoadTile.tile))
+        }
+
+        return nil
+    }
+
+    func texture(forRenderTile tile: UInt8) -> MTLTexture? {
+        guard let descriptor = try? rdpState.tileDescriptor(at: Int(tile)) else {
+            return nil
+        }
+
+        return texturesByTMEM[descriptor.tmem]
+    }
+
+    func clampMode(for tile: UInt8) -> SIMD2<UInt32> {
+        guard let descriptor = try? rdpState.tileDescriptor(at: Int(tile)) else {
+            return .zero
+        }
+
+        return SIMD2<UInt32>(
+            descriptor.clampS ? 1 : 0,
+            descriptor.clampT ? 1 : 0
+        )
     }
 }
 

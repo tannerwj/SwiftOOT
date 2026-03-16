@@ -256,6 +256,9 @@ private struct StubSceneLoader: SceneLoading {
     func loadSceneManifest(id: Int) throws -> SceneManifest { throw SceneLoaderError.unknownSceneID(id) }
     func loadSceneManifest(named name: String) throws -> SceneManifest { throw SceneLoaderError.missingFile(name) }
     func loadActorTable() throws -> [ActorTableEntry] { [] }
+    func loadObjectTable() throws -> [ObjectTableEntry] { [] }
+    func loadObject(named name: String) throws -> LoadedObject { throw SceneLoaderError.missingFile(name) }
+    func loadEntranceTable() throws -> [EntranceTableEntry] { [] }
     func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh? { nil }
     func loadRoomDisplayList(for room: RoomManifest) throws -> [F3DEX2Command] { [] }
     func loadRoomVertexData(for room: RoomManifest) throws -> Data { Data() }

@@ -93,7 +93,16 @@ public enum CombinerSourceSelector: UInt32, Sendable {
     case shade = 4
     case environment = 5
     case one = 6
-    case noise = 7
+    case combinedAlpha = 7
+    case texel0Alpha = 8
+    case texel1Alpha = 9
+    case primitiveAlpha = 10
+    case shadeAlpha = 11
+    case environmentAlpha = 12
+    case lodFraction = 13
+    case primLodFraction = 14
+    case k5 = 15
+    case noise = 16
     case zero = 31
 }
 
@@ -110,7 +119,8 @@ public struct CombinerUniforms: Sendable, Equatable {
     public var alphaCompareMode: UInt32
     public var geometryMode: UInt32
     public var renderMode: UInt32
-    public var reserved: SIMD2<UInt32>
+    public var texel0Clamp: SIMD2<UInt32>
+    public var texel1Clamp: SIMD2<UInt32>
 
     public init(
         cycle1ColorSelectors: SIMD4<UInt32> = SIMD4<UInt32>(
@@ -145,7 +155,8 @@ public struct CombinerUniforms: Sendable, Equatable {
         alphaCompareMode: UInt32 = 0,
         geometryMode: UInt32 = 0,
         renderMode: UInt32 = 0,
-        reserved: SIMD2<UInt32> = .zero
+        texel0Clamp: SIMD2<UInt32> = .zero,
+        texel1Clamp: SIMD2<UInt32> = .zero
     ) {
         self.cycle1ColorSelectors = cycle1ColorSelectors
         self.cycle1AlphaSelectors = cycle1AlphaSelectors
@@ -159,13 +170,16 @@ public struct CombinerUniforms: Sendable, Equatable {
         self.alphaCompareMode = alphaCompareMode
         self.geometryMode = geometryMode
         self.renderMode = renderMode
-        self.reserved = reserved
+        self.texel0Clamp = texel0Clamp
+        self.texel1Clamp = texel1Clamp
     }
 
     public init(
         rdpState: RDPState,
         geometryMode: GeometryMode = [],
-        textureScale: SIMD2<Float> = SIMD2<Float>(repeating: 1.0)
+        textureScale: SIMD2<Float> = SIMD2<Float>(repeating: 1.0),
+        texel0Clamp: SIMD2<UInt32> = .zero,
+        texel1Clamp: SIMD2<UInt32> = .zero
     ) {
         self.init(
             cycle1ColorSelectors: Self.normalizedColorSelectors(for: rdpState.combineMode.firstCycle.color),
@@ -179,7 +193,9 @@ public struct CombinerUniforms: Sendable, Equatable {
             alphaCompareThreshold: Float(rdpState.blendColor.alpha) / 255.0,
             alphaCompareMode: Self.alphaCompareMode(from: rdpState.otherMode),
             geometryMode: geometryMode.rawValue,
-            renderMode: rdpState.renderMode.flags
+            renderMode: rdpState.renderMode.flags,
+            texel0Clamp: texel0Clamp,
+            texel1Clamp: texel1Clamp
         )
     }
 
@@ -187,10 +203,10 @@ public struct CombinerUniforms: Sendable, Equatable {
         for selectors: RDPCombineSelectorGroup
     ) -> SIMD4<UInt32> {
         SIMD4<UInt32>(
-            normalizedColorSelector(selectors.a),
-            normalizedColorSelector(selectors.b),
-            normalizedColorSelector(selectors.c),
-            normalizedColorSelector(selectors.d)
+            normalizedColorSelectorForA(selectors.a),
+            normalizedColorSelectorForB(selectors.b),
+            normalizedColorSelectorForC(selectors.c),
+            normalizedColorSelectorForD(selectors.d)
         )
     }
 
@@ -205,7 +221,7 @@ public struct CombinerUniforms: Sendable, Equatable {
         )
     }
 
-    private static func normalizedColorSelector(_ selector: UInt8) -> UInt32 {
+    private static func normalizedColorSelectorForA(_ selector: UInt8) -> UInt32 {
         switch selector {
         case 0:
             return CombinerSourceSelector.combined.rawValue
@@ -222,8 +238,76 @@ public struct CombinerUniforms: Sendable, Equatable {
         case 6:
             return CombinerSourceSelector.one.rawValue
         case 7:
-            return CombinerSourceSelector.noise.rawValue
+            return CombinerSourceSelector.combinedAlpha.rawValue
+        case 15, 31:
+            return CombinerSourceSelector.zero.rawValue
+        default:
+            return CombinerSourceSelector.zero.rawValue
+        }
+    }
+
+    private static func normalizedColorSelectorForB(_ selector: UInt8) -> UInt32 {
+        normalizedColorSelectorForA(selector)
+    }
+
+    private static func normalizedColorSelectorForC(_ selector: UInt8) -> UInt32 {
+        switch selector {
+        case 0:
+            return CombinerSourceSelector.combined.rawValue
+        case 1:
+            return CombinerSourceSelector.texel0.rawValue
+        case 2:
+            return CombinerSourceSelector.texel1.rawValue
+        case 3:
+            return CombinerSourceSelector.primitive.rawValue
+        case 4:
+            return CombinerSourceSelector.shade.rawValue
+        case 5:
+            return CombinerSourceSelector.environment.rawValue
+        case 6:
+            return CombinerSourceSelector.one.rawValue
+        case 7:
+            return CombinerSourceSelector.combinedAlpha.rawValue
+        case 8:
+            return CombinerSourceSelector.texel0Alpha.rawValue
+        case 9:
+            return CombinerSourceSelector.texel1Alpha.rawValue
+        case 10:
+            return CombinerSourceSelector.primitiveAlpha.rawValue
+        case 11:
+            return CombinerSourceSelector.shadeAlpha.rawValue
+        case 12:
+            return CombinerSourceSelector.environmentAlpha.rawValue
+        case 13:
+            return CombinerSourceSelector.lodFraction.rawValue
+        case 14:
+            return CombinerSourceSelector.primLodFraction.rawValue
+        case 15:
+            return CombinerSourceSelector.k5.rawValue
         case 31:
+            return CombinerSourceSelector.zero.rawValue
+        default:
+            return CombinerSourceSelector.zero.rawValue
+        }
+    }
+
+    private static func normalizedColorSelectorForD(_ selector: UInt8) -> UInt32 {
+        switch selector {
+        case 0:
+            return CombinerSourceSelector.combined.rawValue
+        case 1:
+            return CombinerSourceSelector.texel0.rawValue
+        case 2:
+            return CombinerSourceSelector.texel1.rawValue
+        case 3:
+            return CombinerSourceSelector.primitive.rawValue
+        case 4:
+            return CombinerSourceSelector.shade.rawValue
+        case 5:
+            return CombinerSourceSelector.environment.rawValue
+        case 6:
+            return CombinerSourceSelector.one.rawValue
+        case 7, 31:
             return CombinerSourceSelector.zero.rawValue
         default:
             return CombinerSourceSelector.zero.rawValue

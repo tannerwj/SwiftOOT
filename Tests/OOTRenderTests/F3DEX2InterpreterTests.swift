@@ -208,6 +208,169 @@ final class F3DEX2InterpreterTests: XCTestCase {
         XCTAssertTrue(interpreter.drawBatch.texel0Texture === expectedTexture)
         XCTAssertEqual(interpreter.drawBatch.drawCallCount, 1)
     }
+
+    func testTextureLoadBlockBindsSecondaryTextureFromAdjacentRenderTile() throws {
+        let context = try makeRenderContext()
+        var segmentTable = SegmentTable()
+        try segmentTable.setSegment(0x01, data: encodeVertices(makeTriangleVertices()))
+        let primaryAssetID = OOTAssetID.stableID(for: "spot04_room_1_00004EA8_Tex")
+        let secondaryAssetID = OOTAssetID.stableID(for: "spot04_room_1_000052A8_Tex")
+        let primaryTexture = try makeSourceTexture(device: context.resources.device)
+        let secondaryTexture = try makeSourceTexture(device: context.resources.device)
+        let interpreter = F3DEX2Interpreter(
+            segmentTable: segmentTable,
+            drawBatchResources: context.resources,
+            textureResolver: { resolvedAssetID in
+                switch resolvedAssetID {
+                case primaryAssetID:
+                    return primaryTexture
+                case secondaryAssetID:
+                    return secondaryTexture
+                default:
+                    return nil
+                }
+            }
+        )
+
+        try interpreter.interpret(
+            [
+                .spTexture(TextureState(scaleS: 0xFFFF, scaleT: 0xFFFF, level: 0, tile: 0, enabled: true)),
+                .dpSetTextureImage(
+                    ImageDescriptor(
+                        format: .rgba16,
+                        texelSize: .bits16,
+                        width: 32,
+                        address: primaryAssetID
+                    )
+                ),
+                .dpSetTile(
+                    TileDescriptor(
+                        format: .rgba16,
+                        texelSize: .bits16,
+                        line: 0,
+                        tmem: 0,
+                        tile: 7,
+                        palette: 0,
+                        clampS: false,
+                        mirrorS: false,
+                        maskS: 5,
+                        shiftS: 0,
+                        clampT: false,
+                        mirrorT: false,
+                        maskT: 5,
+                        shiftT: 0
+                    )
+                ),
+                .dpLoadBlock(LoadBlockCommand(tile: 7, upperLeftS: 0, upperLeftT: 0, texelCount: 255, dxt: 16)),
+                .dpSetTile(
+                    TileDescriptor(
+                        format: .rgba16,
+                        texelSize: .bits16,
+                        line: 8,
+                        tmem: 0,
+                        tile: 0,
+                        palette: 0,
+                        clampS: false,
+                        mirrorS: false,
+                        maskS: 5,
+                        shiftS: 0,
+                        clampT: false,
+                        mirrorT: false,
+                        maskT: 5,
+                        shiftT: 0
+                    )
+                ),
+                .dpSetTextureImage(
+                    ImageDescriptor(
+                        format: .rgba16,
+                        texelSize: .bits16,
+                        width: 32,
+                        address: secondaryAssetID
+                    )
+                ),
+                .dpSetTile(
+                    TileDescriptor(
+                        format: .rgba16,
+                        texelSize: .bits16,
+                        line: 0,
+                        tmem: 256,
+                        tile: 7,
+                        palette: 0,
+                        clampS: false,
+                        mirrorS: false,
+                        maskS: 5,
+                        shiftS: 0,
+                        clampT: false,
+                        mirrorT: false,
+                        maskT: 5,
+                        shiftT: 0
+                    )
+                ),
+                .dpLoadBlock(LoadBlockCommand(tile: 7, upperLeftS: 0, upperLeftT: 0, texelCount: 255, dxt: 16)),
+                .dpSetTile(
+                    TileDescriptor(
+                        format: .rgba16,
+                        texelSize: .bits16,
+                        line: 8,
+                        tmem: 256,
+                        tile: 1,
+                        palette: 0,
+                        clampS: false,
+                        mirrorS: false,
+                        maskS: 5,
+                        shiftS: 0,
+                        clampT: false,
+                        mirrorT: false,
+                        maskT: 5,
+                        shiftT: 0
+                    )
+                ),
+                .spVertex(VertexCommand(address: 0x0100_0000, count: 3, destinationIndex: 0)),
+                .sp1Triangle(TriangleCommand(vertex0: 0, vertex1: 1, vertex2: 2)),
+                .spEndDisplayList,
+            ],
+            encoder: context.encoder
+        )
+
+        context.encoder.endEncoding()
+        context.commandBuffer.commit()
+        context.commandBuffer.waitUntilCompleted()
+
+        XCTAssertTrue(interpreter.drawBatch.texel0Texture === primaryTexture)
+        XCTAssertTrue(interpreter.drawBatch.texel1Texture === secondaryTexture)
+    }
+
+    func testSpot04CombineModeDoesNotTreatTruncatedZeroSelectorsAsNoise() throws {
+        let context = try makeRenderContext()
+        let interpreter = F3DEX2Interpreter(drawBatchResources: context.resources)
+
+        try interpreter.interpret(
+            [
+                .dpSetCombineMode(
+                    CombineMode(
+                        colorMux: 0x0012_7E03,
+                        alphaMux: 0xFFFF_FFF8
+                    )
+                ),
+                .spEndDisplayList,
+            ],
+            encoder: context.encoder
+        )
+
+        context.encoder.endEncoding()
+        context.commandBuffer.commit()
+        context.commandBuffer.waitUntilCompleted()
+
+        XCTAssertEqual(
+            interpreter.drawBatch.combinerUniforms.cycle1ColorSelectors,
+            SIMD4<UInt32>(
+                CombinerSourceSelector.texel0.rawValue,
+                CombinerSourceSelector.zero.rawValue,
+                CombinerSourceSelector.shade.rawValue,
+                CombinerSourceSelector.zero.rawValue
+            )
+        )
+    }
 }
 
 private extension F3DEX2InterpreterTests {

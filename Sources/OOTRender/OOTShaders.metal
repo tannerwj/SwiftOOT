@@ -38,7 +38,8 @@ struct CombinerUniforms {
     uint alphaCompareMode;
     uint geometryMode;
     uint renderMode;
-    uint2 reserved;
+    uint2 texel0Clamp;
+    uint2 texel1Clamp;
 };
 
 struct N64VertexIn {
@@ -153,7 +154,16 @@ constant uint kCombinerPrimitive = 3;
 constant uint kCombinerShade = 4;
 constant uint kCombinerEnvironment = 5;
 constant uint kCombinerOne = 6;
-constant uint kCombinerNoise = 7;
+constant uint kCombinerCombinedAlpha = 7;
+constant uint kCombinerTexel0Alpha = 8;
+constant uint kCombinerTexel1Alpha = 9;
+constant uint kCombinerPrimitiveAlpha = 10;
+constant uint kCombinerShadeAlpha = 11;
+constant uint kCombinerEnvironmentAlpha = 12;
+constant uint kCombinerLodFraction = 13;
+constant uint kCombinerPrimLodFraction = 14;
+constant uint kCombinerK5 = 15;
+constant uint kCombinerNoise = 16;
 constant uint kCombinerZero = 31;
 constant uint kAlphaCompareThreshold = 1;
 float combinerNoise(float2 samplePoint) {
@@ -185,6 +195,24 @@ float4 combinerSource(
         return environmentColor;
     case kCombinerOne:
         return 1.0;
+    case kCombinerCombinedAlpha:
+        return combinedColor.aaaa;
+    case kCombinerTexel0Alpha:
+        return texel0.aaaa;
+    case kCombinerTexel1Alpha:
+        return texel1.aaaa;
+    case kCombinerPrimitiveAlpha:
+        return primitiveColor.aaaa;
+    case kCombinerShadeAlpha:
+        return shadeColor.aaaa;
+    case kCombinerEnvironmentAlpha:
+        return environmentColor.aaaa;
+    case kCombinerLodFraction:
+        return 0.0;
+    case kCombinerPrimLodFraction:
+        return primitiveColor.aaaa;
+    case kCombinerK5:
+        return 0.0;
     case kCombinerNoise:
         return noiseColor;
     case kCombinerZero:
@@ -219,6 +247,24 @@ float combinerAlphaSource(
         return environmentColor;
     case kCombinerOne:
         return 1.0;
+    case kCombinerCombinedAlpha:
+        return combinedColor;
+    case kCombinerTexel0Alpha:
+        return texel0;
+    case kCombinerTexel1Alpha:
+        return texel1;
+    case kCombinerPrimitiveAlpha:
+        return primitiveColor;
+    case kCombinerShadeAlpha:
+        return shadeColor;
+    case kCombinerEnvironmentAlpha:
+        return environmentColor;
+    case kCombinerLodFraction:
+        return 0.0;
+    case kCombinerPrimLodFraction:
+        return primitiveColor;
+    case kCombinerK5:
+        return 0.0;
     case kCombinerNoise:
         return noiseValue;
     case kCombinerZero:
@@ -334,6 +380,27 @@ float evaluateAlphaCycle(
     return clamp((a - b) * c + d, 0.0, 1.0);
 }
 
+float2 normalizeTexCoord(
+    float2 texCoord,
+    texture2d<half> texture,
+    uint2 clampMode
+) {
+    float2 dimensions = float2(
+        max(float(texture.get_width()), 1.0),
+        max(float(texture.get_height()), 1.0)
+    );
+    float2 normalized = texCoord / dimensions;
+    float2 halfTexel = 0.5 / dimensions;
+
+    normalized.x = clampMode.x != 0u
+        ? clamp(normalized.x, halfTexel.x, 1.0 - halfTexel.x)
+        : fract(normalized.x);
+    normalized.y = clampMode.y != 0u
+        ? clamp(normalized.y, halfTexel.y, 1.0 - halfTexel.y)
+        : fract(normalized.y);
+    return normalized;
+}
+
 fragment float4 oot_combiner_fragment(
     VertexOut in [[stage_in]],
     constant FrameUniforms& frameUniforms [[buffer(1)]],
@@ -343,8 +410,10 @@ fragment float4 oot_combiner_fragment(
 ) {
     constexpr sampler textureSampler(coord::normalized, address::clamp_to_edge, filter::nearest);
 
-    float4 texel0 = float4(texel0Texture.sample(textureSampler, in.texCoord));
-    float4 texel1 = float4(texel1Texture.sample(textureSampler, in.texCoord));
+    float2 texel0Coord = normalizeTexCoord(in.texCoord, texel0Texture, combinerUniforms.texel0Clamp);
+    float2 texel1Coord = normalizeTexCoord(in.texCoord, texel1Texture, combinerUniforms.texel1Clamp);
+    float4 texel0 = float4(texel0Texture.sample(textureSampler, texel0Coord));
+    float4 texel1 = float4(texel1Texture.sample(textureSampler, texel1Coord));
     float noiseValue = combinerNoise(in.position.xy + in.texCoord);
     float4 noiseColor = float4(noiseValue);
 
