@@ -6,11 +6,39 @@ import OOTDataModel
 
 final class OOTContentTests: XCTestCase {
     func testContentLoaderConformsToProtocol() {
-        let loader: any ContentLoading = ContentLoader(
-            contentRoot: URL(fileURLWithPath: "/tmp", isDirectory: true)
-        )
+        let loader: any ContentLoading = ContentLoader(sceneLoader: StubSceneLoader())
 
         XCTAssertNotNil(loader)
+    }
+
+    func testConfiguredContentRootAcceptsDirectContentSelection() throws {
+        let fixture = try ContentRootFixture()
+        defer { fixture.cleanup() }
+
+        XCTAssertEqual(
+            ContentRootConfiguration.resolveConfiguredContentRoot(from: fixture.contentRoot),
+            fixture.contentRoot
+        )
+    }
+
+    func testConfiguredContentRootAcceptsRepoRootSelection() throws {
+        let fixture = try ContentRootFixture()
+        defer { fixture.cleanup() }
+
+        XCTAssertEqual(
+            ContentRootConfiguration.resolveConfiguredContentRoot(from: fixture.repoRoot),
+            fixture.contentRoot
+        )
+    }
+
+    func testConfiguredContentRootRejectsDirectoriesWithoutSceneTable() throws {
+        let fixture = try ContentRootFixture()
+        defer { fixture.cleanup() }
+
+        let invalidRoot = fixture.repoRoot.appendingPathComponent("Missing", isDirectory: true)
+        try FileManager.default.createDirectory(at: invalidRoot, withIntermediateDirectories: true)
+
+        XCTAssertNil(ContentRootConfiguration.resolveConfiguredContentRoot(from: invalidRoot))
     }
 
     func testBinaryDecoderMapsRGBAFormatsToRGBA8Textures() throws {
@@ -216,6 +244,55 @@ final class OOTContentTests: XCTestCase {
             mipmapLevel: 0
         )
         return pixels
+    }
+}
+
+private struct StubSceneLoader: SceneLoading {
+    func loadSceneTableEntries() throws -> [SceneTableEntry] { [] }
+    func resolveSceneDirectory(for _: Int) throws -> URL { URL(fileURLWithPath: "/tmp") }
+    func loadScene(id: Int) throws -> LoadedScene { throw SceneLoaderError.unknownSceneID(id) }
+    func loadScene(named name: String) throws -> LoadedScene { throw SceneLoaderError.missingFile(name) }
+    func loadTextureAssetURLs(for scene: LoadedScene) throws -> [UInt32: URL] { [:] }
+    func loadSceneManifest(id: Int) throws -> SceneManifest { throw SceneLoaderError.unknownSceneID(id) }
+    func loadSceneManifest(named name: String) throws -> SceneManifest { throw SceneLoaderError.missingFile(name) }
+    func loadActorTable() throws -> [ActorTableEntry] { [] }
+    func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh? { nil }
+    func loadRoomDisplayList(for room: RoomManifest) throws -> [F3DEX2Command] { [] }
+    func loadRoomVertexData(for room: RoomManifest) throws -> Data { Data() }
+}
+
+private struct ContentRootFixture {
+    let repoRoot: URL
+    let contentRoot: URL
+
+    init() throws {
+        let fileManager = FileManager.default
+        repoRoot = fileManager.temporaryDirectory.appendingPathComponent(
+            "OOTContentRootFixture-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        contentRoot = repoRoot
+            .appendingPathComponent("Content", isDirectory: true)
+            .appendingPathComponent("OOT", isDirectory: true)
+
+        try fileManager.createDirectory(
+            at: contentRoot
+                .appendingPathComponent("Manifests", isDirectory: true)
+                .appendingPathComponent("tables", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+
+        try Data("[]".utf8).write(
+            to: contentRoot
+                .appendingPathComponent("Manifests", isDirectory: true)
+                .appendingPathComponent("tables", isDirectory: true)
+                .appendingPathComponent("scene-table.json"),
+            options: .atomic
+        )
+    }
+
+    func cleanup() {
+        try? FileManager.default.removeItem(at: repoRoot)
     }
 }
 

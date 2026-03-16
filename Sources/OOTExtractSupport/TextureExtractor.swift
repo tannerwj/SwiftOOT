@@ -506,10 +506,14 @@ private extension TextureExtractor {
         sourceRoot: URL,
         fileManager: FileManager
     ) throws -> URL? {
-        let directDirectories = [
-            sourceRoot.appendingPathComponent("build", isDirectory: true).appendingPathComponent(assetDirectory, isDirectory: true),
-            sourceRoot.appendingPathComponent(assetDirectory, isDirectory: true),
-        ]
+        let directDirectories =
+            [
+                sourceRoot.appendingPathComponent("build", isDirectory: true).appendingPathComponent(assetDirectory, isDirectory: true),
+                sourceRoot.appendingPathComponent(assetDirectory, isDirectory: true),
+            ]
+            + extractedRoots(in: sourceRoot, fileManager: fileManager).map {
+                $0.appendingPathComponent(assetDirectory, isDirectory: true)
+            }
 
         for directory in directDirectories where fileManager.fileExists(atPath: directory.path) {
             for fileExtension in preferredExtensions {
@@ -520,10 +524,12 @@ private extension TextureExtractor {
             }
         }
 
-        let searchRoots = [
-            sourceRoot.appendingPathComponent("build", isDirectory: true),
-            sourceRoot,
-        ]
+        let searchRoots =
+            [
+                sourceRoot.appendingPathComponent("build", isDirectory: true),
+            ]
+            + extractedRoots(in: sourceRoot, fileManager: fileManager)
+            + [sourceRoot]
 
         for searchRoot in searchRoots where fileManager.fileExists(atPath: searchRoot.path) {
             if let match = try firstMatchingSource(
@@ -537,6 +543,31 @@ private extension TextureExtractor {
         }
 
         return nil
+    }
+
+    static func extractedRoots(in sourceRoot: URL, fileManager: FileManager) -> [URL] {
+        let extractedRoot = sourceRoot.appendingPathComponent("extracted", isDirectory: true)
+        guard fileManager.fileExists(atPath: extractedRoot.path) else {
+            return []
+        }
+
+        guard let children = try? fileManager.contentsOfDirectory(
+            at: extractedRoot,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return []
+        }
+
+        return children.compactMap { child in
+            guard
+                let values = try? child.resourceValues(forKeys: [.isDirectoryKey]),
+                values.isDirectory == true
+            else {
+                return nil
+            }
+            return child
+        }.sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
     static func parseSourceBackedTextureSourceGroups(

@@ -87,8 +87,7 @@ Symphony is the execution layer for issue work. Linear is the queue.
 - `In Progress`: worker is active
 - `Human Review`: branch/PR is ready for review
 - `Rework`: reviewer found issues; Symphony should continue on the existing branch, workspace, and PR by default
-- `Merging`: approved and ready to land
-- `Done`: merged
+- `Done`: human merged the PR and moved the issue here
 
 ### Agent Issue Checklist
 
@@ -222,7 +221,8 @@ At minimum:
 
 If the branch is acceptable:
 
-- move the issue to `Merging`
+- approve and merge the PR on GitHub
+- move the issue to `Done` in Linear
 
 If the branch is not acceptable:
 

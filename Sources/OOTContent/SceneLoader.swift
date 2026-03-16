@@ -233,7 +233,6 @@ public enum SceneLoaderError: Error, LocalizedError, Equatable, Sendable {
 private extension SceneLoader {
     static let legacyManifestFilename = "scene_manifest.json"
     static let manifestFilename = "SceneManifest.json"
-    static let contentRootEnvironmentVariable = "SWIFTOOT_CONTENT_ROOT"
 
     static func defaultContentRoot() -> URL {
         cachedDefaultContentRoot
@@ -250,9 +249,12 @@ private extension SceneLoader {
             .appendingPathComponent("Content", isDirectory: true)
             .appendingPathComponent("OOT", isDirectory: true)
 
-        if let configuredRoot = environment[contentRootEnvironmentVariable] {
+        if let configuredRoot = environment[ContentRootConfiguration.contentRootEnvironmentVariable] {
             let configuredURL = URL(fileURLWithPath: configuredRoot, isDirectory: true)
-            if let resolved = resolveContentRoot(from: configuredURL, fileManager: fileManager) {
+            if let resolved = ContentRootConfiguration.resolveConfiguredContentRoot(
+                from: configuredURL,
+                fileManager: fileManager
+            ) {
                 return resolved
             }
         }
@@ -445,11 +447,7 @@ private extension SceneLoader {
     }
 
     static func hasSceneTable(at contentRoot: URL, fileManager: FileManager) -> Bool {
-        let sceneTableURL = contentRoot
-            .appendingPathComponent("Manifests", isDirectory: true)
-            .appendingPathComponent("tables", isDirectory: true)
-            .appendingPathComponent("scene-table.json")
-        return fileManager.fileExists(atPath: sceneTableURL.path)
+        ContentRootConfiguration.isContentRoot(contentRoot, fileManager: fileManager)
     }
 
     func loadOptionalJSON<T: Decodable>(_ type: T.Type, fromRelativePath relativePath: String?) throws -> T? {
