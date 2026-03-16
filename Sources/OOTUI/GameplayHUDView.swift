@@ -444,12 +444,29 @@ private struct HUDButtonOrb: View {
 private struct SceneMinimapView: View {
     let runtime: GameRuntime
 
+    private var model: SceneMinimapModel {
+        SceneMinimapModel(
+            scene: runtime.loadedScene,
+            currentRoomID: runtime.playState?.currentRoomID,
+            playerState: runtime.playerState
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(sceneTitle)
-                .font(.system(size: 11, weight: .black, design: .rounded))
-                .foregroundStyle(.white.opacity(0.82))
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.sceneTitle)
+                    .font(.system(size: 11, weight: .black, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.82))
+                    .lineLimit(1)
+
+                if let roomLabel = model.roomLabel {
+                    Text(roomLabel)
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.56))
+                        .tracking(0.6)
+                }
+            }
 
             GeometryReader { geometry in
                 ZStack {
@@ -466,18 +483,40 @@ private struct SceneMinimapView: View {
                         .strokeBorder(.white.opacity(0.16), lineWidth: 1)
                         .padding(10)
 
-                    Path { path in
-                        let insetBounds = geometry.frame(in: .local).insetBy(dx: 16, dy: 16)
-                        let midX = insetBounds.midX
-                        let midY = insetBounds.midY
-                        path.move(to: CGPoint(x: insetBounds.minX, y: midY))
-                        path.addLine(to: CGPoint(x: insetBounds.maxX, y: midY))
-                        path.move(to: CGPoint(x: midX, y: insetBounds.minY))
-                        path.addLine(to: CGPoint(x: midX, y: insetBounds.maxY))
-                    }
-                    .stroke(Color.white.opacity(0.08), style: StrokeStyle(lineWidth: 1, dash: [3, 4]))
+                    if model.overviewPolygons.isEmpty {
+                        VStack(spacing: 6) {
+                            Image(systemName: "map")
+                                .font(.system(size: 24, weight: .bold))
+                                .foregroundStyle(.white.opacity(0.42))
 
-                    if let playerPoint = normalizedPlayerPoint {
+                            Text("NO MAP DATA")
+                                .font(.system(size: 9, weight: .black, design: .rounded))
+                                .foregroundStyle(.white.opacity(0.45))
+                                .tracking(0.7)
+                        }
+                    } else {
+                        let mapBounds = geometry.frame(in: .local).insetBy(dx: 16, dy: 16)
+
+                        ForEach(Array(model.overviewPolygons.enumerated()), id: \.offset) { index, polygon in
+                            minimapPolygonPath(
+                                polygon,
+                                in: mapBounds
+                            )
+                            .fill(
+                                index.isMultiple(of: 2)
+                                    ? Color(red: 0.33, green: 0.72, blue: 0.58).opacity(0.28)
+                                    : Color(red: 0.19, green: 0.54, blue: 0.46).opacity(0.22)
+                            )
+
+                            minimapPolygonPath(
+                                polygon,
+                                in: mapBounds
+                            )
+                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                        }
+                    }
+
+                    if let playerPoint = model.playerPoint {
                         Circle()
                             .fill(Color(red: 1.0, green: 0.26, blue: 0.16))
                             .frame(width: 10, height: 10)
@@ -503,29 +542,235 @@ private struct SceneMinimapView: View {
     }
 }
 
-private extension SceneMinimapView {
-    var sceneTitle: String {
-        runtime.loadedScene?.manifest.title ?? runtime.loadedScene?.manifest.name ?? "Area Map"
+private func minimapPolygonPath(
+    _ polygon: SceneMinimapModel.Polygon,
+    in bounds: CGRect
+) -> Path {
+    Path { path in
+        guard let firstPoint = polygon.points.first else {
+            return
+        }
+
+        path.move(to: CGPoint(
+            x: bounds.minX + (firstPoint.x * bounds.width),
+            y: bounds.minY + (firstPoint.y * bounds.height)
+        ))
+
+        for point in polygon.points.dropFirst() {
+            path.addLine(to: CGPoint(
+                x: bounds.minX + (point.x * bounds.width),
+                y: bounds.minY + (point.y * bounds.height)
+            ))
+        }
+
+        path.closeSubpath()
+    }
+}
+
+struct SceneMinimapModel: Equatable {
+    struct Polygon: Equatable {
+        let points: [CGPoint]
     }
 
-    var normalizedPlayerPoint: CGPoint? {
-        guard
-            let playerState = runtime.playerState,
-            let collision = runtime.loadedScene?.collision
-        else {
+    let sceneTitle: String
+    let roomLabel: String?
+    let overviewPolygons: [Polygon]
+    let playerPoint: CGPoint?
+
+    init(
+        scene: LoadedScene?,
+        currentRoomID: Int?,
+        playerState: PlayerState?
+    ) {
+        sceneTitle = scene?.manifest.title ?? scene?.manifest.name ?? "Area Map"
+        roomLabel = Self.makeRoomLabel(scene: scene, currentRoomID: currentRoomID)
+
+        let overview = Self.makeOverview(scene: scene)
+        overviewPolygons = overview.polygons
+        playerPoint = Self.makePlayerPoint(
+            playerState: playerState,
+            overviewBounds: overview.bounds
+        )
+    }
+}
+
+private extension SceneMinimapModel {
+    struct Overview {
+        let bounds: CGRect
+        let polygons: [Polygon]
+    }
+
+    static func makeOverview(scene: LoadedScene?) -> Overview {
+        guard let collision = scene?.collision else {
+            return Overview(bounds: CGRect(x: 0, y: 0, width: 1, height: 1), polygons: [])
+        }
+
+        let includedPolygons = projectedPolygons(in: collision)
+        let normalizedBounds = bounds(
+            for: includedPolygons.flatMap(\.points),
+            fallback: collisionBounds(for: collision)
+        )
+
+        let normalizedPolygons = includedPolygons.map { polygon in
+            Polygon(
+                points: polygon.points.map { point in
+                    normalize(point, in: normalizedBounds)
+                }
+            )
+        }
+
+        return Overview(bounds: normalizedBounds, polygons: normalizedPolygons)
+    }
+
+    static func makeRoomLabel(scene: LoadedScene?, currentRoomID: Int?) -> String? {
+        guard let scene else {
             return nil
         }
 
-        let minX = CGFloat(collision.minimumBounds.x)
-        let maxX = CGFloat(collision.maximumBounds.x)
-        let minZ = CGFloat(collision.minimumBounds.z)
-        let maxZ = CGFloat(collision.maximumBounds.z)
-        let width = max(maxX - minX, 1)
-        let depth = max(maxZ - minZ, 1)
+        let roomCount = scene.manifest.rooms.count
+        if let currentRoomID, roomCount > 0 {
+            return "ROOM \(currentRoomID + 1) / \(roomCount)"
+        }
+        if roomCount > 1 {
+            return "\(roomCount) ROOMS"
+        }
+        return nil
+    }
 
-        let normalizedX = ((CGFloat(playerState.position.x) - minX) / width).clamped(to: 0...1)
-        let normalizedY = (1 - ((CGFloat(playerState.position.z) - minZ) / depth)).clamped(to: 0...1)
-        return CGPoint(x: normalizedX, y: normalizedY)
+    static func makePlayerPoint(
+        playerState: PlayerState?,
+        overviewBounds: CGRect
+    ) -> CGPoint? {
+        guard let playerState else {
+            return nil
+        }
+
+        return normalize(
+            CGPoint(
+                x: CGFloat(playerState.position.x),
+                y: CGFloat(playerState.position.z)
+            ),
+            in: overviewBounds
+        )
+    }
+
+    static func projectedPolygons(in collision: CollisionMesh) -> [Polygon] {
+        let candidatePolygons: [ProjectedPolygon] = collision.polygons.compactMap { polygon -> ProjectedPolygon? in
+            guard
+                let projectedPolygon = projectedPolygon(
+                    polygon,
+                    using: collision.vertices
+                ),
+                projectedPolygon.area > 1
+            else {
+                return nil
+            }
+            return projectedPolygon
+        }
+
+        let floorLikePolygons = candidatePolygons.filter { $0.isFloorLike }
+        return (floorLikePolygons.isEmpty ? candidatePolygons : floorLikePolygons).map { $0.polygon }
+    }
+
+    static func projectedPolygon(
+        _ polygon: CollisionPoly,
+        using vertices: [Vector3s]
+    ) -> ProjectedPolygon? {
+        let indices = [
+            Int(polygon.vertexA),
+            Int(polygon.vertexB),
+            Int(polygon.vertexC),
+        ]
+
+        guard indices.allSatisfy(vertices.indices.contains) else {
+            return nil
+        }
+
+        let points = indices.map { index in
+            CGPoint(
+                x: CGFloat(vertices[index].x),
+                y: CGFloat(vertices[index].z)
+            )
+        }
+
+        return ProjectedPolygon(
+            polygon: Polygon(points: points),
+            area: projectedArea(points),
+            isFloorLike: isFloorLike(polygon.normal)
+        )
+    }
+
+    static func isFloorLike(_ normal: Vector3s) -> Bool {
+        let absX = abs(Int(normal.x))
+        let absY = abs(Int(normal.y))
+        let absZ = abs(Int(normal.z))
+        return (absX == 0 && absY == 0 && absZ == 0) || absY >= max(absX, absZ)
+    }
+
+    static func projectedArea(_ points: [CGPoint]) -> CGFloat {
+        guard points.count >= 3 else {
+            return 0
+        }
+
+        var doubledArea: CGFloat = 0
+        for index in points.indices {
+            let nextIndex = (index + 1) % points.count
+            doubledArea += (points[index].x * points[nextIndex].y) - (points[nextIndex].x * points[index].y)
+        }
+        return abs(doubledArea) / 2
+    }
+
+    static func bounds(
+        for points: [CGPoint],
+        fallback: CGRect
+    ) -> CGRect {
+        guard let firstPoint = points.first else {
+            return fallback
+        }
+
+        var minX = firstPoint.x
+        var maxX = firstPoint.x
+        var minY = firstPoint.y
+        var maxY = firstPoint.y
+
+        for point in points.dropFirst() {
+            minX = min(minX, point.x)
+            maxX = max(maxX, point.x)
+            minY = min(minY, point.y)
+            maxY = max(maxY, point.y)
+        }
+
+        return CGRect(
+            x: minX,
+            y: minY,
+            width: max(maxX - minX, 1),
+            height: max(maxY - minY, 1)
+        )
+    }
+
+    static func collisionBounds(for collision: CollisionMesh) -> CGRect {
+        CGRect(
+            x: CGFloat(collision.minimumBounds.x),
+            y: CGFloat(collision.minimumBounds.z),
+            width: max(CGFloat(collision.maximumBounds.x - collision.minimumBounds.x), 1),
+            height: max(CGFloat(collision.maximumBounds.z - collision.minimumBounds.z), 1)
+        )
+    }
+
+    static func normalize(
+        _ point: CGPoint,
+        in bounds: CGRect
+    ) -> CGPoint {
+        CGPoint(
+            x: ((point.x - bounds.minX) / max(bounds.width, 1)).clamped(to: 0...1),
+            y: (1 - ((point.y - bounds.minY) / max(bounds.height, 1))).clamped(to: 0...1)
+        )
+    }
+
+    struct ProjectedPolygon {
+        let polygon: Polygon
+        let area: CGFloat
+        let isFloorLike: Bool
     }
 }
 

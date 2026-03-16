@@ -42,6 +42,7 @@ final class OOTUITests: XCTestCase {
                     activeSaveSlot: 0,
                     entryMode: .newGame,
                     currentSceneName: "Kokiri Forest",
+                    currentRoomID: 1,
                     playerName: "Link",
                     scene: makeLoadedScene()
                 ),
@@ -171,6 +172,31 @@ final class OOTUITests: XCTestCase {
         XCTAssertNotNil(art.image(for: .bow))
     }
 
+    func testGameplayHUDSceneMinimapBuildsOverviewFromCollision() {
+        let model = SceneMinimapModel(
+            scene: makeLoadedScene(),
+            currentRoomID: 1,
+            playerState: PlayerState(position: Vec3f(x: 40, y: 0, z: 40))
+        )
+
+        XCTAssertEqual(model.sceneTitle, "Kokiri Forest")
+        XCTAssertEqual(model.roomLabel, "ROOM 2 / 2")
+        XCTAssertEqual(model.overviewPolygons.count, 2)
+
+        for polygon in model.overviewPolygons {
+            XCTAssertEqual(polygon.points.count, 3)
+            for point in polygon.points {
+                XCTAssertGreaterThanOrEqual(point.x, 0)
+                XCTAssertLessThanOrEqual(point.x, 1)
+                XCTAssertGreaterThanOrEqual(point.y, 0)
+                XCTAssertLessThanOrEqual(point.y, 1)
+            }
+        }
+
+        XCTAssertEqual(model.playerPoint?.x ?? -1, 0.7, accuracy: 0.001)
+        XCTAssertEqual(model.playerPoint?.y ?? -1, 0.3, accuracy: 0.001)
+    }
+
     func testAppRuntimeLoadsRealExtractedSceneViewerContentWhenConfigured() async throws {
         guard let contentRootPath = ProcessInfo.processInfo.environment["SWIFTOOT_REAL_CONTENT_ROOT"] else {
             throw XCTSkip("Set SWIFTOOT_REAL_CONTENT_ROOT to run the real-content scene viewer validation.")
@@ -255,6 +281,8 @@ private extension OOTUITests {
                     Vector3s(x: -100, y: 0, z: -100),
                     Vector3s(x: 100, y: 0, z: -100),
                     Vector3s(x: -100, y: 0, z: 100),
+                    Vector3s(x: 100, y: 0, z: 100),
+                    Vector3s(x: -100, y: 80, z: -100),
                 ],
                 polygons: [
                     CollisionPoly(
@@ -262,7 +290,23 @@ private extension OOTUITests {
                         vertexA: 0,
                         vertexB: 1,
                         vertexC: 2,
-                        normal: Vector3s(x: 0, y: 0, z: 0),
+                        normal: Vector3s(x: 0, y: 0x7FFF, z: 0),
+                        distance: 0
+                    ),
+                    CollisionPoly(
+                        surfaceType: 0,
+                        vertexA: 1,
+                        vertexB: 3,
+                        vertexC: 2,
+                        normal: Vector3s(x: 0, y: 0x7FFF, z: 0),
+                        distance: 0
+                    ),
+                    CollisionPoly(
+                        surfaceType: 0,
+                        vertexA: 0,
+                        vertexB: 4,
+                        vertexC: 1,
+                        normal: Vector3s(x: 0x7FFF, y: 0, z: 0),
                         distance: 0
                     ),
                 ],
