@@ -1370,9 +1370,7 @@ private extension SceneExtractor {
         guard let invocation = commands.first(where: { $0.name == "SCENE_CMD_SPAWN_LIST" }) else {
             return SceneSpawnsFile(sceneName: sceneName, spawns: [])
         }
-        try invocation.requireCount(2)
-
-        let arrayName = trimExpression(invocation.arguments[1])
+        let arrayName = try spawnListArrayName(from: invocation)
         let array = try array(named: arrayName, type: "ActorEntry", in: source)
         let spawns = try topLevelBraceEntries(in: array.body).enumerated().map { index, entry in
             let fields = splitTopLevel(entry)
@@ -1665,9 +1663,7 @@ private extension SceneExtractor {
         guard let invocation = commands.first(where: { $0.name == "SCENE_CMD_SPAWN_LIST" }) else {
             return []
         }
-        try invocation.requireCount(2)
-
-        let spawnArray = try array(named: trimExpression(invocation.arguments[1]), type: "ActorEntry", in: source)
+        let spawnArray = try array(named: try spawnListArrayName(from: invocation), type: "ActorEntry", in: source)
         return try topLevelBraceEntries(in: spawnArray.body).enumerated().map { index, entry in
             let fields = splitTopLevel(entry)
             guard fields.count == 4 else {
@@ -1681,6 +1677,18 @@ private extension SceneExtractor {
                 rotation: try parseVector3s(fields[2])
             )
         }
+    }
+
+    static func spawnListArrayName(from invocation: ParsedCommand) throws -> String {
+        guard invocation.arguments.count == 1 || invocation.arguments.count == 2 else {
+            throw SceneExtractorError.invalidCommand(
+                "\(invocation.name) expected 1 or 2 arguments, found \(invocation.arguments.count)"
+            )
+        }
+        guard let arrayName = invocation.arguments.last else {
+            throw SceneExtractorError.invalidCommand("\(invocation.name) missing spawn array argument")
+        }
+        return trimExpression(arrayName)
     }
 
     static func parseTransitionTriggers(

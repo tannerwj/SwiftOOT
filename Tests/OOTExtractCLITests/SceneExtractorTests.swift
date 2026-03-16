@@ -623,6 +623,45 @@ final class SceneExtractorTests: XCTestCase {
         XCTAssertEqual(paths.paths.count, 3)
     }
 
+    func testExtractMetadataAcceptsLegacyTwoArgumentSpawnListFixture() throws {
+        let harness = try SceneHarness()
+        defer { harness.cleanup() }
+
+        try harness.seedActorTableManifest()
+        try harness.seedObjectTableManifest()
+        try harness.writeSceneXML(at: "assets/xml/scenes/overworld/spot04.xml", contents: sceneXMLFixture)
+        try harness.writeSourceFile(
+            at: "assets/scenes/overworld/spot04/spot04_scene.c",
+            contents: sceneMetadataSourceFixture.replacingOccurrences(
+                of: "SCENE_CMD_SPAWN_LIST(spot04_sceneStartPositionList0x0000A4)",
+                with: "SCENE_CMD_SPAWN_LIST(2, spot04_sceneStartPositionList0x0000A4)"
+            )
+        )
+        try harness.writeSourceFile(
+            at: "assets/scenes/overworld/spot04/spot04_room_0.c",
+            contents: roomMetadataSourceFixture
+        )
+        try harness.writeSourceFile(
+            at: "include/tables/entrance_table.h",
+            contents: entranceTableFixture
+        )
+
+        try SceneExtractor().extract(using: harness.extractionContext(sceneName: "spot04"))
+
+        let sceneDirectory = try harness.metadataDirectory()
+        let spawns = try JSONDecoder().decode(
+            SceneSpawnsFile.self,
+            from: Data(contentsOf: sceneDirectory.appendingPathComponent("spawns.json"))
+        )
+        let sceneHeader = try JSONDecoder().decode(
+            SceneHeaderDefinition.self,
+            from: Data(contentsOf: sceneDirectory.appendingPathComponent("scene-header.json"))
+        )
+
+        XCTAssertEqual(spawns.spawns.count, 2)
+        XCTAssertEqual(sceneHeader.spawns.count, 2)
+    }
+
     func testVerifyRoundTripsSceneMetadataJSON() throws {
         let harness = try SceneHarness()
         defer { harness.cleanup() }
@@ -970,7 +1009,7 @@ SceneCmd spot04_sceneCommands[] = {
     SCENE_CMD_ENTRANCE_LIST(spot04_sceneEntranceList0x00019C),
     SCENE_CMD_SPECIAL_FILES(NAVI_QUEST_HINTS_OVERWORLD, OBJECT_GAMEPLAY_FIELD_KEEP),
     SCENE_CMD_PATH_LIST(spot04_scenePathList_00030C),
-    SCENE_CMD_SPAWN_LIST(2, spot04_sceneStartPositionList0x0000A4),
+    SCENE_CMD_SPAWN_LIST(spot04_sceneStartPositionList0x0000A4),
     SCENE_CMD_SKYBOX_SETTINGS(29, 0, false),
     SCENE_CMD_EXIT_LIST(spot04_sceneExitList_0001B4),
     SCENE_CMD_ENV_LIGHT_SETTINGS(12, spot04_sceneLightSettings0x0001CC),
