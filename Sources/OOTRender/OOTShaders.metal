@@ -34,6 +34,8 @@ struct PostProcessUniforms {
     float toneMapExposure;
     float fxaaSpan;
     uint presentationMode;
+    uint outputMode;
+    float edrHeadroom;
 };
 
 struct CombinerUniforms {
@@ -77,6 +79,8 @@ constant uint kGeometryModeFog = 0x00010000;
 constant uint kGeometryModeLighting = 0x00020000;
 constant uint kPresentationModeN64 = 0;
 constant uint kPresentationModeEnhanced = 1;
+constant uint kOutputModeSDR = 0;
+constant uint kOutputModeEDR = 1;
 
 float computeFogFactor(float4 clipPosition, float4 fogParameters) {
     float fogStart = fogParameters.x;
@@ -637,10 +641,23 @@ float4 applyEnhancedFXAA(
     return mix(color, (blendA + blendB) * 0.5, clamp(contrast * 2.5, 0.0, 1.0));
 }
 
-float3 toneMapEnhanced(float3 color, float exposure) {
+float3 toneMapEnhancedSDR(float3 color, float exposure) {
     float3 exposed = max(color, 0.0) * max(exposure, 0.01);
     float3 mapped = (exposed * (2.51 * exposed + 0.03)) / (exposed * (2.43 * exposed + 0.59) + 0.14);
     return pow(clamp(mapped, 0.0, 1.0), 1.0 / 2.2);
+}
+
+float3 toneMapEnhancedEDR(float3 color, float exposure, float headroom) {
+    float3 exposed = max(color, 0.0) * max(exposure, 0.01);
+    float3 mapped = clamp(
+        (exposed * (2.51 * exposed + 0.03)) / (exposed * (2.43 * exposed + 0.59) + 0.14),
+        0.0,
+        1.0
+    );
+    float3 highlight = max(exposed - 1.0, 0.0);
+    float3 rolledHighlight = highlight / (highlight + 1.0);
+    float edrHeadroom = max(headroom, 1.0);
+    return min(mapped + rolledHighlight * (edrHeadroom - 1.0), edrHeadroom);
 }
 
 kernel void oot_post_process(
@@ -670,7 +687,15 @@ kernel void oot_post_process(
             uv
         );
         color = applyEnhancedFXAA(sourceTexture, uv, sourceTexelSize, color, uniforms.fxaaSpan);
-        color.rgb = toneMapEnhanced(color.rgb, uniforms.toneMapExposure);
+        if (uniforms.outputMode == kOutputModeEDR) {
+            color.rgb = toneMapEnhancedEDR(
+                color.rgb,
+                uniforms.toneMapExposure,
+                uniforms.edrHeadroom
+            );
+        } else {
+            color.rgb = toneMapEnhancedSDR(color.rgb, uniforms.toneMapExposure);
+        }
         color.a = 1.0;
     }
 
