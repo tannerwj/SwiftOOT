@@ -208,6 +208,172 @@ final class F3DEX2InterpreterTests: XCTestCase {
         XCTAssertTrue(interpreter.drawBatch.texel0Texture === expectedTexture)
         XCTAssertEqual(interpreter.drawBatch.drawCallCount, 1)
     }
+
+    func testTextureStateChangesFlushPendingTrianglesBeforeBindingNextTexture() throws {
+        let context = try makeRenderContext()
+        var segmentTable = SegmentTable()
+        try segmentTable.setSegment(0x01, data: encodeVertices(makeTriangleVertices()))
+        let firstAssetID = OOTAssetID.stableID(for: "gSpot04GroundTex")
+        let secondAssetID = OOTAssetID.stableID(for: "gSpot04WallTex")
+        let firstTexture = try makeSourceTexture(device: context.resources.device)
+        let secondTexture = try makeSourceTexture(device: context.resources.device)
+        let interpreter = F3DEX2Interpreter(
+            segmentTable: segmentTable,
+            drawBatchResources: context.resources,
+            textureResolver: { resolvedAssetID in
+                switch resolvedAssetID {
+                case firstAssetID:
+                    firstTexture
+                case secondAssetID:
+                    secondTexture
+                default:
+                    nil
+                }
+            }
+        )
+
+        try interpreter.interpret(
+            [
+                .spTexture(TextureState(scaleS: 0xFFFF, scaleT: 0xFFFF, level: 0, tile: 0, enabled: true)),
+                .dpSetTextureImage(
+                    ImageDescriptor(
+                        format: .rgba16,
+                        texelSize: .bits16,
+                        width: 32,
+                        address: firstAssetID
+                    )
+                ),
+                .dpLoadBlock(LoadBlockCommand(tile: 7, upperLeftS: 0, upperLeftT: 0, texelCount: 255, dxt: 16)),
+                .spVertex(VertexCommand(address: 0x0100_0000, count: 3, destinationIndex: 0)),
+                .sp1Triangle(TriangleCommand(vertex0: 0, vertex1: 1, vertex2: 2)),
+                .dpSetTextureImage(
+                    ImageDescriptor(
+                        format: .rgba16,
+                        texelSize: .bits16,
+                        width: 32,
+                        address: secondAssetID
+                    )
+                ),
+                .dpLoadBlock(LoadBlockCommand(tile: 7, upperLeftS: 0, upperLeftT: 0, texelCount: 255, dxt: 16)),
+                .sp1Triangle(TriangleCommand(vertex0: 0, vertex1: 1, vertex2: 2)),
+                .spEndDisplayList,
+            ],
+            encoder: context.encoder
+        )
+
+        context.encoder.endEncoding()
+        context.commandBuffer.commit()
+        context.commandBuffer.waitUntilCompleted()
+
+        XCTAssertTrue(interpreter.drawBatch.texel0Texture === secondTexture)
+        XCTAssertEqual(interpreter.drawBatch.totalTriangleCount, 2)
+        XCTAssertEqual(interpreter.drawBatch.drawCallCount, 2)
+    }
+
+    func testTextureSamplingStateTracksTileSpanDimensionsAndWrappingFlags() throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("Metal is unavailable on this host")
+        }
+
+        let texture = try makeSourceTexture(device: device, width: 32, height: 16)
+        let samplingState = F3DEX2Interpreter.makeTextureSamplingState(
+            for: TextureState(scaleS: 0xFFFF, scaleT: 0x8000, level: 0, tile: 0, enabled: true),
+            tileDescriptor: TileDescriptor(
+                format: .rgba16,
+                texelSize: .bits16,
+                line: 0,
+                tmem: 0,
+                tile: 0,
+                palette: 0,
+                clampS: false,
+                mirrorS: true,
+                maskS: 5,
+                shiftS: 0,
+                clampT: true,
+                mirrorT: false,
+                maskT: 4,
+                shiftT: 0
+            ),
+            tileSize: TileSizeCommand(
+                tile: 0,
+                upperLeftS: 8,
+                upperLeftT: 4,
+                lowerRightS: 131,
+                lowerRightT: 63
+            ),
+            texture: texture
+        )
+
+        XCTAssertEqual(samplingState.scale.x, 65_535.0 / 65_536.0, accuracy: 0.000_01)
+        XCTAssertEqual(samplingState.scale.y, 0.5, accuracy: 0.000_01)
+        XCTAssertEqual(samplingState.offset.x, -2.0, accuracy: 0.000_1)
+        XCTAssertEqual(samplingState.offset.y, -1.0, accuracy: 0.000_1)
+        XCTAssertEqual(samplingState.dimensions.x, 32.0, accuracy: 0.000_1)
+        XCTAssertEqual(samplingState.dimensions.y, 16.0, accuracy: 0.000_1)
+        XCTAssertEqual(samplingState.tileSpan.x, 31.75, accuracy: 0.000_1)
+        XCTAssertEqual(samplingState.tileSpan.y, 15.75, accuracy: 0.000_1)
+        XCTAssertEqual(samplingState.clamp, SIMD2<UInt32>(0, 1))
+        XCTAssertEqual(samplingState.mirror, SIMD2<UInt32>(1, 0))
+    }
+
+    func testRealSpot04CombineModeNormalizesZeroColorSlotsCorrectly() throws {
+        let context = try makeRenderContext()
+        let interpreter = F3DEX2Interpreter(drawBatchResources: context.resources)
+
+        try interpreter.interpret(
+            [
+                .dpSetCombineMode(
+                    CombineMode(
+                        colorMux: 1_211_907,
+                        alphaMux: 4_294_966_776
+                    )
+                ),
+                .spEndDisplayList,
+            ],
+            encoder: context.encoder
+        )
+
+        context.encoder.endEncoding()
+        context.commandBuffer.commit()
+        context.commandBuffer.waitUntilCompleted()
+
+        XCTAssertEqual(
+            interpreter.drawBatch.combinerUniforms.cycle1ColorSelectors,
+            SIMD4<UInt32>(
+                CombinerSourceSelector.texel0.rawValue,
+                CombinerSourceSelector.zero.rawValue,
+                CombinerSourceSelector.shade.rawValue,
+                CombinerSourceSelector.zero.rawValue
+            )
+        )
+        XCTAssertEqual(
+            interpreter.drawBatch.combinerUniforms.cycle2ColorSelectors,
+            SIMD4<UInt32>(
+                CombinerSourceSelector.combined.rawValue,
+                CombinerSourceSelector.zero.rawValue,
+                CombinerSourceSelector.primitive.rawValue,
+                CombinerSourceSelector.zero.rawValue
+            )
+        )
+        XCTAssertEqual(
+            interpreter.drawBatch.combinerUniforms.cycle1AlphaSelectors,
+            SIMD4<UInt32>(
+                CombinerSourceSelector.zero.rawValue,
+                CombinerSourceSelector.zero.rawValue,
+                CombinerSourceSelector.zero.rawValue,
+                CombinerSourceSelector.one.rawValue
+            )
+        )
+        XCTAssertEqual(
+            interpreter.drawBatch.combinerUniforms.cycle2AlphaSelectors,
+            SIMD4<UInt32>(
+                CombinerSourceSelector.zero.rawValue,
+                CombinerSourceSelector.zero.rawValue,
+                CombinerSourceSelector.zero.rawValue,
+                CombinerSourceSelector.combined.rawValue
+            )
+        )
+    }
 }
 
 private extension F3DEX2InterpreterTests {
@@ -296,11 +462,15 @@ private extension F3DEX2InterpreterTests {
         ]
     }
 
-    func makeSourceTexture(device: MTLDevice) throws -> MTLTexture {
+    func makeSourceTexture(
+        device: MTLDevice,
+        width: Int = 1,
+        height: Int = 1
+    ) throws -> MTLTexture {
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba8Unorm,
-            width: 1,
-            height: 1,
+            width: width,
+            height: height,
             mipmapped: false
         )
         descriptor.usage = .shaderRead

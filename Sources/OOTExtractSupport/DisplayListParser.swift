@@ -942,12 +942,12 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
         let colorA1 = try colorSource(arguments[8])
         let colorC1 = try colorSource(arguments[10])
         let colorMux =
-            (colorA0 << 20) |
-            (colorC0 << 15) |
-            (alphaAa0 << 12) |
-            (alphaAc0 << 9) |
-            (colorA1 << 5) |
-            colorC1
+            ((colorA0 & 0x0F) << 20) |
+            ((colorC0 & 0x1F) << 15) |
+            ((alphaAa0 & 0x07) << 12) |
+            ((alphaAc0 & 0x07) << 9) |
+            ((colorA1 & 0x0F) << 5) |
+            (colorC1 & 0x1F)
 
         let colorB0 = try colorSource(arguments[1])
         let colorD0 = try colorSource(arguments[3])
@@ -960,16 +960,16 @@ struct DisplayListParser: OOTExtractionPipelineComponent {
         let alphaAb1 = try alphaSource(arguments[13])
         let alphaAd1 = try alphaSource(arguments[15])
         let alphaMux =
-            (colorB0 << 28) |
-            (colorD0 << 15) |
-            (alphaAb0 << 12) |
-            (alphaAd0 << 9) |
-            (colorB1 << 24) |
-            (alphaAa1 << 21) |
-            (alphaAc1 << 18) |
-            (colorD1 << 6) |
-            (alphaAb1 << 3) |
-            alphaAd1
+            ((colorB0 & 0x0F) << 28) |
+            ((colorD0 & 0x07) << 15) |
+            ((alphaAb0 & 0x07) << 12) |
+            ((alphaAd0 & 0x07) << 9) |
+            ((colorB1 & 0x0F) << 24) |
+            ((alphaAa1 & 0x07) << 21) |
+            ((alphaAc1 & 0x07) << 18) |
+            ((colorD1 & 0x07) << 6) |
+            ((alphaAb1 & 0x07) << 3) |
+            (alphaAd1 & 0x07)
 
         return CombineMode(colorMux: colorMux, alphaMux: alphaMux)
     }
