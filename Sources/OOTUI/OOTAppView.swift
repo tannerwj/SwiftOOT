@@ -333,6 +333,9 @@ private struct GameplayShellView: View {
     @State
     private var renderSettings = RenderSettings()
 
+    @State
+    private var selectedDebuggerTab: DebugSidebarTab = .actorInspector
+
     var body: some View {
         NavigationSplitView {
             DebugSidebar(
@@ -345,6 +348,7 @@ private struct GameplayShellView: View {
                 selectedActorID: $selectedActorID,
                 xrayOverlaySettings: $xrayOverlaySettings,
                 renderSettings: $renderSettings,
+                selectedTab: $selectedDebuggerTab,
                 onSelectScene: { sceneID in
                     Task {
                         await runtime.selectScene(id: sceneID)
@@ -354,118 +358,131 @@ private struct GameplayShellView: View {
             .navigationSplitViewColumnWidth(min: 220, ideal: 260)
         } detail: {
             ZStack(alignment: .topLeading) {
-                Color.black.opacity(0.9)
-                    .ignoresSafeArea()
-
-                if let renderPayload {
-                    MetalView(
-                        sceneIdentity: renderPayload.sceneID,
-                        scene: SceneRenderPayloadBuilder.renderScene(
-                            from: renderPayload,
-                            playerState: runtime.playerState,
-                            inventoryContext: runtime.inventoryContext,
-                            actors: runtime.actors,
-                            xrayTelemetrySnapshot: runtime.xrayTelemetrySnapshot,
-                            xrayOverlaySettings: xrayOverlaySettings
-                        ),
-                        timeOfDay: runtime.gameTime.timeOfDay,
-                        textureBindings: renderPayload.textureBindings,
-                        renderSettings: renderSettings,
-                        inputHandler: inputManager,
-                        toggleAllXRayLayers: {
-                            xrayOverlaySettings.toggleAll()
-                        },
-                        gameplayCameraConfiguration: runtime.loadedScene.flatMap {
-                            SceneRenderPayloadBuilder.makeGameplayCameraConfiguration(
-                                scene: $0,
-                                playerState: runtime.playerState,
-                                combatState: runtime.combatState,
-                                itemGetSequence: runtime.itemGetSequence,
-                                itemAimYaw: runtime.itemAimYaw,
-                                itemAimPitch: runtime.itemAimPitch
-                            )
+                if selectedDebuggerTab == .map {
+                    HyruleWorldMapScreen(
+                        runtime: runtime,
+                        onSelectScene: { sceneID in
+                            Task {
+                                await runtime.selectScene(id: sceneID)
+                            }
                         }
-                    ) { stats in
-                        let now = ProcessInfo.processInfo.systemUptime
-                        Task { @MainActor in
-                            frameStats = stats
-                            framesPerSecond = smoothedMetric(
-                                current: framesPerSecond,
-                                newValue: instantaneousFramesPerSecond(at: now)
-                            )
-                            lastRenderedFrameTimestamp = now
-                            syncSelectedActorSelection()
-                        }
-                    }
-                    .id(renderPayload.sceneID)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .overlay {
-                        ActorViewportSelectionOverlay(
-                            actors: runtime.actors,
-                            sceneBounds: renderPayload.baseScene.sceneBounds,
-                            cameraConfiguration: renderPayload.gameplayCameraConfiguration,
-                            selectedActorID: $selectedActorID
-                        )
-                    }
+                    )
                 } else {
-                    VStack(spacing: 12) {
-                        Text("Scene Viewer")
-                            .font(.title2.weight(.semibold))
-                            .foregroundStyle(.white)
+                    ZStack(alignment: .topLeading) {
+                        Color.black.opacity(0.9)
+                            .ignoresSafeArea()
 
-                        Text(detailPlaceholderText)
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(.white.opacity(0.75))
-                    }
-                    .padding(24)
-                }
+                        if let renderPayload {
+                            MetalView(
+                                sceneIdentity: renderPayload.sceneID,
+                                scene: SceneRenderPayloadBuilder.renderScene(
+                                    from: renderPayload,
+                                    playerState: runtime.playerState,
+                                    inventoryContext: runtime.inventoryContext,
+                                    actors: runtime.actors,
+                                    xrayTelemetrySnapshot: runtime.xrayTelemetrySnapshot,
+                                    xrayOverlaySettings: xrayOverlaySettings
+                                ),
+                                timeOfDay: runtime.gameTime.timeOfDay,
+                                textureBindings: renderPayload.textureBindings,
+                                renderSettings: renderSettings,
+                                inputHandler: inputManager,
+                                toggleAllXRayLayers: {
+                                    xrayOverlaySettings.toggleAll()
+                                },
+                                gameplayCameraConfiguration: runtime.loadedScene.flatMap {
+                                    SceneRenderPayloadBuilder.makeGameplayCameraConfiguration(
+                                        scene: $0,
+                                        playerState: runtime.playerState,
+                                        combatState: runtime.combatState,
+                                        itemGetSequence: runtime.itemGetSequence,
+                                        itemAimYaw: runtime.itemAimYaw,
+                                        itemAimPitch: runtime.itemAimPitch
+                                    )
+                                }
+                            ) { stats in
+                                let now = ProcessInfo.processInfo.systemUptime
+                                Task { @MainActor in
+                                    frameStats = stats
+                                    framesPerSecond = smoothedMetric(
+                                        current: framesPerSecond,
+                                        newValue: instantaneousFramesPerSecond(at: now)
+                                    )
+                                    lastRenderedFrameTimestamp = now
+                                    syncSelectedActorSelection()
+                                }
+                            }
+                            .id(renderPayload.sceneID)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .overlay {
+                                ActorViewportSelectionOverlay(
+                                    actors: runtime.actors,
+                                    sceneBounds: renderPayload.baseScene.sceneBounds,
+                                    cameraConfiguration: renderPayload.gameplayCameraConfiguration,
+                                    selectedActorID: $selectedActorID
+                                )
+                            }
+                        } else {
+                            VStack(spacing: 12) {
+                                Text("Scene Viewer")
+                                    .font(.title2.weight(.semibold))
+                                    .foregroundStyle(.white)
 
-                if runtime.playState != nil, runtime.isPauseMenuPresented == false {
-                    GameplayHUDView(runtime: runtime, renderPayload: renderPayload)
-                        .transition(.opacity)
-                }
-
-                if runtime.isPauseMenuPresented {
-                    PauseMenuView(runtime: runtime)
-                        .transition(.opacity)
-                }
-
-                if runtime.playState != nil, runtime.availableChildCButtonItems.isEmpty == false {
-                    VStack(alignment: .trailing, spacing: 12) {
-                        CButtonLoadoutEditorShortcut(runtime: runtime)
-
-                        if runtime.isCButtonItemEditorPresented {
-                            CButtonLoadoutEditorOverlay(runtime: runtime)
-                                .transition(.move(edge: .trailing).combined(with: .opacity))
+                                Text(detailPlaceholderText)
+                                    .multilineTextAlignment(.center)
+                                    .foregroundStyle(.white.opacity(0.75))
+                            }
+                            .padding(24)
                         }
+
+                        if runtime.playState != nil, runtime.isPauseMenuPresented == false {
+                            GameplayHUDView(runtime: runtime, renderPayload: renderPayload)
+                                .transition(.opacity)
+                        }
+
+                        if runtime.isPauseMenuPresented {
+                            PauseMenuView(runtime: runtime)
+                                .transition(.opacity)
+                        }
+
+                        if runtime.playState != nil, runtime.availableChildCButtonItems.isEmpty == false {
+                            VStack(alignment: .trailing, spacing: 12) {
+                                CButtonLoadoutEditorShortcut(runtime: runtime)
+
+                                if runtime.isCButtonItemEditorPresented {
+                                    CButtonLoadoutEditorOverlay(runtime: runtime)
+                                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                                }
+                            }
+                            .padding(.top, 24)
+                            .padding(.trailing, 24)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        }
+
+                        if let itemGetOverlay = runtime.activeItemGetOverlay, runtime.isPauseMenuPresented == false {
+                            ItemGetView(state: itemGetOverlay)
+                                .padding(.top, 28)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                                .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                        }
+
+                        VStack(spacing: 16) {
+                            Spacer()
+
+                            if runtime.isPauseMenuPresented {
+                                EmptyView()
+                            } else if let presentation = runtime.activeMessagePresentation {
+                                MessageView(presentation: presentation)
+                                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                            } else if runtime.isCButtonItemEditorPresented == false, let actionLabel = runtime.gameplayActionLabel {
+                                ActionPromptView(label: actionLabel)
+                                    .transition(.opacity)
+                            }
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 28)
                     }
-                    .padding(.top, 24)
-                    .padding(.trailing, 24)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 }
-
-                if let itemGetOverlay = runtime.activeItemGetOverlay, runtime.isPauseMenuPresented == false {
-                    ItemGetView(state: itemGetOverlay)
-                        .padding(.top, 28)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                }
-
-                VStack(spacing: 16) {
-                    Spacer()
-
-                    if runtime.isPauseMenuPresented {
-                        EmptyView()
-                    } else if let presentation = runtime.activeMessagePresentation {
-                        MessageView(presentation: presentation)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                    } else if runtime.isCButtonItemEditorPresented == false, let actionLabel = runtime.gameplayActionLabel {
-                        ActionPromptView(label: actionLabel)
-                            .transition(.opacity)
-                    }
-                }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 28)
             }
         }
         .task {

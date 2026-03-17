@@ -3144,6 +3144,105 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLoadSceneMarksVisitedSceneAndPersistsToSaveSlot() throws {
+        let scene = makeScene(
+            sceneID: 0x55,
+            sceneName: "spot04",
+            roomSpawns: [0: []]
+        )
+        let saveContext = SaveContext(
+            slots: [
+                SaveSlot(
+                    id: 0,
+                    playerName: "Link",
+                    locationName: "Kokiri Forest",
+                    hearts: 3,
+                    hasSaveData: true
+                ),
+            ]
+        )
+        let contentLoader = MockContentLoader(
+            scenesByID: [0x55: scene],
+            actorTable: []
+        )
+        let sceneLoader = ConfigurableSceneLoader(
+            sceneEntries: [
+                SceneTableEntry(index: 0x55, segmentName: "spot04_scene", enumName: "SCENE_KOKIRI_FOREST"),
+            ],
+            scenesByID: [0x55: scene]
+        )
+        let runtime = GameRuntime(
+            saveContext: saveContext,
+            contentLoader: contentLoader,
+            sceneLoader: sceneLoader,
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+
+        XCTAssertTrue(runtime.inventoryState.visitedSceneIDs.contains(0x55))
+        XCTAssertTrue(runtime.saveContext.slots[0].inventoryContext.gameplay.visitedSceneIDs.contains(0x55))
+    }
+
+    @MainActor
+    func testSceneSelectionAccumulatesVisitedScenesForDebugTeleport() async throws {
+        let kokiriScene = makeScene(
+            sceneID: 0x55,
+            sceneName: "spot04",
+            roomSpawns: [0: []]
+        )
+        let kakarikoScene = makeScene(
+            sceneID: 0x01,
+            sceneName: "spot01",
+            roomSpawns: [0: []]
+        )
+        let saveContext = SaveContext(
+            slots: [
+                SaveSlot(
+                    id: 0,
+                    playerName: "Link",
+                    locationName: "Kokiri Forest",
+                    hearts: 3,
+                    hasSaveData: true
+                ),
+            ]
+        )
+        let contentLoader = MockContentLoader(
+            scenesByID: [
+                0x55: kokiriScene,
+                0x01: kakarikoScene,
+            ],
+            actorTable: []
+        )
+        let sceneLoader = ConfigurableSceneLoader(
+            sceneEntries: [
+                SceneTableEntry(index: 0x55, segmentName: "spot04_scene", enumName: "SCENE_KOKIRI_FOREST"),
+                SceneTableEntry(index: 0x01, segmentName: "spot01_scene", enumName: "SCENE_KAKARIKO_VILLAGE"),
+            ],
+            scenesByID: [
+                0x55: kokiriScene,
+                0x01: kakarikoScene,
+            ]
+        )
+        let runtime = GameRuntime(
+            saveContext: saveContext,
+            contentLoader: contentLoader,
+            sceneLoader: sceneLoader,
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+        await runtime.selectScene(id: 0x01)
+
+        XCTAssertEqual(runtime.playState?.currentSceneID, 0x01)
+        XCTAssertEqual(runtime.visitedSceneIDs, Set([0x55, 0x01]))
+        XCTAssertEqual(
+            runtime.saveContext.slots[0].inventoryContext.gameplay.visitedSceneIDs,
+            Set([0x55, 0x01])
+        )
+    }
+
+    @MainActor
     func testDrawPassesOnlyCallMatchingActors() throws {
         let recorder = EventRecorder()
         var registry = ActorRegistry()

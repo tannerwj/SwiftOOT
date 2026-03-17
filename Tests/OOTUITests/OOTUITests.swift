@@ -109,6 +109,26 @@ final class OOTUITests: XCTestCase {
                 suspender: { _ in }
             )
         )
+        _ = HyruleWorldMapScreen(
+            runtime: GameRuntime(
+                currentState: .gameplay,
+                playState: PlayState(
+                    activeSaveSlot: 0,
+                    entryMode: .newGame,
+                    currentSceneName: "Kokiri Forest",
+                    currentSceneID: 4,
+                    playerName: "Link"
+                ),
+                playerState: PlayerState(position: Vec3f(x: 12, y: 0, z: -18)),
+                availableScenes: [
+                    SceneTableEntry(index: 4, segmentName: "spot04_scene", enumName: "SCENE_KOKIRI_FOREST"),
+                ],
+                loadedScene: makeLoadedScene(),
+                sceneLoader: UITestSceneLoader(),
+                suspender: { _ in }
+            ),
+            onSelectScene: { _ in }
+        )
     }
 
     func testRootViewStateMatchesRuntimeState() {
@@ -977,6 +997,105 @@ final class OOTUITests: XCTestCase {
         XCTAssertEqual(model.playerPoint?.y ?? -1, 0.3, accuracy: 0.001)
     }
 
+    func testHyruleWorldMapBuildsConnectionsEntrancesAndDiscovery() throws {
+        let kokiriScene = makeWorldMapScene(
+            sceneID: 4,
+            sceneName: "spot04",
+            sceneTitle: "Kokiri Forest",
+            exits: [
+                SceneExitDefinition(index: 0, entranceIndex: 0x0100, entranceName: "To Hyrule Field"),
+                SceneExitDefinition(index: 1, entranceIndex: 0x0200, entranceName: "To Deku Tree"),
+            ],
+            collisionWidth: 220,
+            collisionHeight: 180
+        )
+        let fieldScene = makeWorldMapScene(
+            sceneID: 0,
+            sceneName: "spot00",
+            sceneTitle: "Hyrule Field",
+            exits: [
+                SceneExitDefinition(index: 0, entranceIndex: 0x0004, entranceName: "To Kokiri Forest"),
+            ],
+            collisionWidth: 420,
+            collisionHeight: 360
+        )
+        let dungeonScene = makeWorldMapScene(
+            sceneID: 0x10,
+            sceneName: "ydan",
+            sceneTitle: "Inside the Deku Tree",
+            exits: [],
+            collisionWidth: 140,
+            collisionHeight: 140
+        )
+
+        let loader = WorldMapTestSceneLoader(
+            sceneEntries: [
+                SceneTableEntry(index: 4, segmentName: "spot04_scene", enumName: "SCENE_KOKIRI_FOREST"),
+                SceneTableEntry(index: 0, segmentName: "spot00_scene", enumName: "SCENE_HYRULE_FIELD"),
+                SceneTableEntry(index: 0x10, segmentName: "ydan_scene", enumName: "SCENE_DEKU_TREE"),
+            ],
+            scenesByID: [
+                4: kokiriScene,
+                0: fieldScene,
+                0x10: dungeonScene,
+            ],
+            entranceTable: [
+                EntranceTableEntry(
+                    index: 0x0100,
+                    name: "Kokiri -> Field",
+                    sceneID: 0,
+                    spawnIndex: 0,
+                    continueBGM: false,
+                    displayTitleCard: true,
+                    transitionIn: .fade,
+                    transitionOut: .fade
+                ),
+                EntranceTableEntry(
+                    index: 0x0200,
+                    name: "Kokiri -> Deku Tree",
+                    sceneID: 0x10,
+                    spawnIndex: 0,
+                    continueBGM: false,
+                    displayTitleCard: true,
+                    transitionIn: .fade,
+                    transitionOut: .fade
+                ),
+                EntranceTableEntry(
+                    index: 0x0004,
+                    name: "Field -> Kokiri",
+                    sceneID: 4,
+                    spawnIndex: 0,
+                    continueBGM: false,
+                    displayTitleCard: true,
+                    transitionIn: .fade,
+                    transitionOut: .fade
+                ),
+            ]
+        )
+
+        let model = try HyruleWorldMapModelBuilder.build(
+            sceneLoader: loader,
+            availableScenes: loader.sceneEntries,
+            currentScene: kokiriScene,
+            currentSceneID: 4,
+            playerState: PlayerState(position: Vec3f(x: 60, y: 0, z: 30)),
+            visitedSceneIDs: [4]
+        )
+
+        let kokiri = try XCTUnwrap(model.areas.first { $0.id == "kokiri" })
+        let field = try XCTUnwrap(model.areas.first { $0.id == "hyrule-field" })
+
+        XCTAssertTrue(kokiri.isDiscovered)
+        XCTAssertTrue(kokiri.isCurrent)
+        XCTAssertFalse(field.isDiscovered)
+        XCTAssertEqual(kokiri.connectedAreaTitles, ["Hyrule Field"])
+        XCTAssertEqual(kokiri.dungeonEntrances.map(\.title), ["Deku Tree"])
+        XCTAssertFalse(kokiri.pointOfInterests.isEmpty)
+        XCTAssertEqual(model.connections.count, 1)
+        XCTAssertEqual(model.currentAreaID, "kokiri")
+        XCTAssertNotNil(model.currentPlayerPoint)
+    }
+
     func testAppRuntimeLoadsRealExtractedSceneViewerContentWhenConfigured() async throws {
         guard let contentRootPath = ProcessInfo.processInfo.environment["SWIFTOOT_REAL_CONTENT_ROOT"] else {
             throw XCTSkip("Set SWIFTOOT_REAL_CONTENT_ROOT to run the real-content scene viewer validation.")
@@ -1535,6 +1654,52 @@ private struct UITestSceneLoader: SceneLoading {
     func loadRoomVertexData(for room: RoomManifest) throws -> Data { Data() }
 }
 
+private struct WorldMapTestSceneLoader: SceneLoading {
+    let sceneEntries: [SceneTableEntry]
+    let scenesByID: [Int: LoadedScene]
+    let entranceTable: [EntranceTableEntry]
+
+    func loadSceneTableEntries() throws -> [SceneTableEntry] {
+        sceneEntries
+    }
+
+    func resolveSceneDirectory(for sceneID: Int) throws -> URL {
+        URL(fileURLWithPath: "/tmp/world-map-scene-\(sceneID)", isDirectory: true)
+    }
+
+    func loadScene(id: Int) throws -> LoadedScene {
+        guard let scene = scenesByID[id] else {
+            throw ContentLoaderError.sceneLoadingUnavailable
+        }
+        return scene
+    }
+
+    func loadScene(named name: String) throws -> LoadedScene {
+        guard let scene = scenesByID.values.first(where: { $0.manifest.name == name }) else {
+            throw ContentLoaderError.sceneLoadingUnavailable
+        }
+        return scene
+    }
+
+    func loadTextureAssetURLs(for scene: LoadedScene) throws -> [UInt32 : URL] { [:] }
+
+    func loadSceneManifest(id: Int) throws -> SceneManifest {
+        try loadScene(id: id).manifest
+    }
+
+    func loadSceneManifest(named name: String) throws -> SceneManifest {
+        try loadScene(named: name).manifest
+    }
+
+    func loadActorTable() throws -> [ActorTableEntry] { [] }
+    func loadObjectTable() throws -> [ObjectTableEntry] { [] }
+    func loadObject(named name: String) throws -> LoadedObject { throw ContentLoaderError.sceneLoadingUnavailable }
+    func loadEntranceTable() throws -> [EntranceTableEntry] { entranceTable }
+    func loadCollisionMesh(for manifest: SceneManifest) throws -> CollisionMesh? { scenesByID[manifest.id]?.collision }
+    func loadRoomDisplayList(for room: RoomManifest) throws -> [F3DEX2Command] { [] }
+    func loadRoomVertexData(for room: RoomManifest) throws -> Data { Data() }
+}
+
 private struct StubContentLoader: ContentLoading {
     func loadInitialContent() async throws {}
 }
@@ -1631,6 +1796,64 @@ private func makePlayerRenderTestObject() -> LoadedObject {
             rightHandPath: [],
             "meshes/gLinkAdultRightHandHoldingHylianShieldNearDL.dl.json": [],
             "meshes/gLinkAdultRightHandHoldingMirrorShieldNearDL.dl.json": [],
+        ]
+    )
+}
+
+private func makeWorldMapScene(
+    sceneID: Int,
+    sceneName: String,
+    sceneTitle: String,
+    exits: [SceneExitDefinition],
+    collisionWidth: Int16,
+    collisionHeight: Int16
+) -> LoadedScene {
+    let collision = CollisionMesh(
+        minimumBounds: Vector3s(x: 0, y: 0, z: 0),
+        maximumBounds: Vector3s(x: collisionWidth, y: 0, z: collisionHeight),
+        vertices: [
+            Vector3s(x: 0, y: 0, z: 0),
+            Vector3s(x: collisionWidth, y: 0, z: 0),
+            Vector3s(x: 0, y: 0, z: collisionHeight),
+            Vector3s(x: collisionWidth, y: 0, z: collisionHeight),
+        ],
+        polygons: [
+            CollisionPoly(
+                surfaceType: 0,
+                vertexA: 0,
+                vertexB: 1,
+                vertexC: 2,
+                normal: Vector3s(x: 0, y: 0x7FFF, z: 0),
+                distance: 0
+            ),
+            CollisionPoly(
+                surfaceType: 0,
+                vertexA: 1,
+                vertexB: 3,
+                vertexC: 2,
+                normal: Vector3s(x: 0, y: 0x7FFF, z: 0),
+                distance: 0
+            ),
+        ],
+        surfaceTypes: [CollisionSurfaceType(low: 0, high: 0)]
+    )
+
+    let room = RoomManifest(id: 0, name: "\(sceneName)_room_0", directory: sceneName)
+    return LoadedScene(
+        manifest: SceneManifest(
+            id: sceneID,
+            name: sceneName,
+            title: sceneTitle,
+            rooms: [room]
+        ),
+        collision: collision,
+        exits: SceneExitsFile(sceneName: sceneName, exits: exits),
+        rooms: [
+            LoadedSceneRoom(
+                manifest: room,
+                displayList: [],
+                vertexData: Data()
+            )
         ]
     )
 }
