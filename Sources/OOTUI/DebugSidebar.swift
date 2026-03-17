@@ -10,6 +10,7 @@ public struct DebugSidebar: View {
     private let isLoading: Bool
     private let errorMessage: String?
     private let drawCallCount: Int
+    @Binding private var xrayOverlaySettings: XRayOverlaySettings
     private let onSelectScene: @Sendable (Int) -> Void
 
     public init(
@@ -19,6 +20,7 @@ public struct DebugSidebar: View {
         isLoading: Bool = false,
         errorMessage: String? = nil,
         drawCallCount: Int = 0,
+        xrayOverlaySettings: Binding<XRayOverlaySettings> = .constant(XRayOverlaySettings()),
         onSelectScene: @escaping @Sendable (Int) -> Void = { _ in }
     ) {
         self.availableScenes = availableScenes
@@ -27,6 +29,7 @@ public struct DebugSidebar: View {
         self.isLoading = isLoading
         self.errorMessage = errorMessage
         self.drawCallCount = drawCallCount
+        _xrayOverlaySettings = xrayOverlaySettings
         self.onSelectScene = onSelectScene
     }
 
@@ -70,6 +73,17 @@ public struct DebugSidebar: View {
                         .foregroundStyle(.red)
                         .font(.caption)
                 }
+            }
+
+            Section("X-Ray") {
+                Toggle(
+                    "All Layers",
+                    isOn: Binding(
+                        get: { xrayOverlaySettings.allEnabled },
+                        set: { xrayOverlaySettings.setAll($0) }
+                    )
+                )
+                XRayOverlay(settings: $xrayOverlaySettings)
             }
         }
         .listStyle(.sidebar)

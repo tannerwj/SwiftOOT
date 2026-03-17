@@ -137,6 +137,18 @@ extension GameRuntime {
             playerInvincibilityFramesRemaining: playerInvincibilityFramesRemaining
         )
     }
+
+    func currentXRayPlayerAttackCollider() -> CombatCollider? {
+        guard
+            let attack = activePlayerAttackState,
+            let playerState,
+            attack.isActive
+        else {
+            return nil
+        }
+
+        return playerAttackCollider(for: attack, playerState: playerState)
+    }
 }
 
 private extension GameRuntime {

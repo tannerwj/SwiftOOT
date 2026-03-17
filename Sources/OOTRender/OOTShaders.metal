@@ -57,6 +57,11 @@ struct DrawBatchVertexIn {
     float2 texCoord [[attribute(2)]];
 };
 
+struct XRayDebugVertexIn {
+    float3 position [[attribute(0)]];
+    float4 color [[attribute(1)]];
+};
+
 constant uint kGeometryModeFog = 0x00010000;
 constant uint kGeometryModeLighting = 0x00020000;
 
@@ -143,6 +148,18 @@ vertex VertexOut oot_draw_batch_vertex(
         combinerUniforms.geometryMode
     );
     out.fog = computeFogFactor(vertexIn.clipPosition, frameUniforms.fogParameters);
+    return out;
+}
+
+vertex VertexOut oot_xray_debug_vertex(
+    XRayDebugVertexIn vertexIn [[stage_in]],
+    constant FrameUniforms& frameUniforms [[buffer(1)]]
+) {
+    VertexOut out;
+    out.position = frameUniforms.mvp * float4(vertexIn.position, 1.0);
+    out.texCoord = float2(0.0);
+    out.color = vertexIn.color;
+    out.fog = 1.0;
     return out;
 }
 

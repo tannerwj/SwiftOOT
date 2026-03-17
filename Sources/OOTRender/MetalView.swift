@@ -20,6 +20,7 @@ public struct MetalView: NSViewRepresentable {
     private let timeOfDay: Double
     private let textureBindings: [UInt32: MTLTexture]
     private let inputHandler: (any GameplayInputHandling)?
+    private let toggleAllXRayLayers: () -> Void
     private let gameplayCameraConfiguration: GameplayCameraConfiguration?
     private let frameStatsHandler: (SceneFrameStats) -> Void
 
@@ -29,6 +30,7 @@ public struct MetalView: NSViewRepresentable {
         timeOfDay: Double,
         textureBindings: [UInt32: MTLTexture] = [:],
         inputHandler: (any GameplayInputHandling)? = nil,
+        toggleAllXRayLayers: @escaping () -> Void = {},
         gameplayCameraConfiguration: GameplayCameraConfiguration? = nil,
         frameStatsHandler: @escaping (SceneFrameStats) -> Void = { _ in }
     ) {
@@ -37,6 +39,7 @@ public struct MetalView: NSViewRepresentable {
         self.timeOfDay = timeOfDay
         self.textureBindings = textureBindings
         self.inputHandler = inputHandler
+        self.toggleAllXRayLayers = toggleAllXRayLayers
         self.gameplayCameraConfiguration = gameplayCameraConfiguration
         self.frameStatsHandler = frameStatsHandler
     }
@@ -62,6 +65,7 @@ public struct MetalView: NSViewRepresentable {
         let view = OrbitInputMTKView(frame: .zero, device: renderer.device)
         view.inputRenderer = renderer
         view.gameplayInputHandler = inputHandler
+        view.toggleAllXRayLayers = toggleAllXRayLayers
         renderer.setTimeOfDay(timeOfDay)
         renderer.configure(view)
         context.coordinator.renderer = renderer
@@ -77,6 +81,7 @@ public struct MetalView: NSViewRepresentable {
         nsView.clearColor = context.coordinator.renderer?.clearColorForCurrentEnvironment() ?? nsView.clearColor
         if let nsView = nsView as? OrbitInputMTKView {
             nsView.gameplayInputHandler = inputHandler
+            nsView.toggleAllXRayLayers = toggleAllXRayLayers
         }
         inputHandler?.updateMovementReferenceYaw(context.coordinator.renderer?.currentGameplayMovementYaw())
     }
@@ -91,6 +96,7 @@ public struct MetalView: NSViewRepresentable {
 final class OrbitInputMTKView: MTKView {
     weak var inputRenderer: OOTRenderer?
     weak var gameplayInputHandler: (any GameplayInputHandling)?
+    var toggleAllXRayLayers: (() -> Void)?
 
     override var acceptsFirstResponder: Bool {
         true
@@ -142,12 +148,17 @@ final class OrbitInputMTKView: MTKView {
     }
 
     private func handleCameraKeyEvent(_ event: NSEvent) -> Bool {
-        if
-            event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains([.command, .shift]),
-            event.charactersIgnoringModifiers?.lowercased() == "c"
-        {
-            inputRenderer?.toggleDebugCamera()
-            return true
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains([.command, .shift]) {
+            switch event.charactersIgnoringModifiers?.lowercased() {
+            case "c":
+                inputRenderer?.toggleDebugCamera()
+                return true
+            case "x":
+                toggleAllXRayLayers?()
+                return true
+            default:
+                break
+            }
         }
 
         guard let characters = event.charactersIgnoringModifiers?.lowercased() else {

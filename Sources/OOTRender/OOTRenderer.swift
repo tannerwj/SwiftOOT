@@ -51,6 +51,16 @@ public struct RenderedSceneCapture: Sendable, Equatable {
     }
 }
 
+private struct XRayDebugVertex {
+    var position: SIMD3<Float>
+    var color: SIMD4<Float>
+}
+
+private struct XRayOverlayPassStats {
+    var drawCallCount: Int = 0
+    var triangleCount: Int = 0
+}
+
 public final class OOTRenderer: NSObject, MTKViewDelegate {
     public static let preferredFramesPerSecond = 60
     public static let depthPixelFormat: MTLPixelFormat = .depth32Float
@@ -73,6 +83,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     public let device: MTLDevice
     public let commandQueue: MTLCommandQueue
     public let renderPipelineState: MTLRenderPipelineState
+    private let xrayDebugPipelineState: MTLRenderPipelineState
     public let sceneBounds: SceneBounds
     let vertexDescriptor: MTLVertexDescriptor
     let orbitCameraController: OrbitCameraController
@@ -123,6 +134,14 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         )
         let fragmentFunction = try Self.makeFunction(
             named: "oot_combiner_fragment",
+            in: library
+        )
+        let xrayDebugVertexFunction = try Self.makeFunction(
+            named: "oot_xray_debug_vertex",
+            in: library
+        )
+        let flatColorFragmentFunction = try Self.makeFunction(
+            named: "oot_flat_color_fragment",
             in: library
         )
         let vertexDescriptor = makeN64VertexDescriptor()
@@ -179,6 +198,11 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         self.timeOfDay = 6.0
         self.renderPipelineState = try device.makeRenderPipelineState(
             descriptor: pipelineDescriptor
+        )
+        self.xrayDebugPipelineState = try Self.makeXRayDebugPipelineState(
+            device: device,
+            vertexFunction: xrayDebugVertexFunction,
+            fragmentFunction: flatColorFragmentFunction
         )
         super.init()
     }
@@ -321,13 +345,29 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         configureDepthAttachment(for: renderPassDescriptor)
 
         do {
-            try encodeSceneFrame(
+            var frameStats = try encodeSceneFrame(
                 with: commandBuffer,
                 renderPassDescriptor: renderPassDescriptor,
                 viewportSize: view.drawableSize,
                 frameUniforms: frameUniforms,
                 skyboxViewProjection: makeSkyboxViewProjection(from: cameraMatrices)
             )
+            if
+                let colorTexture = renderPassDescriptor.colorAttachments[0].texture,
+                let xrayDebugScene = renderScene.xrayDebugScene,
+                xrayDebugScene.isEmpty == false
+            {
+                let overlayStats = try encodeXRayOverlayPass(
+                    with: commandBuffer,
+                    colorTexture: colorTexture,
+                    viewportSize: view.drawableSize,
+                    frameUniforms: frameUniforms,
+                    xrayDebugScene: xrayDebugScene
+                )
+                frameStats.drawCallCount += overlayStats.drawCallCount
+                frameStats.triangleCount += overlayStats.triangleCount
+            }
+            frameStatsHandler(frameStats)
             commandBuffer.present(drawable)
             commandBuffer.commit()
         } catch {
@@ -486,13 +526,29 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         }
 
         advanceFrameUniformBuffer(with: frameUniforms)
-        try encodeSceneFrame(
+        var frameStats = try encodeSceneFrame(
             with: commandBuffer,
             renderPassDescriptor: renderPassDescriptor,
             viewportSize: CGSize(width: texture.width, height: texture.height),
             frameUniforms: frameUniforms,
             skyboxViewProjection: skyboxViewProjection
         )
+        if
+            let colorTexture = renderPassDescriptor.colorAttachments[0].texture,
+            let xrayDebugScene = renderScene.xrayDebugScene,
+            xrayDebugScene.isEmpty == false
+        {
+            let overlayStats = try encodeXRayOverlayPass(
+                with: commandBuffer,
+                colorTexture: colorTexture,
+                viewportSize: CGSize(width: texture.width, height: texture.height),
+                frameUniforms: frameUniforms,
+                xrayDebugScene: xrayDebugScene
+            )
+            frameStats.drawCallCount += overlayStats.drawCallCount
+            frameStats.triangleCount += overlayStats.triangleCount
+        }
+        frameStatsHandler(frameStats)
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
     }
@@ -608,6 +664,27 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
             return buffer
         }
     }
+
+    private static func makeXRayDebugPipelineState(
+        device: MTLDevice,
+        vertexFunction: MTLFunction,
+        fragmentFunction: MTLFunction
+    ) throws -> MTLRenderPipelineState {
+        let descriptor = MTLRenderPipelineDescriptor()
+        descriptor.label = "OOTXRayDebugPipeline"
+        descriptor.vertexFunction = vertexFunction
+        descriptor.fragmentFunction = fragmentFunction
+        descriptor.vertexDescriptor = makeXRayDebugVertexDescriptor()
+        descriptor.colorAttachments[0].pixelFormat = .bgra8Unorm
+        descriptor.colorAttachments[0].isBlendingEnabled = true
+        descriptor.colorAttachments[0].rgbBlendOperation = .add
+        descriptor.colorAttachments[0].alphaBlendOperation = .add
+        descriptor.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        descriptor.colorAttachments[0].sourceAlphaBlendFactor = .sourceAlpha
+        descriptor.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        descriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        return try device.makeRenderPipelineState(descriptor: descriptor)
+    }
 }
 
 extension OOTRenderer {
@@ -623,11 +700,11 @@ private extension OOTRenderer {
         viewportSize: CGSize,
         frameUniforms: FrameUniforms,
         skyboxViewProjection: simd_float4x4? = nil
-    ) throws {
+    ) throws -> SceneFrameStats {
         guard let renderCommandEncoder = commandBuffer.makeRenderCommandEncoder(
             descriptor: renderPassDescriptor
         ) else {
-            return
+            return SceneFrameStats()
         }
         defer {
             renderCommandEncoder.endEncoding()
@@ -690,8 +767,116 @@ private extension OOTRenderer {
                 environmentFogColor: environmentState.fogColor
             )
         }
+        return frameStats
+    }
 
-        frameStatsHandler(frameStats)
+    func encodeXRayOverlayPass(
+        with commandBuffer: MTLCommandBuffer,
+        colorTexture: MTLTexture,
+        viewportSize: CGSize,
+        frameUniforms: FrameUniforms,
+        xrayDebugScene: XRayDebugScene
+    ) throws -> XRayOverlayPassStats {
+        var lineSegments = xrayDebugScene.lineSegments
+        if let frustumColor = xrayDebugScene.cameraFrustumColor {
+            lineSegments.append(
+                contentsOf: makeCameraFrustumLineSegments(
+                    inverseViewProjection: simd_inverse(frameUniforms.mvp),
+                    color: frustumColor
+                )
+            )
+        }
+
+        let lineVertices = lineSegments.flatMap { segment in
+            [
+                XRayDebugVertex(position: segment.start, color: segment.color),
+                XRayDebugVertex(position: segment.end, color: segment.color),
+            ]
+        }
+        let triangleVertices = xrayDebugScene.filledTriangles.flatMap { triangle in
+            [
+                XRayDebugVertex(position: triangle.a, color: triangle.color),
+                XRayDebugVertex(position: triangle.b, color: triangle.color),
+                XRayDebugVertex(position: triangle.c, color: triangle.color),
+            ]
+        }
+
+        guard lineVertices.isEmpty == false || triangleVertices.isEmpty == false else {
+            return XRayOverlayPassStats()
+        }
+
+        let renderPassDescriptor = MTLRenderPassDescriptor()
+        renderPassDescriptor.colorAttachments[0].texture = colorTexture
+        renderPassDescriptor.colorAttachments[0].loadAction = .load
+        renderPassDescriptor.colorAttachments[0].storeAction = .store
+
+        guard let renderCommandEncoder = commandBuffer.makeRenderCommandEncoder(
+            descriptor: renderPassDescriptor
+        ) else {
+            return XRayOverlayPassStats()
+        }
+        defer {
+            renderCommandEncoder.endEncoding()
+        }
+
+        renderCommandEncoder.setViewport(
+            MTLViewport(
+                originX: 0,
+                originY: 0,
+                width: Double(viewportSize.width),
+                height: Double(viewportSize.height),
+                znear: 0,
+                zfar: 1
+            )
+        )
+        renderCommandEncoder.setRenderPipelineState(xrayDebugPipelineState)
+        renderCommandEncoder.setCullMode(.none)
+        renderCommandEncoder.setVertexBuffer(
+            currentFrameUniformBuffer,
+            offset: 0,
+            index: OOTRenderBufferIndex.frameUniforms.rawValue
+        )
+
+        var stats = XRayOverlayPassStats()
+
+        if lineVertices.isEmpty == false {
+            let bufferLength = MemoryLayout<XRayDebugVertex>.stride * lineVertices.count
+            guard let lineBuffer = device.makeBuffer(bytes: lineVertices, length: bufferLength) else {
+                throw OOTRendererError.metalUnavailable
+            }
+            renderCommandEncoder.setVertexBuffer(
+                lineBuffer,
+                offset: 0,
+                index: OOTRenderBufferIndex.vertices.rawValue
+            )
+            renderCommandEncoder.drawPrimitives(
+                type: .line,
+                vertexStart: 0,
+                vertexCount: lineVertices.count
+            )
+            stats.drawCallCount += 1
+        }
+
+        if triangleVertices.isEmpty == false {
+            let bufferLength = MemoryLayout<XRayDebugVertex>.stride * triangleVertices.count
+            guard let triangleBuffer = device.makeBuffer(bytes: triangleVertices, length: bufferLength) else {
+                throw OOTRendererError.metalUnavailable
+            }
+            renderCommandEncoder.setVertexBuffer(
+                triangleBuffer,
+                offset: 0,
+                index: OOTRenderBufferIndex.vertices.rawValue
+            )
+            renderCommandEncoder.drawPrimitives(
+                type: .triangle,
+                vertexStart: 0,
+                vertexCount: triangleVertices.count
+            )
+            stats.drawCallCount += 1
+            stats.triangleCount += triangleVertices.count / 3
+        }
+
+        return stats
     }
 
     func encodeRawVertexFrame(
@@ -1020,6 +1205,47 @@ private extension OOTRenderer {
         return cameraMatrices.projectionMatrix * rotationOnlyView
     }
 
+    func makeCameraFrustumLineSegments(
+        inverseViewProjection: simd_float4x4,
+        color: SIMD4<Float>
+    ) -> [XRayDebugLineSegment] {
+        let near0 = unproject(ndc: SIMD3<Float>(-1, -1, -1), inverseViewProjection: inverseViewProjection)
+        let near1 = unproject(ndc: SIMD3<Float>(1, -1, -1), inverseViewProjection: inverseViewProjection)
+        let near2 = unproject(ndc: SIMD3<Float>(1, 1, -1), inverseViewProjection: inverseViewProjection)
+        let near3 = unproject(ndc: SIMD3<Float>(-1, 1, -1), inverseViewProjection: inverseViewProjection)
+        let far0 = unproject(ndc: SIMD3<Float>(-1, -1, 1), inverseViewProjection: inverseViewProjection)
+        let far1 = unproject(ndc: SIMD3<Float>(1, -1, 1), inverseViewProjection: inverseViewProjection)
+        let far2 = unproject(ndc: SIMD3<Float>(1, 1, 1), inverseViewProjection: inverseViewProjection)
+        let far3 = unproject(ndc: SIMD3<Float>(-1, 1, 1), inverseViewProjection: inverseViewProjection)
+
+        return [
+            XRayDebugLineSegment(start: near0, end: near1, color: color),
+            XRayDebugLineSegment(start: near1, end: near2, color: color),
+            XRayDebugLineSegment(start: near2, end: near3, color: color),
+            XRayDebugLineSegment(start: near3, end: near0, color: color),
+            XRayDebugLineSegment(start: far0, end: far1, color: color),
+            XRayDebugLineSegment(start: far1, end: far2, color: color),
+            XRayDebugLineSegment(start: far2, end: far3, color: color),
+            XRayDebugLineSegment(start: far3, end: far0, color: color),
+            XRayDebugLineSegment(start: near0, end: far0, color: color),
+            XRayDebugLineSegment(start: near1, end: far1, color: color),
+            XRayDebugLineSegment(start: near2, end: far2, color: color),
+            XRayDebugLineSegment(start: near3, end: far3, color: color),
+        ]
+    }
+
+    func unproject(
+        ndc: SIMD3<Float>,
+        inverseViewProjection: simd_float4x4
+    ) -> SIMD3<Float> {
+        let world = inverseViewProjection * SIMD4<Float>(ndc, 1.0)
+        guard abs(world.w) > 0.000_1 else {
+            return .zero
+        }
+
+        return SIMD3<Float>(world.x / world.w, world.y / world.w, world.z / world.w)
+    }
+
     static func skyboxVertices(for face: SceneSkyboxFace) -> [N64Vertex] {
         let size: Int16 = 64
         switch face {
@@ -1098,6 +1324,19 @@ private extension OOTRenderer {
 }
 
 private final class BundleToken {}
+
+private func makeXRayDebugVertexDescriptor() -> MTLVertexDescriptor {
+    let descriptor = MTLVertexDescriptor()
+    descriptor.attributes[0].format = .float3
+    descriptor.attributes[0].offset = 0
+    descriptor.attributes[0].bufferIndex = OOTRenderBufferIndex.vertices.rawValue
+    descriptor.attributes[1].format = .float4
+    descriptor.attributes[1].offset = MemoryLayout<SIMD3<Float>>.stride
+    descriptor.attributes[1].bufferIndex = OOTRenderBufferIndex.vertices.rawValue
+    descriptor.layouts[OOTRenderBufferIndex.vertices.rawValue].stride = MemoryLayout<XRayDebugVertex>.stride
+    descriptor.layouts[OOTRenderBufferIndex.vertices.rawValue].stepFunction = .perVertex
+    return descriptor
+}
 
 enum OOTRenderTextureIndex: Int {
     case texel0 = 0

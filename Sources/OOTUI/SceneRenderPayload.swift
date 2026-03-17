@@ -4,6 +4,7 @@ import OOTContent
 import OOTCore
 import OOTDataModel
 import OOTRender
+import OOTTelemetry
 import simd
 
 struct SceneRenderPayload {
@@ -322,7 +323,9 @@ enum SceneRenderPayloadBuilder {
         from payload: SceneRenderPayload,
         playerState: PlayerState?,
         inventoryContext: InventoryContext? = nil,
-        actors: [any Actor] = []
+        actors: [any Actor] = [],
+        xrayTelemetrySnapshot: XRayTelemetrySnapshot? = nil,
+        xrayOverlaySettings: XRayOverlaySettings = XRayOverlaySettings()
     ) -> OOTRenderScene {
         var scene = payload.baseScene
         var skeletons: [OOTRenderSkeleton] = []
@@ -360,6 +363,10 @@ enum SceneRenderPayloadBuilder {
             }
         )
         scene.skeletons = skeletons
+        scene.xrayDebugScene = XRayDebugSceneBuilder.build(
+            from: xrayTelemetrySnapshot,
+            settings: xrayOverlaySettings
+        )
         return scene
     }
 
