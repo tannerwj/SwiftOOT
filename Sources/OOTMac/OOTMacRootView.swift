@@ -9,8 +9,7 @@ struct OOTMacRootView: View {
             if let runtime = bootstrapModel.runtime {
                 OOTAppView(
                     runtime: runtime,
-                    developerHarness: bootstrapModel.developerHarnessConfiguration,
-                    startupManagedExternally: true
+                    developerHarness: bootstrapModel.developerHarnessConfiguration
                 )
             } else {
                 OOTContentBootstrapView(model: bootstrapModel)

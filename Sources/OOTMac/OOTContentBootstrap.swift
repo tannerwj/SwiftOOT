@@ -116,10 +116,6 @@ final class OOTContentBootstrapModel {
         )
         errorMessage = nil
 
-        if let runtime {
-            scheduleStartup(for: runtime)
-        }
-
         if persistSelection {
             userDefaults.set(resolvedContentRoot.path, forKey: Self.storedContentRootDefaultsKey)
         }
@@ -136,42 +132,6 @@ final class OOTContentBootstrapModel {
         errorMessage = nil
         startupHint = nil
     }
-
-    private func scheduleStartup(for runtime: GameRuntime) {
-        let harness = developerHarnessConfiguration
-        startupTask = Task { @MainActor [weak self, runtime] in
-            await Task.yield()
-            guard let self, !Task.isCancelled else {
-                return
-            }
-
-            do {
-                if let harness, harness.isEnabled {
-                    try await DeveloperHarnessRunner.run(
-                        configuration: harness,
-                        runtime: runtime,
-                        log: { [weak self] message in
-                            self?.writeHarnessNoteToStderr(message, harness: harness)
-                        }
-                    )
-                    if harness.captureRequested {
-                        NSApplication.shared.terminate(nil)
-                    }
-                } else {
-                    await runtime.start()
-                }
-            } catch {
-                runtime.errorMessage = error.localizedDescription
-                if let harness, harness.isEnabled {
-                    writeHarnessFailureToStderr(error.localizedDescription, harness: harness)
-                    if harness.captureRequested {
-                        NSApplication.shared.terminate(nil)
-                    }
-                }
-            }
-        }
-    }
-
     private func writeHarnessFailureToStderr(
         _ message: String,
         harness: DeveloperHarnessConfiguration
