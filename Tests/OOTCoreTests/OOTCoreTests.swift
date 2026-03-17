@@ -2800,6 +2800,212 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testOcarinaEntersInputModeAndRecognizesLearnedSong() throws {
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [0: []],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: []
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+        runtime.inventoryContext = InventoryContext(
+            gameplay: GameplayInventoryState(
+                hasOcarina: true,
+                cButtonLoadout: GameplayCButtonLoadout(left: .ocarina)
+            ),
+            questStatus: QuestStatus(songs: [.songOfTime])
+        )
+
+        try runtime.loadScene(id: 0x55)
+        runtime.playerState = PlayerState(
+            position: Vec3f(x: 0, y: 0, z: 0),
+            facingRadians: 0,
+            isGrounded: true,
+            floorHeight: 0
+        )
+
+        runtime.setControllerInput(ControllerInputState(cLeftPressed: true))
+        runtime.updateFrame()
+        runtime.setControllerInput(ControllerInputState())
+        runtime.updateFrame()
+
+        XCTAssertEqual(runtime.ocarinaSession?.mode, .freePlay)
+
+        playOcarinaSequence(.songOfTime, on: runtime)
+
+        XCTAssertNil(runtime.ocarinaSession)
+        XCTAssertEqual(runtime.ocarinaRecognition?.song, .songOfTime)
+        XCTAssertEqual(runtime.lastResolvedOcarinaEffect?.kind, .practice)
+        XCTAssertEqual(runtime.ocarinaRecognition?.summary, "The Song of Time resonates, but no nearby block or seal responds.")
+    }
+
+    @MainActor
+    func testSongOfTimeTriggerMarksDungeonEventWhenPlayedInContext() throws {
+        let trigger = SceneCutsceneTrigger(
+            id: 7,
+            roomID: 0,
+            actorName: "ACTOR_EN_OKARINA_TAG",
+            params: makeOcarinaTagParams(type: 4, songIndex: 4, switchFlag: 12),
+            kind: "ocarinaTag",
+            volume: SceneCylinderTriggerVolume(
+                center: Vector3s(x: 0, y: 0, z: 0),
+                radius: 120,
+                minimumY: -80,
+                maximumY: 80
+            )
+        )
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [0: []],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ],
+                cutsceneTriggers: [trigger]
+            ),
+            actorTable: []
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+        runtime.inventoryContext = InventoryContext(
+            gameplay: GameplayInventoryState(
+                hasOcarina: true,
+                cButtonLoadout: GameplayCButtonLoadout(left: .ocarina)
+            ),
+            questStatus: QuestStatus(songs: [.songOfTime])
+        )
+
+        try runtime.loadScene(id: 0x55)
+        runtime.playerState = PlayerState(
+            position: Vec3f(x: 0, y: 0, z: 0),
+            facingRadians: 0,
+            isGrounded: true,
+            floorHeight: 0
+        )
+
+        runtime.setControllerInput(ControllerInputState(cLeftPressed: true))
+        runtime.updateFrame()
+        runtime.setControllerInput(ControllerInputState())
+        runtime.updateFrame()
+        playOcarinaSequence(.songOfTime, on: runtime)
+
+        let effect = try XCTUnwrap(runtime.lastResolvedOcarinaEffect)
+        XCTAssertEqual(effect.kind, .worldTrigger)
+        XCTAssertEqual(effect.summary, "The Song of Time stirs the hidden mechanism.")
+        XCTAssertEqual(runtime.inventoryState.triggeredDungeonEventFlags.count, 1)
+        XCTAssertEqual(effect.eventFlag?.roomID, 0)
+        XCTAssertEqual(effect.eventFlag?.actorID, 7)
+        XCTAssertEqual(effect.eventFlag?.params, Int(trigger.params))
+    }
+
+    @MainActor
+    func testSunsSongTogglesTimeOfDayBetweenDayAndNight() throws {
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [0: []],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: []
+        )
+        let runtime = makeRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+        runtime.inventoryContext = InventoryContext(
+            gameplay: GameplayInventoryState(
+                hasOcarina: true,
+                cButtonLoadout: GameplayCButtonLoadout(left: .ocarina)
+            ),
+            questStatus: QuestStatus(songs: [.sunsSong])
+        )
+        runtime.gameTime = GameTime(frameCount: 0, timeOfDay: 10.0)
+
+        try runtime.loadScene(id: 0x55)
+        runtime.playerState = PlayerState(
+            position: Vec3f(x: 0, y: 0, z: 0),
+            facingRadians: 0,
+            isGrounded: true,
+            floorHeight: 0
+        )
+
+        runtime.setControllerInput(ControllerInputState(cLeftPressed: true))
+        runtime.updateFrame()
+        runtime.setControllerInput(ControllerInputState())
+        runtime.updateFrame()
+        playOcarinaSequence(.sunsSong, on: runtime)
+
+        XCTAssertEqual(runtime.gameTime.timeOfDay, 18.0, accuracy: 0.0001)
+
+        runtime.setControllerInput(ControllerInputState(cLeftPressed: true))
+        runtime.updateFrame()
+        runtime.setControllerInput(ControllerInputState())
+        runtime.updateFrame()
+        playOcarinaSequence(.sunsSong, on: runtime)
+
+        XCTAssertEqual(runtime.gameTime.timeOfDay, 6.0, accuracy: 0.0001)
+    }
+
+    @MainActor
+    func testOcarinaTeachingPlaybackTransitionsToRepeatAndLearnsSong() throws {
+        let runtime = makeRuntime(sceneLoader: MockSceneLoader(), suspender: { _ in })
+        runtime.currentState = .gameplay
+        runtime.playState = PlayState(
+            activeSaveSlot: 0,
+            entryMode: .newGame,
+            currentSceneName: "Kokiri Forest",
+            currentRoomID: 0,
+            playerName: "Link"
+        )
+        runtime.inventoryState = GameplayInventoryState(hasOcarina: true)
+
+        runtime.beginOcarinaTeaching(.zeldasLullaby)
+
+        runtime.updateFrame()
+        XCTAssertEqual(runtime.ocarinaSession?.mode, .teachingPlayback)
+        XCTAssertEqual(runtime.ocarinaSession?.highlightedPromptNoteIndex, 0)
+
+        for _ in 0..<(QuestSong.zeldasLullaby.ocarinaNotes.count * 14 + 1) {
+            runtime.updateFrame()
+        }
+
+        XCTAssertEqual(runtime.ocarinaSession?.mode, .teachingRepeat)
+
+        playOcarinaSequence(.zeldasLullaby, on: runtime)
+
+        XCTAssertTrue(runtime.inventoryContext.questStatus.songs.contains(.zeldasLullaby))
+        XCTAssertEqual(runtime.ocarinaRecognition?.song, .zeldasLullaby)
+        XCTAssertTrue(runtime.ocarinaRecognition?.learnedThroughTeaching == true)
+        XCTAssertEqual(runtime.lastResolvedOcarinaEffect?.kind, .teachingSuccess)
+    }
+
+    @MainActor
     func testBombExplosionDamagesEnemyAndTriggersNearbyBombChainReaction() throws {
         let recorder = EventRecorder()
         var registry = ActorRegistry()
@@ -3627,6 +3833,49 @@ private func performSwordSlash(with runtime: GameRuntime) throws {
     for _ in 0..<6 {
         runtime.updateFrame()
     }
+}
+
+@MainActor
+private func playOcarinaSequence(
+    _ song: QuestSong,
+    on runtime: GameRuntime
+) {
+    for note in song.ocarinaNotes {
+        runtime.setControllerInput(controllerInputState(for: note))
+        runtime.updateFrame()
+        runtime.setControllerInput(ControllerInputState())
+        if runtime.ocarinaSession == nil {
+            break
+        }
+        runtime.updateFrame()
+    }
+}
+
+private func controllerInputState(for note: OcarinaNote) -> ControllerInputState {
+    switch note {
+    case .a:
+        return ControllerInputState(aPressed: true)
+    case .cUp:
+        return ControllerInputState(cUpPressed: true)
+    case .cRight:
+        return ControllerInputState(cRightPressed: true)
+    case .cLeft:
+        return ControllerInputState(cLeftPressed: true)
+    case .cDown:
+        return ControllerInputState(cDownPressed: true)
+    }
+}
+
+private func makeOcarinaTagParams(
+    type: Int,
+    songIndex: Int,
+    switchFlag: Int
+) -> Int16 {
+    let rawValue =
+        ((type & 0x3F) << 10) |
+        ((songIndex & 0x0F) << 6) |
+        (switchFlag & 0x3F)
+    return Int16(bitPattern: UInt16(rawValue))
 }
 
 @MainActor

@@ -89,6 +89,15 @@ struct GameplayHUDView: View {
                     LockOnIndicatorView()
                         .position(x: indicator.x, y: indicator.y)
                 }
+
+                if runtime.ocarinaSession != nil || runtime.ocarinaRecognition != nil {
+                    OcarinaOverlayView(
+                        session: runtime.ocarinaSession,
+                        recognition: runtime.ocarinaRecognition
+                    )
+                    .padding(.top, 28)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                }
             }
         }
         .allowsHitTesting(false)
@@ -111,6 +120,26 @@ struct GameplayHUDView: View {
                 triggerHeartDamageFlash()
             }
             previousHealthUnits = newValue
+        }
+        .onChange(of: runtime.ocarinaSession?.enteredNotes, initial: false) { oldValue, newValue in
+            guard oldValue != newValue, let note = newValue?.last else {
+                return
+            }
+
+            OcarinaTonePlayer.shared.play(note: note)
+        }
+        .onChange(of: runtime.ocarinaSession?.highlightedPromptNoteIndex, initial: false) { oldValue, newValue in
+            guard
+                oldValue != newValue,
+                let session = runtime.ocarinaSession,
+                session.mode == .teachingPlayback,
+                let newValue,
+                session.promptNotes.indices.contains(newValue)
+            else {
+                return
+            }
+
+            OcarinaTonePlayer.shared.play(note: session.promptNotes[newValue])
         }
     }
 }
@@ -231,6 +260,130 @@ private struct LockOnIndicatorView: View {
             .foregroundStyle(Color(red: 0.98, green: 0.9, blue: 0.2))
             .shadow(color: .black.opacity(0.7), radius: 2, y: 1)
             .rotationEffect(.degrees(180))
+    }
+}
+
+private struct OcarinaOverlayView: View {
+    let session: OcarinaSessionState?
+    let recognition: OcarinaRecognitionState?
+
+    var body: some View {
+        VStack(spacing: 10) {
+            if let recognition {
+                VStack(spacing: 2) {
+                    Text(recognition.song.title)
+                        .font(.system(size: 18, weight: .black, design: .rounded))
+                        .foregroundStyle(.white)
+                    Text(recognition.summary)
+                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.78))
+                        .multilineTextAlignment(.center)
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 10)
+                .background(.black.opacity(0.56), in: Capsule(style: .continuous))
+                .overlay {
+                    Capsule(style: .continuous)
+                        .strokeBorder(.white.opacity(0.18), lineWidth: 1)
+                }
+            }
+
+            if let session {
+                OcarinaStaffCard(session: session)
+            }
+        }
+    }
+}
+
+private struct OcarinaStaffCard: View {
+    let session: OcarinaSessionState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.86))
+                Spacer()
+                Text("A / C")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+
+            if session.promptNotes.isEmpty == false {
+                HStack(spacing: 6) {
+                    ForEach(Array(session.promptNotes.enumerated()), id: \.offset) { index, note in
+                        Text(note.buttonLabel)
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(session.mode == .teachingPlayback ? 0.96 : 0.72))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(
+                                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                    .fill(index == session.highlightedPromptNoteIndex ? Color(red: 0.94, green: 0.82, blue: 0.12) : .white.opacity(0.08))
+                            )
+                    }
+                }
+            }
+
+            OcarinaStaffView(notes: session.enteredNotes)
+                .frame(width: 280, height: 92)
+        }
+        .padding(14)
+        .background(.black.opacity(0.58), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(.white.opacity(0.18), lineWidth: 1)
+        }
+    }
+
+    private var title: String {
+        switch session.mode {
+        case .freePlay:
+            return "Ocarina"
+        case .teachingPlayback:
+            return "Listen"
+        case .teachingRepeat:
+            return "Repeat"
+        }
+    }
+}
+
+private struct OcarinaStaffView: View {
+    let notes: [OcarinaNote]
+
+    var body: some View {
+        GeometryReader { geometry in
+            let lineSpacing = geometry.size.height / 6
+            let baseX: CGFloat = 22
+            let availableWidth = max(60, geometry.size.width - (baseX * 2))
+            let stepX = notes.isEmpty ? availableWidth : availableWidth / CGFloat(max(notes.count - 1, 1))
+
+            ZStack(alignment: .topLeading) {
+                ForEach(0..<5, id: \.self) { line in
+                    Capsule(style: .continuous)
+                        .fill(.white.opacity(0.26))
+                        .frame(height: 1.5)
+                        .offset(y: lineSpacing * CGFloat(line + 1))
+                }
+
+                ForEach(Array(notes.enumerated()), id: \.offset) { index, note in
+                    VStack(spacing: 2) {
+                        Circle()
+                            .fill(Color(red: 0.94, green: 0.82, blue: 0.12))
+                            .frame(width: 14, height: 14)
+                            .shadow(color: .black.opacity(0.35), radius: 2, y: 1)
+                        Text(note.pitchLabel)
+                            .font(.system(size: 9, weight: .black, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.82))
+                    }
+                    .position(
+                        x: baseX + (stepX * CGFloat(index)),
+                        y: lineSpacing * CGFloat(note.staffLineIndex + 1)
+                    )
+                }
+            }
+        }
     }
 }
 

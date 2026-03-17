@@ -13,7 +13,7 @@ extension GameRuntime {
     }
 
     public func togglePauseMenu() {
-        guard currentState == .gameplay else {
+        guard currentState == .gameplay, isOcarinaSessionActive == false else {
             return
         }
 
@@ -111,6 +111,10 @@ extension GameRuntime {
         currentInput: ControllerInputState,
         previousInput: ControllerInputState
     ) -> Bool {
+        guard isOcarinaSessionActive == false else {
+            return false
+        }
+
         let startTriggered = currentInput.startPressed && previousInput.startPressed == false
 
         if isPauseMenuPresented == false {

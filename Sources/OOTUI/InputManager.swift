@@ -9,6 +9,7 @@ final class InputManager: NSObject, GameplayInputHandling {
         case one = 18
         case two = 19
         case three = 20
+        case four = 21
         case q = 12
         case a = 0
         case s = 1
@@ -121,6 +122,7 @@ final class InputManager: NSObject, GameplayInputHandling {
             bPressed: pressedKeys.contains(.leftShift) || pressedKeys.contains(.rightShift) || gamepadState.bPressed,
             lPressed: pressedKeys.contains(.q) || gamepadState.lPressed,
             rPressed: pressedKeys.contains(.e) || gamepadState.rPressed,
+            cUpPressed: pressedKeys.contains(.four) || gamepadState.cUpPressed,
             cLeftPressed: pressedKeys.contains(.one) || gamepadState.cLeftPressed,
             cDownPressed: pressedKeys.contains(.two) || gamepadState.cDownPressed,
             cRightPressed: pressedKeys.contains(.three) || gamepadState.cRightPressed,
@@ -176,6 +178,7 @@ final class InputManager: NSObject, GameplayInputHandling {
             bPressed: gamepad.buttonB.isPressed,
             lPressed: gamepad.leftShoulder.isPressed,
             rPressed: gamepad.rightShoulder.isPressed,
+            cUpPressed: false,
             cLeftPressed: gamepad.buttonY.isPressed,
             cDownPressed: gamepad.buttonX.isPressed,
             cRightPressed: gamepad.rightTrigger.isPressed,

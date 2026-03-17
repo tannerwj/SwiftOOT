@@ -34,6 +34,7 @@ public enum DungeonEventKind: String, Sendable, Codable, Hashable, Equatable {
     case torchLit
     case blockMoved
     case doorOpened
+    case songTriggered
 }
 
 public struct DungeonEventFlagKey: Sendable, Codable, Hashable, Equatable {
@@ -271,6 +272,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
     public var bombCount: Int
     public var bombCapacity: Int
     public var hasBoomerang: Bool
+    public var hasOcarina: Bool
     public var goldSkulltulaTokenCount: Int
     public var dekuNutCount: Int
     public var dekuNutCapacity: Int
@@ -292,6 +294,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         bombCount: Int = 0,
         bombCapacity: Int = 20,
         hasBoomerang: Bool = false,
+        hasOcarina: Bool = false,
         goldSkulltulaTokenCount: Int = 0,
         dekuNutCount: Int = 0,
         dekuNutCapacity: Int = 20,
@@ -312,6 +315,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         self.bombCount = max(0, bombCount)
         self.bombCapacity = max(0, bombCapacity)
         self.hasBoomerang = hasBoomerang
+        self.hasOcarina = hasOcarina
         self.goldSkulltulaTokenCount = max(0, goldSkulltulaTokenCount)
         self.dekuNutCount = max(0, dekuNutCount)
         self.dekuNutCapacity = max(0, dekuNutCapacity)
@@ -420,11 +424,13 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
             return hasBombBag
         case .boomerang:
             return hasBoomerang
+        case .ocarina:
+            return hasOcarina
         case .dekuStick:
             return dekuStickCount > 0
         case .dekuNut:
             return dekuNutCount > 0
-        case .ocarina, .bottle:
+        case .bottle:
             return false
         }
     }
@@ -437,11 +443,13 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
             return hasBombBag && bombCount > 0
         case .boomerang:
             return hasBoomerang
+        case .ocarina:
+            return hasOcarina
         case .dekuStick:
             return dekuStickCount > 0
         case .dekuNut:
             return dekuNutCount > 0
-        case .ocarina, .bottle:
+        case .bottle:
             return false
         }
     }
@@ -545,6 +553,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         case bombCount
         case bombCapacity
         case hasBoomerang
+        case hasOcarina
         case goldSkulltulaTokenCount
         case dekuNutCount
         case dekuNutCapacity
@@ -580,6 +589,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         bombCount = max(0, try container.decodeIfPresent(Int.self, forKey: .bombCount) ?? 0)
         bombCapacity = max(0, try container.decodeIfPresent(Int.self, forKey: .bombCapacity) ?? 20)
         hasBoomerang = try container.decodeIfPresent(Bool.self, forKey: .hasBoomerang) ?? false
+        hasOcarina = try container.decodeIfPresent(Bool.self, forKey: .hasOcarina) ?? false
         goldSkulltulaTokenCount = max(
             0,
             try container.decodeIfPresent(Int.self, forKey: .goldSkulltulaTokenCount) ?? 0
@@ -607,6 +617,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         try container.encode(bombCount, forKey: .bombCount)
         try container.encode(bombCapacity, forKey: .bombCapacity)
         try container.encode(hasBoomerang, forKey: .hasBoomerang)
+        try container.encode(hasOcarina, forKey: .hasOcarina)
         try container.encode(goldSkulltulaTokenCount, forKey: .goldSkulltulaTokenCount)
         try container.encode(dekuNutCount, forKey: .dekuNutCount)
         try container.encode(dekuNutCapacity, forKey: .dekuNutCapacity)

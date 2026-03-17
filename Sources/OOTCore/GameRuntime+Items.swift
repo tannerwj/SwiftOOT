@@ -133,7 +133,9 @@ private extension GameRuntime {
             useDekuStick()
         case .dekuNut:
             throwDekuNut()
-        case .ocarina, .bottle:
+        case .ocarina:
+            toggleOcarinaSession()
+        case .bottle:
             return
         }
     }

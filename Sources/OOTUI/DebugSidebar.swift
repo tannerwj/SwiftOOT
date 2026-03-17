@@ -728,7 +728,7 @@ private extension DebugSidebar {
     }
 
     func play(song: QuestSong) {
-        let plan = SongPlaybackPlan(song: song, notes: song.playbackNotes)
+        let plan = SongPlaybackPlan(song: song, notes: song.ocarinaButtonLabels)
         songPlaybackTask?.cancel()
         activeSongPlan = plan
         activeSongNoteIndex = 0
@@ -1325,37 +1325,6 @@ private struct RotationEditorRow: View {
                 .foregroundStyle(.secondary)
             TextField(title, value: value, format: .number.precision(.fractionLength(0)))
                 .textFieldStyle(.roundedBorder)
-        }
-    }
-}
-
-private extension QuestSong {
-    var playbackNotes: [String] {
-        switch self {
-        case .zeldasLullaby:
-            return ["C-L", "C-U", "C-R", "C-L", "C-U", "C-R"]
-        case .eponasSong:
-            return ["C-U", "C-L", "C-R", "C-U", "C-L", "C-R"]
-        case .sariasSong:
-            return ["C-D", "C-R", "C-L", "C-D", "C-R", "C-L"]
-        case .sunsSong:
-            return ["C-R", "C-D", "C-U", "C-R", "C-D", "C-U"]
-        case .songOfTime:
-            return ["C-R", "A", "C-D", "C-R", "A", "C-D"]
-        case .songOfStorms:
-            return ["A", "C-D", "C-U", "A", "C-D", "C-U"]
-        case .minuetOfForest:
-            return ["A", "C-U", "C-L", "C-R", "C-L", "C-R"]
-        case .boleroOfFire:
-            return ["C-D", "A", "C-D", "A", "C-R", "C-D", "C-R", "C-D"]
-        case .serenadeOfWater:
-            return ["A", "C-D", "C-R", "C-R", "C-L"]
-        case .requiemOfSpirit:
-            return ["A", "C-D", "A", "C-R", "C-D", "A"]
-        case .nocturneOfShadow:
-            return ["C-L", "C-R", "C-R", "A", "C-L", "C-R", "C-D"]
-        case .preludeOfLight:
-            return ["C-U", "C-R", "C-U", "C-R", "C-L", "C-U"]
         }
     }
 }
