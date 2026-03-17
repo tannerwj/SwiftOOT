@@ -45,14 +45,7 @@ private extension GameRuntime {
                     points: path.points.map(XRayVector3.init)
                 )
             },
-            triggerVolumes: (scene.sceneHeader?.transitionTriggers ?? []).map { trigger in
-                XRaySceneTriggerSnapshot(
-                    id: trigger.id,
-                    kind: trigger.kind.rawValue,
-                    minimum: XRayVector3(trigger.volume.minimum),
-                    maximum: XRayVector3(trigger.volume.maximum)
-                )
-            },
+            triggerVolumes: makeXRayTriggerVolumes(from: scene),
             spawnPoints: (scene.spawns?.spawns ?? scene.sceneHeader?.spawns ?? []).map { spawn in
                 XRaySceneSpawnSnapshot(
                     index: spawn.index,
@@ -72,6 +65,59 @@ private extension GameRuntime {
                     )
                 }
             }
+        )
+    }
+
+    func makeXRayTriggerVolumes(from scene: LoadedScene) -> [XRaySceneTriggerSnapshot] {
+        let transitionTriggers = (scene.sceneHeader?.transitionTriggers ?? []).map { trigger in
+            XRaySceneTriggerSnapshot(
+                id: trigger.id,
+                source: .transition,
+                kind: trigger.kind.rawValue,
+                minimum: XRayVector3(trigger.volume.minimum),
+                maximum: XRayVector3(trigger.volume.maximum)
+            )
+        }
+        let cutsceneTriggers = (scene.sceneHeader?.cutsceneTriggers ?? []).map { trigger in
+            XRaySceneTriggerSnapshot(
+                id: trigger.id,
+                source: .cutscene,
+                kind: trigger.kind,
+                cylinder: makeTriggerCylinder(trigger.volume, collision: scene.collision)
+            )
+        }
+        let eventRegionTriggers = (scene.sceneHeader?.eventRegionTriggers ?? []).map { trigger in
+            XRaySceneTriggerSnapshot(
+                id: trigger.id,
+                source: .eventRegion,
+                kind: trigger.kind,
+                cylinder: makeTriggerCylinder(trigger.volume, collision: scene.collision)
+            )
+        }
+        return transitionTriggers + cutsceneTriggers + eventRegionTriggers
+    }
+
+    func makeTriggerCylinder(
+        _ volume: SceneCylinderTriggerVolume,
+        collision: CollisionMesh?
+    ) -> XRayCylinder {
+        let fallbackMinimumY = Int16(clamping: Int(volume.center.y) - 200)
+        let fallbackMaximumY = Int16(clamping: Int(volume.center.y) + 200)
+        var minimumY = volume.minimumY ?? collision?.minimumBounds.y ?? fallbackMinimumY
+        var maximumY = volume.maximumY ?? collision?.maximumBounds.y ?? fallbackMaximumY
+
+        if volume.minimumY == nil, volume.maximumY == nil, minimumY == maximumY {
+            minimumY = fallbackMinimumY
+            maximumY = fallbackMaximumY
+        }
+
+        let baseY = min(minimumY, maximumY)
+        let height = max(0, Int(maximumY) - Int(baseY))
+
+        return XRayCylinder(
+            center: XRayVector3(x: Float(volume.center.x), y: Float(baseY), z: Float(volume.center.z)),
+            radius: Float(volume.radius),
+            height: Float(height)
         )
     }
 

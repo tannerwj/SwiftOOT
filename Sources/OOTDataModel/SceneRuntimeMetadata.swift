@@ -104,6 +104,75 @@ public struct SceneTransitionTrigger: Codable, Sendable, Equatable {
     }
 }
 
+public struct SceneCylinderTriggerVolume: Codable, Sendable, Equatable {
+    public var center: Vector3s
+    public var radius: Int16
+    public var minimumY: Int16?
+    public var maximumY: Int16?
+
+    public init(
+        center: Vector3s,
+        radius: Int16,
+        minimumY: Int16? = nil,
+        maximumY: Int16? = nil
+    ) {
+        self.center = center
+        self.radius = max(0, radius)
+        self.minimumY = minimumY
+        self.maximumY = maximumY
+    }
+}
+
+public struct SceneCutsceneTrigger: Codable, Sendable, Equatable {
+    public var id: Int
+    public var roomID: Int
+    public var actorName: String
+    public var params: Int16
+    public var kind: String
+    public var volume: SceneCylinderTriggerVolume
+
+    public init(
+        id: Int,
+        roomID: Int,
+        actorName: String,
+        params: Int16,
+        kind: String,
+        volume: SceneCylinderTriggerVolume
+    ) {
+        self.id = id
+        self.roomID = roomID
+        self.actorName = actorName
+        self.params = params
+        self.kind = kind
+        self.volume = volume
+    }
+}
+
+public struct SceneEventRegionTrigger: Codable, Sendable, Equatable {
+    public var id: Int
+    public var roomID: Int
+    public var actorName: String
+    public var params: Int16
+    public var kind: String
+    public var volume: SceneCylinderTriggerVolume
+
+    public init(
+        id: Int,
+        roomID: Int,
+        actorName: String,
+        params: Int16,
+        kind: String,
+        volume: SceneCylinderTriggerVolume
+    ) {
+        self.id = id
+        self.roomID = roomID
+        self.actorName = actorName
+        self.params = params
+        self.kind = kind
+        self.volume = volume
+    }
+}
+
 public struct SceneSoundSettings: Codable, Sendable, Equatable {
     public var specID: Int
     public var natureAmbienceID: Int
@@ -136,6 +205,8 @@ public struct SceneHeaderDefinition: Codable, Sendable, Equatable {
     public var entrances: [SceneEntranceDefinition]
     public var rooms: [SceneRoomDefinition]
     public var transitionTriggers: [SceneTransitionTrigger]
+    public var cutsceneTriggers: [SceneCutsceneTrigger]
+    public var eventRegionTriggers: [SceneEventRegionTrigger]
     public var soundSettings: SceneSoundSettings?
     public var specialFiles: SceneSpecialFiles?
     public var cutsceneIDs: [Int]
@@ -147,6 +218,8 @@ public struct SceneHeaderDefinition: Codable, Sendable, Equatable {
         entrances: [SceneEntranceDefinition] = [],
         rooms: [SceneRoomDefinition] = [],
         transitionTriggers: [SceneTransitionTrigger] = [],
+        cutsceneTriggers: [SceneCutsceneTrigger] = [],
+        eventRegionTriggers: [SceneEventRegionTrigger] = [],
         soundSettings: SceneSoundSettings? = nil,
         specialFiles: SceneSpecialFiles? = nil,
         cutsceneIDs: [Int] = []
@@ -157,6 +230,8 @@ public struct SceneHeaderDefinition: Codable, Sendable, Equatable {
         self.entrances = entrances
         self.rooms = rooms
         self.transitionTriggers = transitionTriggers
+        self.cutsceneTriggers = cutsceneTriggers
+        self.eventRegionTriggers = eventRegionTriggers
         self.soundSettings = soundSettings
         self.specialFiles = specialFiles
         self.cutsceneIDs = cutsceneIDs

@@ -156,22 +156,34 @@ public struct XRayScenePathSnapshot: Codable, Sendable, Equatable {
     }
 }
 
+public enum XRaySceneTriggerSource: String, Codable, Sendable, Equatable {
+    case transition
+    case cutscene
+    case eventRegion
+}
+
 public struct XRaySceneTriggerSnapshot: Codable, Sendable, Equatable {
     public var id: Int
+    public var source: XRaySceneTriggerSource
     public var kind: String
-    public var minimum: XRayVector3
-    public var maximum: XRayVector3
+    public var minimum: XRayVector3?
+    public var maximum: XRayVector3?
+    public var cylinder: XRayCylinder?
 
     public init(
         id: Int,
+        source: XRaySceneTriggerSource = .transition,
         kind: String,
-        minimum: XRayVector3,
-        maximum: XRayVector3
+        minimum: XRayVector3? = nil,
+        maximum: XRayVector3? = nil,
+        cylinder: XRayCylinder? = nil
     ) {
         self.id = id
+        self.source = source
         self.kind = kind
         self.minimum = minimum
         self.maximum = maximum
+        self.cylinder = cylinder
     }
 }
 

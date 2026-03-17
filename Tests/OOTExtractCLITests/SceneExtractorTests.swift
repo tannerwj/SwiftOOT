@@ -467,7 +467,7 @@ final class SceneExtractorTests: XCTestCase {
 
         XCTAssertEqual(actors.sceneName, "spot04")
         XCTAssertEqual(actors.rooms.map(\.roomName), ["spot04_room_0"])
-        XCTAssertEqual(actors.rooms[0].actors.count, 78)
+        XCTAssertEqual(actors.rooms[0].actors.count, 80)
 
         let kokiriSpawns = actors.rooms[0].actors.filter { $0.actorName == "ACTOR_EN_KO" }
         XCTAssertEqual(
@@ -598,6 +598,40 @@ final class SceneExtractorTests: XCTestCase {
                         maximum: Vector3s(x: -240, y: 10, z: 512)
                     )
                 ),
+            ]
+        )
+        XCTAssertEqual(
+            sceneHeader.cutsceneTriggers,
+            [
+                SceneCutsceneTrigger(
+                    id: 0,
+                    roomID: 0,
+                    actorName: "ACTOR_EN_OKARINA_TAG",
+                    params: 0x1BFF,
+                    kind: "ocarinaTag",
+                    volume: SceneCylinderTriggerVolume(
+                        center: Vector3s(x: 602, y: 181, z: 81),
+                        radius: 530,
+                        minimumY: 101,
+                        maximumY: 261
+                    )
+                )
+            ]
+        )
+        XCTAssertEqual(
+            sceneHeader.eventRegionTriggers,
+            [
+                SceneEventRegionTrigger(
+                    id: 0,
+                    roomID: 0,
+                    actorName: "ACTOR_EN_WEATHER_TAG",
+                    params: 0x0607,
+                    kind: "thunderstormGraveyard",
+                    volume: SceneCylinderTriggerVolume(
+                        center: Vector3s(x: 728, y: 181, z: 80),
+                        radius: 600
+                    )
+                )
             ]
         )
     }
@@ -1173,6 +1207,8 @@ private struct SceneHarness {
     func seedActorTableManifest() throws {
         let actorNames = [
             "ACTOR_EN_RIVER_SOUND",
+            "ACTOR_EN_OKARINA_TAG",
+            "ACTOR_EN_WEATHER_TAG",
             "ACTOR_EN_ITEM00",
             "ACTOR_OBJECT_KANKYO",
             "ACTOR_EN_KO",
@@ -1482,7 +1518,7 @@ SceneCmd spot04_room_0Commands[] = {
     SCENE_CMD_TIME_SETTINGS(255, 255, 0),
     SCENE_CMD_ROOM_SHAPE(&spot04_room_0RoomShapeCullable_000580),
     SCENE_CMD_OBJECT_LIST(2, spot04_room_0ObjectList_00007C),
-    SCENE_CMD_ACTOR_LIST(78, spot04_room_0ActorEntry_000094),
+    SCENE_CMD_ACTOR_LIST(80, spot04_room_0ActorEntry_000094),
     SCENE_CMD_END(),
 };
 
@@ -1493,6 +1529,8 @@ s16 spot04_room_0ObjectList_00007C[] = {
 
 ActorEntry spot04_room_0ActorEntry_000094[] = {
     { ACTOR_EN_RIVER_SOUND,  {    398,    -29,   -483 }, {      0,      0,      0 }, 0x0001 },
+    { ACTOR_EN_OKARINA_TAG,  {    602,    181,     81 }, {      0, 0XC000,     11 }, 0x1BFF },
+    { ACTOR_EN_WEATHER_TAG,  {    728,    181,     80 }, {      0,      0,      0 }, 0x0607 },
     { ACTOR_EN_ITEM00,       {   -537,      1,    194 }, {      0,      0,   0XB6 }, 0x2400 },
     { ACTOR_EN_ITEM00,       {   -459,      1,    181 }, {      0,      0,      0 }, 0x2700 },
     { ACTOR_EN_ITEM00,       {     35,      1,   -418 }, {      0,      0,      0 }, 0x2500 },

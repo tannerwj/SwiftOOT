@@ -199,6 +199,7 @@ extension SceneExtractor {
                     scene: scene,
                     sceneSource: sceneSource,
                     sceneCommands: sceneCommands,
+                    roomActors: roomActors,
                     roomSourcesByName: roomSourcesByName,
                     metadataReferences: metadataReferences
                 ),
@@ -1734,6 +1735,7 @@ private extension SceneExtractor {
         scene: SceneDefinition,
         sceneSource: String,
         sceneCommands: [ParsedCommand],
+        roomActors: [RoomActorSpawns],
         roomSourcesByName: [String: String],
         metadataReferences: MetadataReferenceTables
     ) throws -> SceneHeaderDefinition {
@@ -1773,6 +1775,8 @@ private extension SceneExtractor {
             entrances: entrances,
             rooms: rooms,
             transitionTriggers: try parseTransitionTriggers(source: sceneSource, commands: sceneCommands),
+            cutsceneTriggers: parseCutsceneTriggers(scene: scene, roomActors: roomActors),
+            eventRegionTriggers: parseEventRegionTriggers(scene: scene, roomActors: roomActors),
             soundSettings: soundSettings,
             specialFiles: specialFiles,
             cutsceneIDs: parseCutsceneIDs(commands: sceneCommands)
@@ -2224,6 +2228,113 @@ private extension SceneExtractor {
                 return nil
             }
             return try? Int(parseIntegerExpression(command.arguments[0]))
+        }
+    }
+
+    static func parseCutsceneTriggers(
+        scene: SceneDefinition,
+        roomActors: [RoomActorSpawns]
+    ) -> [SceneCutsceneTrigger] {
+        let roomIDByName = Dictionary(uniqueKeysWithValues: scene.rooms.enumerated().map { ($1.symbolName, $0) })
+        var nextID = 0
+
+        return roomActors.flatMap { room in
+            guard let roomID = roomIDByName[room.roomName] else {
+                return [SceneCutsceneTrigger]()
+            }
+
+            return room.actors.compactMap { actor in
+                guard actor.actorName == "ACTOR_EN_OKARINA_TAG" else {
+                    return nil
+                }
+
+                let trigger = SceneCutsceneTrigger(
+                    id: nextID,
+                    roomID: roomID,
+                    actorName: actor.actorName,
+                    params: actor.params,
+                    kind: "ocarinaTag",
+                    volume: makeOcarinaTagTriggerVolume(actor: actor)
+                )
+                nextID += 1
+                return trigger
+            }
+        }
+    }
+
+    static func parseEventRegionTriggers(
+        scene: SceneDefinition,
+        roomActors: [RoomActorSpawns]
+    ) -> [SceneEventRegionTrigger] {
+        let roomIDByName = Dictionary(uniqueKeysWithValues: scene.rooms.enumerated().map { ($1.symbolName, $0) })
+        var nextID = 0
+
+        return roomActors.flatMap { room in
+            guard let roomID = roomIDByName[room.roomName] else {
+                return [SceneEventRegionTrigger]()
+            }
+
+            return room.actors.compactMap { actor in
+                guard actor.actorName == "ACTOR_EN_WEATHER_TAG" else {
+                    return nil
+                }
+
+                let trigger = SceneEventRegionTrigger(
+                    id: nextID,
+                    roomID: roomID,
+                    actorName: actor.actorName,
+                    params: actor.params,
+                    kind: weatherTagKind(params: actor.params),
+                    volume: makeWeatherTagTriggerVolume(actor: actor)
+                )
+                nextID += 1
+                return trigger
+            }
+        }
+    }
+
+    static func makeOcarinaTagTriggerVolume(actor: SceneActorSpawn) -> SceneCylinderTriggerVolume {
+        let interactRange = max(0, Int(actor.rotation.z)) * 40
+        let radius = Int16(clamping: 90 + interactRange)
+        let minimumY = Int16(clamping: Int(actor.position.y) - 80)
+        let maximumY = Int16(clamping: Int(actor.position.y) + 80)
+
+        return SceneCylinderTriggerVolume(
+            center: actor.position,
+            radius: radius,
+            minimumY: minimumY,
+            maximumY: maximumY
+        )
+    }
+
+    static func makeWeatherTagTriggerVolume(actor: SceneActorSpawn) -> SceneCylinderTriggerVolume {
+        let params = UInt16(bitPattern: actor.params)
+        return SceneCylinderTriggerVolume(
+            center: actor.position,
+            radius: Int16(clamping: Int((params >> 8) * 100))
+        )
+    }
+
+    static func weatherTagKind(params: Int16) -> String {
+        switch UInt16(bitPattern: params) & 0x000F {
+        case 0:
+            return "cloudyMarket"
+        case 1:
+            return "cloudyLonLonRanch"
+        case 2:
+            return "snowZorasDomain"
+        case 3:
+            return "rainLakeHylia"
+        case 4:
+            return "cloudyDeathMountain"
+        case 5:
+            return "thunderstormKakariko"
+        case 6:
+            return "sandstormIntensity"
+        case 7:
+            return "thunderstormGraveyard"
+        default:
+            return "weatherTag"
         }
     }
 

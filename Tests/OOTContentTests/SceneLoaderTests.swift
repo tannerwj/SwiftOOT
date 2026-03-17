@@ -230,6 +230,34 @@ private struct SceneLoaderFixture {
                     )
                 )
             ],
+            cutsceneTriggers: [
+                SceneCutsceneTrigger(
+                    id: 1,
+                    roomID: 0,
+                    actorName: "ACTOR_EN_OKARINA_TAG",
+                    params: 0x1BFF,
+                    kind: "ocarinaTag",
+                    volume: SceneCylinderTriggerVolume(
+                        center: Vector3s(x: 602, y: 181, z: 81),
+                        radius: 530,
+                        minimumY: 101,
+                        maximumY: 261
+                    )
+                )
+            ],
+            eventRegionTriggers: [
+                SceneEventRegionTrigger(
+                    id: 2,
+                    roomID: 0,
+                    actorName: "ACTOR_EN_WEATHER_TAG",
+                    params: 0x0607,
+                    kind: "thunderstormGraveyard",
+                    volume: SceneCylinderTriggerVolume(
+                        center: Vector3s(x: 728, y: 181, z: 80),
+                        radius: 600
+                    )
+                )
+            ],
             soundSettings: SceneSoundSettings(specID: 1, natureAmbienceID: 4, sequenceID: 60),
             specialFiles: SceneSpecialFiles(
                 naviHintName: "NAVI_QUEST_HINTS_OVERWORLD",
