@@ -70,6 +70,33 @@ final class OOTUITests: XCTestCase {
                 suspender: { _ in }
             )
         )
+        _ = CButtonLoadoutEditorShortcut(
+            runtime: GameRuntime(
+                sceneLoader: UITestSceneLoader(),
+                suspender: { _ in }
+            )
+        )
+        _ = CButtonLoadoutEditorOverlay(
+            runtime: GameRuntime(
+                currentState: .gameplay,
+                playState: PlayState(
+                    activeSaveSlot: 0,
+                    entryMode: .newGame,
+                    currentSceneName: "Kokiri Forest",
+                    playerName: "Link"
+                ),
+                inventoryState: GameplayInventoryState(
+                    hasSlingshot: true,
+                    slingshotAmmo: 10,
+                    hasBombBag: true,
+                    bombCount: 5,
+                    hasBoomerang: true,
+                    dekuStickCount: 3
+                ),
+                sceneLoader: UITestSceneLoader(),
+                suspender: { _ in }
+            )
+        )
     }
 
     func testRootViewStateMatchesRuntimeState() {
@@ -108,6 +135,9 @@ final class OOTUITests: XCTestCase {
         XCTAssertTrue(inputManager.handleKeyDown(try makeKeyEvent(type: .keyDown, character: "", keyCode: 56)))
         XCTAssertTrue(runtime.controllerInputState.bPressed)
 
+        XCTAssertTrue(inputManager.handleKeyDown(try makeKeyEvent(type: .keyDown, character: "\r", keyCode: 36)))
+        XCTAssertTrue(runtime.controllerInputState.startPressed)
+
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "w", keyCode: 13)))
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: " ", keyCode: 49)))
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "1", keyCode: 18)))
@@ -115,6 +145,7 @@ final class OOTUITests: XCTestCase {
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "3", keyCode: 20)))
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "\t", keyCode: 48)))
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "", keyCode: 56)))
+        XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "\r", keyCode: 36)))
 
         XCTAssertEqual(runtime.controllerInputState.stick, .zero)
         XCTAssertFalse(runtime.controllerInputState.aPressed)
@@ -123,6 +154,7 @@ final class OOTUITests: XCTestCase {
         XCTAssertFalse(runtime.controllerInputState.cDownPressed)
         XCTAssertFalse(runtime.controllerInputState.cRightPressed)
         XCTAssertFalse(runtime.controllerInputState.zPressed)
+        XCTAssertFalse(runtime.controllerInputState.startPressed)
     }
 
     func testDeveloperInputScriptSupportsDurationsAndExplicitFrameRanges() throws {

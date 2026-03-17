@@ -11,6 +11,10 @@ struct EquippedDekuStickState: Sendable, Equatable {
 }
 
 extension GameRuntime {
+    public var availableChildCButtonItems: [GameplayUsableItem] {
+        inventoryState.ownedChildAssignableItems
+    }
+
     public func assignItem(
         _ item: GameplayUsableItem?,
         to button: GameplayCButton
@@ -18,6 +22,32 @@ extension GameRuntime {
         inventoryState.assign(item, to: button)
         synchronizeHUDStateWithInventory()
         persistActiveSaveSlotState()
+    }
+
+    public func toggleCButtonItemEditor() {
+        if isCButtonItemEditorPresented {
+            isCButtonItemEditorPresented = false
+            return
+        }
+
+        guard canPresentCButtonItemEditor else {
+            return
+        }
+
+        isCButtonItemEditorPresented = true
+    }
+
+    public func setCButtonItemEditorPresented(_ isPresented: Bool) {
+        guard isPresented else {
+            isCButtonItemEditorPresented = false
+            return
+        }
+
+        guard canPresentCButtonItemEditor else {
+            return
+        }
+
+        isCButtonItemEditorPresented = true
     }
 
     public var itemAimYaw: Float? {
@@ -41,7 +71,11 @@ extension GameRuntime {
         currentInput: ControllerInputState,
         previousInput: ControllerInputState
     ) {
-        guard currentState == .gameplay, isGameplayPresentationActive == false else {
+        guard
+            currentState == .gameplay,
+            isGameplayPresentationActive == false,
+            isCButtonItemEditorPresented == false
+        else {
             return
         }
 
@@ -75,6 +109,14 @@ extension GameRuntime {
 }
 
 private extension GameRuntime {
+    var canPresentCButtonItemEditor: Bool {
+        guard currentState == .gameplay, availableChildCButtonItems.isEmpty == false else {
+            return false
+        }
+
+        return itemGetSequence == nil && messageContext.isPresenting == false
+    }
+
     func handleGameplayItemButton(_ button: GameplayCButton) {
         guard let item = inventoryState.cButtonLoadout[button] else {
             return

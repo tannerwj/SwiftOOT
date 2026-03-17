@@ -2478,6 +2478,177 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testCButtonItemEditorTogglesWithStartAndBlocksGameplayItemUse() throws {
+        let inventory = GameplayInventoryState(
+            hasBombBag: true,
+            bombCount: 2,
+            cButtonLoadout: GameplayCButtonLoadout(down: .bombs)
+        )
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [],
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    ),
+                ]
+            ),
+            actorTable: []
+        )
+        let runtime = makeRuntime(
+            saveContext: SaveContext(
+                slots: [
+                    SaveSlot(
+                        id: 0,
+                        playerName: "Link",
+                        locationName: "Kokiri Forest",
+                        hearts: 3,
+                        hasSaveData: true,
+                        inventoryState: inventory
+                    ),
+                    .empty(id: 1),
+                    .empty(id: 2),
+                ]
+            ),
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+        runtime.inventoryState = inventory
+
+        try runtime.loadScene(id: 0x55)
+        runtime.playerState = PlayerState(
+            position: Vec3f(x: 0, y: 0, z: 0),
+            facingRadians: 0,
+            isGrounded: true,
+            floorHeight: 0
+        )
+        runtime.synchronizeHUDStateWithInventory()
+
+        runtime.setControllerInput(ControllerInputState(startPressed: true))
+        runtime.updateFrame()
+
+        XCTAssertTrue(runtime.isCButtonItemEditorPresented)
+
+        runtime.setControllerInput(ControllerInputState())
+        runtime.updateFrame()
+        runtime.setControllerInput(ControllerInputState(cDownPressed: true))
+        runtime.updateFrame()
+
+        XCTAssertEqual(runtime.inventoryState.bombCount, 2)
+
+        runtime.setControllerInput(ControllerInputState())
+        runtime.updateFrame()
+        runtime.setControllerInput(ControllerInputState(startPressed: true))
+        runtime.updateFrame()
+
+        XCTAssertFalse(runtime.isCButtonItemEditorPresented)
+
+        runtime.setControllerInput(ControllerInputState())
+        runtime.updateFrame()
+        runtime.setControllerInput(ControllerInputState(cDownPressed: true))
+        runtime.updateFrame()
+
+        XCTAssertEqual(runtime.inventoryState.bombCount, 1)
+        XCTAssertEqual(runtime.saveContext.slots[0].inventoryState.bombCount, 1)
+    }
+
+    @MainActor
+    func testAssigningCButtonItemUpdatesHUDAndPersistsAcrossContinueGame() async {
+        let inventory = GameplayInventoryState(
+            hasSlingshot: true,
+            slingshotAmmo: 30,
+            hasBombBag: true,
+            bombCount: 10,
+            hasBoomerang: true,
+            dekuNutCount: 7,
+            dekuStickCount: 4,
+            cButtonLoadout: GameplayCButtonLoadout(
+                left: .slingshot,
+                down: .bombs,
+                right: .boomerang
+            )
+        )
+        let runtime = GameRuntime(
+            currentState: .gameplay,
+            playState: PlayState(
+                activeSaveSlot: 0,
+                entryMode: .newGame,
+                currentSceneName: "Kokiri Forest",
+                playerName: "Link"
+            ),
+            saveContext: SaveContext(
+                slots: [
+                    SaveSlot(
+                        id: 0,
+                        playerName: "Link",
+                        locationName: "Kokiri Forest",
+                        hearts: 3,
+                        hasSaveData: true,
+                        inventoryState: inventory
+                    ),
+                    .empty(id: 1),
+                    .empty(id: 2),
+                ]
+            ),
+            inventoryState: inventory,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+        runtime.synchronizeHUDStateWithInventory()
+
+        XCTAssertEqual(
+            runtime.availableChildCButtonItems,
+            [
+                GameplayUsableItem.slingshot,
+                GameplayUsableItem.bombs,
+                GameplayUsableItem.boomerang,
+                GameplayUsableItem.dekuStick,
+                GameplayUsableItem.dekuNut,
+            ]
+        )
+
+        runtime.assignItem(GameplayUsableItem.dekuNut, to: GameplayCButton.left)
+
+        XCTAssertEqual(runtime.inventoryState.cButtonLoadout.left, GameplayUsableItem.dekuNut)
+        XCTAssertEqual(runtime.hudState.cButtons.left.item, GameplayHUDButtonItem.dekuNut)
+        XCTAssertEqual(runtime.hudState.cButtons.left.ammoCount, 7)
+        XCTAssertEqual(
+            runtime.saveContext.slots[0].inventoryState.cButtonLoadout.left,
+            GameplayUsableItem.dekuNut
+        )
+
+        runtime.assignItem(GameplayUsableItem.dekuStick, to: GameplayCButton.right)
+
+        XCTAssertEqual(runtime.inventoryState.cButtonLoadout.right, GameplayUsableItem.dekuStick)
+        XCTAssertEqual(
+            runtime.saveContext.slots[0].inventoryState.cButtonLoadout.right,
+            GameplayUsableItem.dekuStick
+        )
+
+        let reloadedRuntime = GameRuntime(
+            saveContext: runtime.saveContext,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+        await reloadedRuntime.start()
+        reloadedRuntime.chooseTitleOption(TitleMenuOption.continueGame)
+        reloadedRuntime.confirmSelectedSaveSlot()
+
+        XCTAssertEqual(reloadedRuntime.currentState, GameState.gameplay)
+        XCTAssertEqual(reloadedRuntime.inventoryState.cButtonLoadout.left, GameplayUsableItem.dekuNut)
+        XCTAssertEqual(reloadedRuntime.inventoryState.cButtonLoadout.right, GameplayUsableItem.dekuStick)
+        XCTAssertEqual(reloadedRuntime.hudState.cButtons.left.item, GameplayHUDButtonItem.dekuNut)
+        XCTAssertEqual(reloadedRuntime.hudState.cButtons.right.item, GameplayHUDButtonItem.dekuStick)
+        XCTAssertEqual(reloadedRuntime.hudState.cButtons.right.ammoCount, 4)
+    }
+
+    @MainActor
     func testTreasureChestInteractionStartsItemGetFlowAndPersistsTreasureFlagAcrossReload() throws {
         let chestActorID = 10
         let chestParams = makeChestParams(type: 0, getItemID: 0x41, treasureFlag: 3)

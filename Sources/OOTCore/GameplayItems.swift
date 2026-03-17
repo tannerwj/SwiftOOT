@@ -7,6 +7,14 @@ public enum GameplayUsableItem: String, Codable, Sendable, Equatable, CaseIterab
     case ocarina
     case bottle
 
+    public static let childAssignableItems: [GameplayUsableItem] = [
+        .slingshot,
+        .bombs,
+        .boomerang,
+        .dekuStick,
+        .dekuNut,
+    ]
+
     public var hudButtonItem: GameplayHUDButtonItem {
         switch self {
         case .slingshot:
@@ -23,6 +31,25 @@ public enum GameplayUsableItem: String, Codable, Sendable, Equatable, CaseIterab
             return .ocarina
         case .bottle:
             return .bottle
+        }
+    }
+
+    public var displayName: String {
+        switch self {
+        case .slingshot:
+            return "Fairy Slingshot"
+        case .bombs:
+            return "Bombs"
+        case .boomerang:
+            return "Boomerang"
+        case .dekuStick:
+            return "Deku Stick"
+        case .dekuNut:
+            return "Deku Nut"
+        case .ocarina:
+            return "Ocarina"
+        case .bottle:
+            return "Bottle"
         }
     }
 }
