@@ -259,12 +259,20 @@ private struct FileSelectView: View {
                                     Text(slot.hasSaveData ? slot.locationName : "Empty slot")
                                         .font(.subheadline)
                                         .foregroundStyle(.secondary)
+                                    Text(slot.hasSaveData ? slot.questPreviewSummary : "Start a new quest")
+                                        .font(.caption.weight(.medium))
+                                        .foregroundStyle(.secondary)
                                 }
 
                                 Spacer()
 
-                                Text(slot.hasSaveData ? "\(slot.hearts) Hearts" : "New")
-                                    .font(.headline)
+                                VStack(alignment: .trailing, spacing: 4) {
+                                    Text(slot.hasSaveData ? "\(slot.hearts) Hearts" : "New")
+                                        .font(.headline)
+                                    Text(slot.hasSaveData ? slot.playTimeDisplay : "--:--")
+                                        .font(.subheadline.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                             .padding()
                             .frame(maxWidth: .infinity)

@@ -147,6 +147,9 @@ extension GameRuntime {
         if currentInput.aPressed && previousInput.aPressed == false {
             activatePauseMenuSelection()
         }
+        if currentInput.zPressed && previousInput.zPressed == false {
+            saveCurrentGame()
+        }
         if currentInput.cLeftPressed && previousInput.cLeftPressed == false {
             assignSelectedPauseMenuItem(to: .left)
         }
