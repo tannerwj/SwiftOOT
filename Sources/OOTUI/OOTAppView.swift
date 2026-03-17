@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import SwiftUI
 import OOTCore
+import OOTDataModel
 import OOTRender
 
 enum OOTRootViewState: Equatable {
@@ -312,17 +313,33 @@ private struct GameplayShellView: View {
     private var inputManager: InputManager?
 
     @State
+    private var updateFrameTimeMilliseconds = 0.0
+
+    @State
+    private var framesPerSecond = 0.0
+
+    @State
+    private var lastRenderedFrameTimestamp: TimeInterval?
+
+    @State
+    private var objectTableByID: [Int: ObjectTableEntry] = [:]
+
+    @State
+    private var selectedActorID: ObjectIdentifier?
+
+    @State
     private var xrayOverlaySettings = XRayOverlaySettings()
 
     var body: some View {
         NavigationSplitView {
             DebugSidebar(
-                availableScenes: runtime.availableScenes,
-                selectedSceneID: runtime.selectedSceneID,
-                loadedScene: runtime.loadedScene,
-                isLoading: runtime.sceneViewerState == .loadingContent,
+                runtime: runtime,
+                frameStats: frameStats,
+                updateFrameTimeMilliseconds: updateFrameTimeMilliseconds,
+                framesPerSecond: framesPerSecond,
                 errorMessage: activeErrorMessage,
-                drawCallCount: frameStats.drawCallCount,
+                objectTableByID: objectTableByID,
+                selectedActorID: $selectedActorID,
                 xrayOverlaySettings: $xrayOverlaySettings,
                 onSelectScene: { sceneID in
                     Task {
@@ -364,10 +381,27 @@ private struct GameplayShellView: View {
                             )
                         }
                     ) { stats in
-                        frameStats = stats
+                        let now = ProcessInfo.processInfo.systemUptime
+                        Task { @MainActor in
+                            frameStats = stats
+                            framesPerSecond = smoothedMetric(
+                                current: framesPerSecond,
+                                newValue: instantaneousFramesPerSecond(at: now)
+                            )
+                            lastRenderedFrameTimestamp = now
+                            syncSelectedActorSelection()
+                        }
                     }
                     .id(renderPayload.sceneID)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay {
+                        ActorViewportSelectionOverlay(
+                            actors: runtime.actors,
+                            sceneBounds: renderPayload.baseScene.sceneBounds,
+                            cameraConfiguration: renderPayload.gameplayCameraConfiguration,
+                            selectedActorID: $selectedActorID
+                        )
+                    }
                 } else {
                     VStack(spacing: 12) {
                         Text("Scene Viewer")
@@ -433,13 +467,23 @@ private struct GameplayShellView: View {
             await runtime.bootstrapSceneViewer()
         }
         .task {
+            await loadObjectTableIfAvailable()
+        }
+        .task {
             if inputManager == nil {
                 inputManager = InputManager(runtime: runtime)
             }
 
             while !Task.isCancelled && runtime.currentState == .gameplay {
+                let updateStart = DispatchTime.now().uptimeNanoseconds
                 inputManager?.sync(frame: runtime.gameTime.frameCount)
                 runtime.updateFrame()
+                let updateDuration = Double(DispatchTime.now().uptimeNanoseconds - updateStart) / 1_000_000
+                updateFrameTimeMilliseconds = smoothedMetric(
+                    current: updateFrameTimeMilliseconds,
+                    newValue: updateDuration
+                )
+                syncSelectedActorSelection()
                 try? await Task.sleep(for: .milliseconds(16))
             }
         }
@@ -491,6 +535,7 @@ private extension GameplayShellView {
                 vertexCount: payload.vertexCount
             )
             renderErrorMessage = nil
+            syncSelectedActorSelection()
         } catch {
             renderPayload = nil
             frameStats = SceneFrameStats()
@@ -498,4 +543,60 @@ private extension GameplayShellView {
         }
     }
 
+    @MainActor
+    func loadObjectTableIfAvailable() async {
+        guard objectTableByID.isEmpty else {
+            return
+        }
+
+        guard let table = try? runtime.contentLoader.loadObjectTable() else {
+            return
+        }
+
+        objectTableByID = Dictionary(uniqueKeysWithValues: table.map { ($0.id, $0) })
+    }
+
+    func instantaneousFramesPerSecond(at now: TimeInterval) -> Double {
+        guard let lastRenderedFrameTimestamp else {
+            return framesPerSecond
+        }
+
+        let delta = now - lastRenderedFrameTimestamp
+        guard delta > 0.000_1 else {
+            return framesPerSecond
+        }
+
+        return 1.0 / delta
+    }
+
+    func smoothedMetric(
+        current: Double,
+        newValue: Double
+    ) -> Double {
+        guard newValue.isFinite, newValue > 0 else {
+            return current
+        }
+
+        if current == 0 {
+            return newValue
+        }
+
+        return (current * 0.82) + (newValue * 0.18)
+    }
+
+    func syncSelectedActorSelection() {
+        let actors = runtime.actors
+        let actorIDs = Set(actors.map { ObjectIdentifier($0 as AnyObject) })
+
+        guard actorIDs.isEmpty == false else {
+            selectedActorID = nil
+            return
+        }
+
+        if let selectedActorID, actorIDs.contains(selectedActorID) {
+            return
+        }
+
+        selectedActorID = actors.first.map { ObjectIdentifier($0 as AnyObject) }
+    }
 }

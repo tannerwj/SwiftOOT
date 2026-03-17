@@ -18,7 +18,13 @@ final class OOTUITests: XCTestCase {
                 suspender: { _ in }
             )
         )
-        _ = DebugSidebar()
+        _ = DebugSidebar(
+            runtime: GameRuntime(
+                contentLoader: StubContentLoader(),
+                sceneLoader: UITestSceneLoader(),
+                suspender: { _ in }
+            )
+        )
         _ = MessageView(
             presentation: MessagePresentation(
                 messageID: 0x1000,

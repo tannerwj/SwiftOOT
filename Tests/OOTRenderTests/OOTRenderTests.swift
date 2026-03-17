@@ -433,6 +433,9 @@ final class OOTRenderTests: XCTestCase {
         XCTAssertEqual(reportedStats.vertexCount, 3)
         XCTAssertEqual(reportedStats.triangleCount, 1)
         XCTAssertEqual(reportedStats.drawCallCount, 1)
+        XCTAssertEqual(reportedStats.pipelineStateCount, 1)
+        XCTAssertEqual(reportedStats.textureMemoryBytes, 0)
+        XCTAssertGreaterThanOrEqual(reportedStats.cpuRenderTimeMilliseconds, 0)
     }
 
     func testRendererCompositesXRayOverlayInSeparatePass() throws {
