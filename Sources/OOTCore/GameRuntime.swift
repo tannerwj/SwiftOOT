@@ -578,6 +578,9 @@ public final class GameRuntime {
     public var itemGetSequence: ItemGetSequenceState?
     public var combatState: GameplayCombatState
     public var isCButtonItemEditorPresented: Bool
+    public var ocarinaSession: OcarinaSessionState?
+    public var ocarinaRecognition: OcarinaRecognitionState?
+    public var lastResolvedOcarinaEffect: OcarinaWorldEffectResult?
 
     @ObservationIgnored
     public let contentLoader: any ContentLoading
@@ -690,6 +693,9 @@ public final class GameRuntime {
         itemGetSequence: ItemGetSequenceState? = nil,
         combatState: GameplayCombatState = GameplayCombatState(),
         isCButtonItemEditorPresented: Bool = false,
+        ocarinaSession: OcarinaSessionState? = nil,
+        ocarinaRecognition: OcarinaRecognitionState? = nil,
+        lastResolvedOcarinaEffect: OcarinaWorldEffectResult? = nil,
         contentLoader: (any ContentLoading)? = nil,
         sceneLoader: (any SceneLoading)? = nil,
         telemetryPublisher: (any TelemetryPublishing)? = nil,
@@ -724,6 +730,9 @@ public final class GameRuntime {
         self.itemGetSequence = itemGetSequence
         self.combatState = combatState
         self.isCButtonItemEditorPresented = isCButtonItemEditorPresented
+        self.ocarinaSession = ocarinaSession
+        self.ocarinaRecognition = ocarinaRecognition
+        self.lastResolvedOcarinaEffect = lastResolvedOcarinaEffect
         let resolvedSceneLoader = sceneLoader ?? SceneLoader()
         self.sceneLoader = resolvedSceneLoader
         self.contentLoader = contentLoader ?? ContentLoader(sceneLoader: resolvedSceneLoader)
@@ -758,6 +767,14 @@ public final class GameRuntime {
         }
         if itemGetSequence != nil {
             return nil
+        }
+        if let ocarinaSession {
+            switch ocarinaSession.mode {
+            case .freePlay, .teachingRepeat:
+                return "Note"
+            case .teachingPlayback:
+                return "Listen"
+            }
         }
         if isCButtonItemEditorPresented {
             return nil
@@ -1329,6 +1346,16 @@ public final class GameRuntime {
         gameTime.advance()
         if let fixedTimeOfDayOverride {
             gameTime.timeOfDay = fixedTimeOfDayOverride
+        }
+
+        if updateOcarinaState(
+            currentInput: currentInput,
+            previousInput: previousInput
+        ) {
+            messageContext.tick(playerName: self.playState?.playerName ?? "Link")
+            syncCombatObservationState()
+            syncXRayTelemetry()
+            return
         }
 
         let playerInput = (isGameplayPresentationActive || isCButtonItemEditorPresented)

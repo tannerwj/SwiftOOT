@@ -13,6 +13,7 @@ public enum GameplayUsableItem: String, Codable, Sendable, Equatable, CaseIterab
         .boomerang,
         .dekuStick,
         .dekuNut,
+        .ocarina,
     ]
 
     public var hudButtonItem: GameplayHUDButtonItem {

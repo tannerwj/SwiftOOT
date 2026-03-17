@@ -161,6 +161,9 @@ final class OOTUITests: XCTestCase {
         XCTAssertTrue(inputManager.handleKeyDown(try makeKeyEvent(type: .keyDown, character: "3", keyCode: 20)))
         XCTAssertTrue(runtime.controllerInputState.cRightPressed)
 
+        XCTAssertTrue(inputManager.handleKeyDown(try makeKeyEvent(type: .keyDown, character: "4", keyCode: 21)))
+        XCTAssertTrue(runtime.controllerInputState.cUpPressed)
+
         XCTAssertTrue(inputManager.handleKeyDown(try makeKeyEvent(type: .keyDown, character: "\t", keyCode: 48)))
         XCTAssertTrue(runtime.controllerInputState.zPressed)
 
@@ -180,6 +183,7 @@ final class OOTUITests: XCTestCase {
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "1", keyCode: 18)))
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "2", keyCode: 19)))
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "3", keyCode: 20)))
+        XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "4", keyCode: 21)))
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "\t", keyCode: 48)))
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "", keyCode: 56)))
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "q", keyCode: 12)))
@@ -194,6 +198,7 @@ final class OOTUITests: XCTestCase {
         XCTAssertFalse(runtime.controllerInputState.cLeftPressed)
         XCTAssertFalse(runtime.controllerInputState.cDownPressed)
         XCTAssertFalse(runtime.controllerInputState.cRightPressed)
+        XCTAssertFalse(runtime.controllerInputState.cUpPressed)
         XCTAssertFalse(runtime.controllerInputState.zPressed)
         XCTAssertFalse(runtime.controllerInputState.startPressed)
     }
