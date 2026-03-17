@@ -677,6 +677,34 @@ final class OOTCoreTests: XCTestCase {
                         )
                     )
                 ],
+                cutsceneTriggers: [
+                    SceneCutsceneTrigger(
+                        id: 3,
+                        roomID: 0,
+                        actorName: "ACTOR_EN_OKARINA_TAG",
+                        params: 0x1BFF,
+                        kind: "ocarinaTag",
+                        volume: SceneCylinderTriggerVolume(
+                            center: Vector3s(x: 24, y: 14, z: -18),
+                            radius: 530,
+                            minimumY: -66,
+                            maximumY: 94
+                        )
+                    )
+                ],
+                eventRegionTriggers: [
+                    SceneEventRegionTrigger(
+                        id: 4,
+                        roomID: 0,
+                        actorName: "ACTOR_EN_WEATHER_TAG",
+                        params: 0x0607,
+                        kind: "thunderstormGraveyard",
+                        volume: SceneCylinderTriggerVolume(
+                            center: Vector3s(x: -16, y: 8, z: 22),
+                            radius: 600
+                        )
+                    )
+                ],
                 collision: collision,
                 paths: [
                     ScenePathDefinition(
@@ -713,9 +741,15 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual(scene.bgCameras.count, 1)
         XCTAssertEqual(scene.waterBoxes.count, 1)
         XCTAssertEqual(scene.paths.count, 1)
-        XCTAssertEqual(scene.triggerVolumes.count, 1)
+        XCTAssertEqual(scene.triggerVolumes.count, 3)
         XCTAssertEqual(scene.spawnPoints.count, 1)
         XCTAssertEqual(scene.actorSpawns.count, 1)
+        XCTAssertEqual(scene.triggerVolumes[0].source, .transition)
+        XCTAssertEqual(scene.triggerVolumes[1].source, .cutscene)
+        XCTAssertEqual(scene.triggerVolumes[1].cylinder, XRayCylinder(center: XRayVector3(x: 24, y: -66, z: -18), radius: 530, height: 160))
+        XCTAssertEqual(scene.triggerVolumes[2].source, .eventRegion)
+        XCTAssertEqual(scene.triggerVolumes[2].kind, "thunderstormGraveyard")
+        XCTAssertEqual(scene.triggerVolumes[2].cylinder, XRayCylinder(center: XRayVector3(x: -16, y: -192, z: 22), radius: 600, height: 400))
 
         let playerSnapshot = try XCTUnwrap(snapshot.activeActors.first { $0.category == "player" })
         XCTAssertNotNil(playerSnapshot.boundsCollider)
@@ -3441,6 +3475,8 @@ private func makeScene(
     entrances: [SceneEntranceDefinition] = [],
     spawns: [SceneSpawnPoint] = [],
     transitionTriggers: [SceneTransitionTrigger] = [],
+    cutsceneTriggers: [SceneCutsceneTrigger] = [],
+    eventRegionTriggers: [SceneEventRegionTrigger] = [],
     exits: [SceneExitDefinition] = [],
     collision: CollisionMesh? = nil,
     paths: [ScenePathDefinition] = []
@@ -3494,7 +3530,9 @@ private func makeScene(
                     objectIDs: roomObjectIDs[room.id, default: []]
                 )
             },
-            transitionTriggers: transitionTriggers
+            transitionTriggers: transitionTriggers,
+            cutsceneTriggers: cutsceneTriggers,
+            eventRegionTriggers: eventRegionTriggers
         ),
         rooms: loadedRooms
     )

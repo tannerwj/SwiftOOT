@@ -152,12 +152,17 @@ enum XRayDebugSceneBuilder {
 
         if settings.triggerVolumes, let triggerVolumes = snapshot?.scene?.triggerVolumes {
             for trigger in triggerVolumes {
-                appendBox(
-                    minimum: trigger.minimum.simd,
-                    maximum: trigger.maximum.simd,
-                    color: triggerVolumeColor,
-                    to: &lineSegments
-                )
+                let color = triggerVolumeColor(for: trigger.source)
+                if let minimum = trigger.minimum?.simd, let maximum = trigger.maximum?.simd {
+                    appendBox(
+                        minimum: minimum,
+                        maximum: maximum,
+                        color: color,
+                        to: &lineSegments
+                    )
+                } else if let cylinder = trigger.cylinder {
+                    appendCylinder(cylinder, color: color, to: &lineSegments)
+                }
             }
         }
 
@@ -219,7 +224,9 @@ private extension XRayDebugSceneBuilder {
     static let actorSpawnColor = SIMD4<Float>(1.00, 0.62, 0.20, 0.95)
     static let spawnPointColor = SIMD4<Float>(0.98, 0.96, 0.96, 0.95)
     static let pathColor = SIMD4<Float>(0.18, 0.90, 0.92, 0.95)
-    static let triggerVolumeColor = SIMD4<Float>(0.98, 0.68, 0.18, 0.9)
+    static let transitionTriggerColor = SIMD4<Float>(0.98, 0.68, 0.18, 0.9)
+    static let cutsceneTriggerColor = SIMD4<Float>(0.18, 0.84, 0.94, 0.9)
+    static let eventRegionTriggerColor = SIMD4<Float>(0.74, 0.92, 0.28, 0.9)
     static let waterLineColor = SIMD4<Float>(0.26, 0.58, 1.00, 0.8)
     static let waterFillColor = SIMD4<Float>(0.24, 0.52, 1.00, 0.22)
     static let bodyColliderColor = SIMD4<Float>(0.28, 0.62, 1.00, 0.95)
@@ -259,6 +266,17 @@ private extension XRayDebugSceneBuilder {
             return SIMD4<Float>(0.34, 0.96, 0.82, 0.95)
         default:
             return SIMD4<Float>(0.8, 0.78, 0.74, 0.95)
+        }
+    }
+
+    static func triggerVolumeColor(for source: XRaySceneTriggerSource) -> SIMD4<Float> {
+        switch source {
+        case .transition:
+            return transitionTriggerColor
+        case .cutscene:
+            return cutsceneTriggerColor
+        case .eventRegion:
+            return eventRegionTriggerColor
         }
     }
 
