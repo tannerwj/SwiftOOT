@@ -376,6 +376,20 @@ private struct GameplayShellView: View {
                         .transition(.opacity)
                 }
 
+                if runtime.playState != nil, runtime.availableChildCButtonItems.isEmpty == false {
+                    VStack(alignment: .trailing, spacing: 12) {
+                        CButtonLoadoutEditorShortcut(runtime: runtime)
+
+                        if runtime.isCButtonItemEditorPresented {
+                            CButtonLoadoutEditorOverlay(runtime: runtime)
+                                .transition(.move(edge: .trailing).combined(with: .opacity))
+                        }
+                    }
+                    .padding(.top, 24)
+                    .padding(.trailing, 24)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                }
+
                 if let itemGetOverlay = runtime.activeItemGetOverlay {
                     ItemGetView(state: itemGetOverlay)
                         .padding(.top, 28)
@@ -389,7 +403,7 @@ private struct GameplayShellView: View {
                     if let presentation = runtime.activeMessagePresentation {
                         MessageView(presentation: presentation)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
-                    } else if let actionLabel = runtime.gameplayActionLabel {
+                    } else if runtime.isCButtonItemEditorPresented == false, let actionLabel = runtime.gameplayActionLabel {
                         ActionPromptView(label: actionLabel)
                             .transition(.opacity)
                     }

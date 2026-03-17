@@ -446,7 +446,23 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         }
     }
 
+    public var ownedChildAssignableItems: [GameplayUsableItem] {
+        GameplayUsableItem.childAssignableItems.filter(owns)
+    }
+
     public mutating func assign(_ item: GameplayUsableItem?, to button: GameplayCButton) {
+        if let item {
+            guard owns(item) else {
+                normalizeItemState()
+                return
+            }
+
+            for otherButton in GameplayCButton.allCases
+            where otherButton != button && cButtonLoadout[otherButton] == item {
+                cButtonLoadout[otherButton] = nil
+            }
+        }
+
         cButtonLoadout[button] = item
         normalizeItemState()
     }
@@ -483,14 +499,6 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         dekuNutCount = min(max(0, dekuNutCount), dekuNutCapacity)
         dekuStickCount = min(max(0, dekuStickCount), dekuStickCapacity)
 
-        let preferredItems: [GameplayUsableItem] = [
-            .slingshot,
-            .bombs,
-            .boomerang,
-            .dekuStick,
-            .dekuNut,
-        ]
-
         for button in GameplayCButton.allCases {
             if let item = cButtonLoadout[button], owns(item) == false {
                 cButtonLoadout[button] = nil
@@ -499,7 +507,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
 
         var assignedItems = Set(GameplayCButton.allCases.compactMap { cButtonLoadout[$0] })
         for button in GameplayCButton.allCases where cButtonLoadout[button] == nil {
-            guard let nextItem = preferredItems.first(where: { owns($0) && assignedItems.contains($0) == false }) else {
+            guard let nextItem = ownedChildAssignableItems.first(where: { assignedItems.contains($0) == false }) else {
                 continue
             }
 
