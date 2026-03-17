@@ -64,13 +64,13 @@ final class TableExtractorTests: XCTestCase {
             ActorTableEntry(
                 id: 0,
                 enumName: "ACTOR_FOO",
-                profile: ActorProfile(id: 0, category: 0, flags: 0, objectID: 0),
+                profile: ActorProfile(id: 0, category: 4, flags: 0x10, objectID: 0),
                 overlayName: "En_Foo"
             ),
             ActorTableEntry(
                 id: 1,
                 enumName: "ACTOR_BAR",
-                profile: ActorProfile(id: 1, category: 0, flags: 0, objectID: 0),
+                profile: ActorProfile(id: 1, category: 2, flags: 0x20, objectID: 1),
                 overlayName: "Player"
             ),
             ActorTableEntry(
@@ -188,6 +188,48 @@ final class TableExtractorTests: XCTestCase {
             /* 0x0002 */ DEFINE_ACTOR_UNSET(ACTOR_UNSET_2)
             """,
             to: includeTables.appendingPathComponent("actor_table.h")
+        )
+
+        try write(
+            """
+            ActorProfile En_Foo_Profile = {
+                ACTOR_FOO,
+                ACTORCAT_NPC,
+                0x10,
+                OBJECT_FOO,
+                sizeof(EnFoo),
+                NULL,
+                NULL,
+                NULL,
+                NULL,
+            };
+            """,
+            to: root
+                .appendingPathComponent("src")
+                .appendingPathComponent("overlays")
+                .appendingPathComponent("actors")
+                .appendingPathComponent("ovl_En_Foo")
+                .appendingPathComponent("z_en_foo.c")
+        )
+
+        try write(
+            """
+            ActorProfile Player_Profile = {
+                ACTOR_BAR,
+                ACTORCAT_PLAYER,
+                0x20,
+                OBJECT_BAR_UNUSED,
+                sizeof(Player),
+                NULL,
+                NULL,
+                NULL,
+                NULL,
+            };
+            """,
+            to: root
+                .appendingPathComponent("src")
+                .appendingPathComponent("code")
+                .appendingPathComponent("z_player_call.c")
         )
 
         try write(

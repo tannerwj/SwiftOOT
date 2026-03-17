@@ -464,6 +464,39 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLoadSceneSpawnsGenericNPCActorsUsingDefaultRegistry() throws {
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(id: 1, name: "ACTOR_EN_HY"),
+                        makeSpawn(id: 2, name: "ACTOR_EN_HEISHI2"),
+                    ],
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 1, name: "ACTOR_EN_HY", category: .npc),
+                makeActorTableEntry(id: 2, name: "ACTOR_EN_HEISHI2", category: .npc),
+            ]
+        )
+        let runtime = GameRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+
+        XCTAssertEqual(
+            runtime.actors.map { String(describing: type(of: $0)) },
+            [
+                "GenericNPCActor",
+                "GenericNPCActor",
+            ]
+        )
+    }
+
+    @MainActor
     func testLoadSceneSpawnsDekuTreeActorsUsingDefaultRegistry() throws {
         let fixture = RuntimeFixture(
             scene: makeScene(
@@ -1328,6 +1361,46 @@ final class OOTCoreTests: XCTestCase {
             )
 
             try runtime.loadScene(id: 0x55)
+            runtime.handlePrimaryGameplayInput()
+
+            XCTAssertEqual(runtime.activeMessagePresentation?.messageID, 0x1000)
+            XCTAssertEqual(runtime.gameplayActionLabel, "Next")
+        }
+    }
+
+    func testPrimaryGameplayInputRequestsDialogueFromGenericNPCActor() async throws {
+        try await MainActor.run {
+            let fixture = RuntimeFixture(
+                scene: makeScene(
+                    roomSpawns: [
+                        0: [
+                            makeSpawn(id: 1, name: "ACTOR_EN_HY", params: 0x1000),
+                        ],
+                    ]
+                ),
+                actorTable: [
+                    makeActorTableEntry(id: 1, name: "ACTOR_EN_HY", category: .npc),
+                ],
+                messageCatalog: MessageCatalog(
+                    messageList: [
+                        MessageDefinition(
+                            id: 0x1000,
+                            variant: .white,
+                            segments: [.text("Welcome to Castle Town.")]
+                        ),
+                    ]
+                )
+            )
+            let runtime = GameRuntime(
+                contentLoader: fixture.contentLoader,
+                sceneLoader: MockSceneLoader(),
+                suspender: { _ in }
+            )
+
+            try runtime.loadScene(id: 0x55)
+
+            XCTAssertEqual(runtime.gameplayActionLabel, "Talk")
+
             runtime.handlePrimaryGameplayInput()
 
             XCTAssertEqual(runtime.activeMessagePresentation?.messageID, 0x1000)

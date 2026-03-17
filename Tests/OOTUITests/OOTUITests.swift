@@ -672,6 +672,53 @@ final class OOTUITests: XCTestCase {
         }
     }
 
+    func testRealExtractedAlleyShopLoadsShopkeeperActorObjectWhenConfigured() async throws {
+        guard let contentRootPath = ProcessInfo.processInfo.environment["SWIFTOOT_REAL_CONTENT_ROOT"] else {
+            throw XCTSkip("Set SWIFTOOT_REAL_CONTENT_ROOT to run the TAN-52 actor-object validation.")
+        }
+
+        let contentRoot = URL(fileURLWithPath: contentRootPath, isDirectory: true)
+        let contentLoader = ContentLoader(contentRoot: contentRoot)
+        let actorTable = try contentLoader.loadActorTable()
+        let shopkeeperEntry = try XCTUnwrap(
+            actorTable.first(where: { $0.enumName == "ACTOR_EN_OSSAN" }),
+            "Expected ACTOR_EN_OSSAN in the extracted actor table."
+        )
+
+        XCTAssertEqual(ActorCategory(rawValue: shopkeeperEntry.profile.category), .npc)
+        XCTAssertGreaterThan(shopkeeperEntry.profile.objectID, 0)
+
+        let runtime = GameRuntime(
+            contentLoader: contentLoader,
+            sceneLoader: SceneLoader(contentRoot: contentRoot),
+            suspender: { _ in }
+        )
+
+        try await runtime.launchDeveloperScene(
+            DeveloperSceneLaunchConfiguration(
+                scene: .name("alley_shop"),
+                spawnIndex: 0
+            )
+        )
+
+        XCTAssertTrue(
+            runtime.actors.contains { actor in
+                guard
+                    actor is GenericNPCActor,
+                    let baseActor = actor as? BaseActor
+                else {
+                    return false
+                }
+                return baseActor.spawnActorName == "ACTOR_EN_OSSAN"
+            },
+            "Expected alley_shop to spawn the shopkeeper as a generic NPC runtime actor."
+        )
+        XCTAssertTrue(
+            runtime.playState?.loadedObjectIDs.contains(shopkeeperEntry.profile.objectID) == true,
+            "Expected alley_shop to load the shopkeeper object ID from the extracted actor table."
+        )
+    }
+
     func testDeveloperHarnessProducesRealContentCaptureWhenConfigured() async throws {
         guard let contentRootPath = ProcessInfo.processInfo.environment["SWIFTOOT_REAL_CONTENT_ROOT"] else {
             throw XCTSkip("Set SWIFTOOT_REAL_CONTENT_ROOT to run the real-content harness validation.")
