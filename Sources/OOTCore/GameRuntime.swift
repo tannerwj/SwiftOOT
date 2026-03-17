@@ -577,6 +577,7 @@ public final class GameRuntime {
     public var messageContext: MessageContext
     public var itemGetSequence: ItemGetSequenceState?
     public var combatState: GameplayCombatState
+    public var isCButtonItemEditorPresented: Bool
 
     @ObservationIgnored
     public let contentLoader: any ContentLoading
@@ -680,6 +681,7 @@ public final class GameRuntime {
         messageContext: MessageContext = MessageContext(),
         itemGetSequence: ItemGetSequenceState? = nil,
         combatState: GameplayCombatState = GameplayCombatState(),
+        isCButtonItemEditorPresented: Bool = false,
         contentLoader: (any ContentLoading)? = nil,
         sceneLoader: (any SceneLoading)? = nil,
         telemetryPublisher: (any TelemetryPublishing)? = nil,
@@ -713,6 +715,7 @@ public final class GameRuntime {
         self.messageContext = messageContext
         self.itemGetSequence = itemGetSequence
         self.combatState = combatState
+        self.isCButtonItemEditorPresented = isCButtonItemEditorPresented
         let resolvedSceneLoader = sceneLoader ?? SceneLoader()
         self.sceneLoader = resolvedSceneLoader
         self.contentLoader = contentLoader ?? ContentLoader(sceneLoader: resolvedSceneLoader)
@@ -746,6 +749,9 @@ public final class GameRuntime {
             return "Next"
         }
         if itemGetSequence != nil {
+            return nil
+        }
+        if isCButtonItemEditorPresented {
             return nil
         }
         if messageContext.canRequestChoiceSelection {
@@ -867,6 +873,7 @@ public final class GameRuntime {
         statusMessage = nil
         errorMessage = nil
         fileSelectMode = nil
+        isCButtonItemEditorPresented = false
         selectedTitleOption = .newGame
         saveContext.selectedSlotIndex = 0
         if !saveContext.slots.isEmpty {
@@ -1058,6 +1065,7 @@ public final class GameRuntime {
         synchronizeHUDStateWithInventory()
         itemGetSequence = nil
         resetCombatState()
+        isCButtonItemEditorPresented = false
         playState = PlayState(
             activeSaveSlot: normalizedIndex,
             entryMode: .newGame,
@@ -1086,6 +1094,7 @@ public final class GameRuntime {
         synchronizeHUDStateWithInventory()
         itemGetSequence = nil
         resetCombatState()
+        isCButtonItemEditorPresented = false
         playState = PlayState(
             activeSaveSlot: normalizedIndex,
             entryMode: .continueGame,
@@ -1308,7 +1317,9 @@ public final class GameRuntime {
             gameTime.timeOfDay = fixedTimeOfDayOverride
         }
 
-        let playerInput = isGameplayPresentationActive ? ControllerInputState() : currentInput
+        let playerInput = (isGameplayPresentationActive || isCButtonItemEditorPresented)
+            ? ControllerInputState()
+            : currentInput
         let movementInput = movementInputState(for: playerInput)
 
         if let playerState {
@@ -1412,6 +1423,9 @@ public final class GameRuntime {
 
     private func transition(to nextState: GameState) {
         currentState = nextState
+        if nextState != .gameplay {
+            isCButtonItemEditorPresented = false
+        }
         gameTime.advance()
         if let fixedTimeOfDayOverride {
             gameTime.timeOfDay = fixedTimeOfDayOverride
@@ -1433,6 +1447,9 @@ public final class GameRuntime {
         previousInput: ControllerInputState,
         allowPrimaryAction: Bool
     ) {
+        if isCButtonItemEditorPresented {
+            return
+        }
         handleGameplayItemButtons(
             currentInput: currentInput,
             previousInput: previousInput
