@@ -97,6 +97,31 @@ public enum CombinerSourceSelector: UInt32, Sendable {
     case zero = 31
 }
 
+public struct TextureSamplingState: Sendable, Equatable {
+    public var scale: SIMD2<Float>
+    public var offset: SIMD2<Float>
+    public var dimensions: SIMD2<Float>
+    public var tileSpan: SIMD2<Float>
+    public var clamp: SIMD2<UInt32>
+    public var mirror: SIMD2<UInt32>
+
+    public init(
+        scale: SIMD2<Float> = SIMD2<Float>(repeating: 1.0),
+        offset: SIMD2<Float> = .zero,
+        dimensions: SIMD2<Float> = SIMD2<Float>(repeating: 1.0),
+        tileSpan: SIMD2<Float> = SIMD2<Float>(repeating: 1.0),
+        clamp: SIMD2<UInt32> = SIMD2<UInt32>(repeating: 1),
+        mirror: SIMD2<UInt32> = .zero
+    ) {
+        self.scale = scale
+        self.offset = offset
+        self.dimensions = dimensions
+        self.tileSpan = tileSpan
+        self.clamp = clamp
+        self.mirror = mirror
+    }
+}
+
 public struct CombinerUniforms: Sendable, Equatable {
     public var cycle1ColorSelectors: SIMD4<UInt32>
     public var cycle1AlphaSelectors: SIMD4<UInt32>
@@ -106,11 +131,15 @@ public struct CombinerUniforms: Sendable, Equatable {
     public var environmentColor: SIMD4<Float>
     public var fogColor: SIMD4<Float>
     public var textureScale: SIMD2<Float>
+    public var textureOffset: SIMD2<Float>
+    public var textureDimensions: SIMD2<Float>
+    public var textureTileSpan: SIMD2<Float>
+    public var textureClamp: SIMD2<UInt32>
+    public var textureMirror: SIMD2<UInt32>
     public var alphaCompareThreshold: Float
     public var alphaCompareMode: UInt32
     public var geometryMode: UInt32
     public var renderMode: UInt32
-    public var reserved: SIMD2<UInt32>
 
     public init(
         cycle1ColorSelectors: SIMD4<UInt32> = SIMD4<UInt32>(
@@ -141,11 +170,15 @@ public struct CombinerUniforms: Sendable, Equatable {
         environmentColor: SIMD4<Float> = .zero,
         fogColor: SIMD4<Float> = .zero,
         textureScale: SIMD2<Float> = SIMD2<Float>(repeating: 1.0),
+        textureOffset: SIMD2<Float> = .zero,
+        textureDimensions: SIMD2<Float> = SIMD2<Float>(repeating: 1.0),
+        textureTileSpan: SIMD2<Float> = SIMD2<Float>(repeating: 1.0),
+        textureClamp: SIMD2<UInt32> = SIMD2<UInt32>(repeating: 1),
+        textureMirror: SIMD2<UInt32> = .zero,
         alphaCompareThreshold: Float = 0.0,
         alphaCompareMode: UInt32 = 0,
         geometryMode: UInt32 = 0,
-        renderMode: UInt32 = 0,
-        reserved: SIMD2<UInt32> = .zero
+        renderMode: UInt32 = 0
     ) {
         self.cycle1ColorSelectors = cycle1ColorSelectors
         self.cycle1AlphaSelectors = cycle1AlphaSelectors
@@ -155,17 +188,21 @@ public struct CombinerUniforms: Sendable, Equatable {
         self.environmentColor = environmentColor
         self.fogColor = fogColor
         self.textureScale = textureScale
+        self.textureOffset = textureOffset
+        self.textureDimensions = textureDimensions
+        self.textureTileSpan = textureTileSpan
+        self.textureClamp = textureClamp
+        self.textureMirror = textureMirror
         self.alphaCompareThreshold = alphaCompareThreshold
         self.alphaCompareMode = alphaCompareMode
         self.geometryMode = geometryMode
         self.renderMode = renderMode
-        self.reserved = reserved
     }
 
     public init(
         rdpState: RDPState,
         geometryMode: GeometryMode = [],
-        textureScale: SIMD2<Float> = SIMD2<Float>(repeating: 1.0)
+        textureSamplingState: TextureSamplingState = TextureSamplingState()
     ) {
         self.init(
             cycle1ColorSelectors: Self.normalizedColorSelectors(for: rdpState.combineMode.firstCycle.color),
@@ -175,7 +212,12 @@ public struct CombinerUniforms: Sendable, Equatable {
             primitiveColor: normalizedColor(rdpState.primitiveColor.color),
             environmentColor: normalizedColor(rdpState.environmentColor),
             fogColor: normalizedColor(rdpState.fogColor),
-            textureScale: textureScale,
+            textureScale: textureSamplingState.scale,
+            textureOffset: textureSamplingState.offset,
+            textureDimensions: textureSamplingState.dimensions,
+            textureTileSpan: textureSamplingState.tileSpan,
+            textureClamp: textureSamplingState.clamp,
+            textureMirror: textureSamplingState.mirror,
             alphaCompareThreshold: Float(rdpState.blendColor.alpha) / 255.0,
             alphaCompareMode: Self.alphaCompareMode(from: rdpState.otherMode),
             geometryMode: geometryMode.rawValue,
@@ -187,10 +229,10 @@ public struct CombinerUniforms: Sendable, Equatable {
         for selectors: RDPCombineSelectorGroup
     ) -> SIMD4<UInt32> {
         SIMD4<UInt32>(
-            normalizedColorSelector(selectors.a),
-            normalizedColorSelector(selectors.b),
-            normalizedColorSelector(selectors.c),
-            normalizedColorSelector(selectors.d)
+            normalizedColorSelectorA(selectors.a),
+            normalizedColorSelectorB(selectors.b),
+            normalizedColorSelectorC(selectors.c),
+            normalizedColorSelectorD(selectors.d)
         )
     }
 
@@ -205,7 +247,7 @@ public struct CombinerUniforms: Sendable, Equatable {
         )
     }
 
-    private static func normalizedColorSelector(_ selector: UInt8) -> UInt32 {
+    private static func normalizedColorSelectorA(_ selector: UInt8) -> UInt32 {
         switch selector {
         case 0:
             return CombinerSourceSelector.combined.rawValue
@@ -223,7 +265,43 @@ public struct CombinerUniforms: Sendable, Equatable {
             return CombinerSourceSelector.one.rawValue
         case 7:
             return CombinerSourceSelector.noise.rawValue
+        case 15:
+            return CombinerSourceSelector.zero.rawValue
+        default:
+            return CombinerSourceSelector.zero.rawValue
+        }
+    }
+
+    private static func normalizedColorSelectorB(_ selector: UInt8) -> UInt32 {
+        normalizedColorSelectorA(selector)
+    }
+
+    private static func normalizedColorSelectorC(_ selector: UInt8) -> UInt32 {
+        switch selector {
         case 31:
+            return CombinerSourceSelector.zero.rawValue
+        default:
+            return normalizedColorSelectorA(selector)
+        }
+    }
+
+    private static func normalizedColorSelectorD(_ selector: UInt8) -> UInt32 {
+        switch selector {
+        case 0:
+            return CombinerSourceSelector.combined.rawValue
+        case 1:
+            return CombinerSourceSelector.texel0.rawValue
+        case 2:
+            return CombinerSourceSelector.texel1.rawValue
+        case 3:
+            return CombinerSourceSelector.primitive.rawValue
+        case 4:
+            return CombinerSourceSelector.shade.rawValue
+        case 5:
+            return CombinerSourceSelector.environment.rawValue
+        case 6:
+            return CombinerSourceSelector.one.rawValue
+        case 7:
             return CombinerSourceSelector.zero.rawValue
         default:
             return CombinerSourceSelector.zero.rawValue

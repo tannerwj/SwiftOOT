@@ -200,6 +200,39 @@ final class DisplayListParserTests: XCTestCase {
         )
     }
 
+    func testParserMasksCombineFieldsToHardwareBitWidths() throws {
+        let fixtureRoot = try makeFixtureRoot()
+        let sourceFile = fixtureRoot.appendingPathComponent("combine-scene.c")
+        try """
+        #include "gfx.h"
+
+        static Gfx combineDL[] = {
+            gsDPSetCombineLERP(TEXEL0, 0, SHADE, 0, 0, 0, 0, 1, COMBINED, 0, PRIMITIVE, 0, 0, 0, 0, COMBINED),
+            gsSPEndDisplayList(),
+        };
+        """.write(to: sourceFile, atomically: true, encoding: .utf8)
+
+        let displayLists = try DisplayListParser().parseDisplayLists(in: sourceFile, sourceRoot: fixtureRoot)
+
+        XCTAssertEqual(
+            displayLists,
+            [
+                ParsedDisplayList(
+                    name: "combineDL",
+                    commands: [
+                        .dpSetCombineMode(
+                            CombineMode(
+                                colorMux: 1_211_907,
+                                alphaMux: 4_294_966_776
+                            )
+                        ),
+                        .spEndDisplayList,
+                    ]
+                ),
+            ]
+        )
+    }
+
     func testParserExpandsLoadTLUTPal16Macro() throws {
         let fixtureRoot = try makeFixtureRoot()
         let sourceFile = fixtureRoot.appendingPathComponent("pal16.c")
@@ -746,12 +779,12 @@ final class DisplayListParserTests: XCTestCase {
         a1: String,
         c1: String
     ) -> UInt32 {
-        (combineColorSource(a0) << 20) |
-        (combineColorSource(c0) << 15) |
-        (combineAlphaSource(Aa0) << 12) |
-        (combineAlphaSource(Ac0) << 9) |
-        (combineColorSource(a1) << 5) |
-        combineColorSource(c1)
+        ((combineColorSource(a0) & 0x0F) << 20) |
+        ((combineColorSource(c0) & 0x1F) << 15) |
+        ((combineAlphaSource(Aa0) & 0x07) << 12) |
+        ((combineAlphaSource(Ac0) & 0x07) << 9) |
+        ((combineColorSource(a1) & 0x0F) << 5) |
+        (combineColorSource(c1) & 0x1F)
     }
 
     private func combineAlphaMux(
@@ -766,16 +799,16 @@ final class DisplayListParserTests: XCTestCase {
         Ab1: String,
         Ad1: String
     ) -> UInt32 {
-        (combineColorSource(b0) << 28) |
-        (combineColorSource(d0) << 15) |
-        (combineAlphaSource(Ab0) << 12) |
-        (combineAlphaSource(Ad0) << 9) |
-        (combineColorSource(b1) << 24) |
-        (combineAlphaSource(Aa1) << 21) |
-        (combineAlphaSource(Ac1) << 18) |
-        (combineColorSource(d1) << 6) |
-        (combineAlphaSource(Ab1) << 3) |
-        combineAlphaSource(Ad1)
+        ((combineColorSource(b0) & 0x0F) << 28) |
+        ((combineColorSource(d0) & 0x07) << 15) |
+        ((combineAlphaSource(Ab0) & 0x07) << 12) |
+        ((combineAlphaSource(Ad0) & 0x07) << 9) |
+        ((combineColorSource(b1) & 0x0F) << 24) |
+        ((combineAlphaSource(Aa1) & 0x07) << 21) |
+        ((combineAlphaSource(Ac1) & 0x07) << 18) |
+        ((combineColorSource(d1) & 0x07) << 6) |
+        ((combineAlphaSource(Ab1) & 0x07) << 3) |
+        (combineAlphaSource(Ad1) & 0x07)
     }
 
     private func combineColorSource(_ value: String) -> UInt32 {

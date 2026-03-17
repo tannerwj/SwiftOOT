@@ -31,7 +31,7 @@ final class OOTRenderTests: XCTestCase {
 
     func testFrameUniformsAndCombinerUniformsMatchMetalPacking() {
         XCTAssertEqual(MemoryLayout<FrameUniforms>.stride, 144)
-        XCTAssertEqual(MemoryLayout<CombinerUniforms>.stride, 144)
+        XCTAssertEqual(MemoryLayout<CombinerUniforms>.stride, 176)
     }
 
     func testRendererUsesN64VertexDescriptorLayout() throws {
@@ -195,7 +195,9 @@ final class OOTRenderTests: XCTestCase {
         )
         let combinerUniforms = CombinerUniforms(
             rdpState: rdpState,
-            textureScale: SIMD2<Float>(repeating: 1.0)
+            textureSamplingState: TextureSamplingState(
+                scale: SIMD2<Float>(repeating: 1.0)
+            )
         )
 
         renderer.renderToTexture(

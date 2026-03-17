@@ -111,6 +111,7 @@ public final class F3DEX2Interpreter {
             case .spEndDisplayList:
                 _ = frames.popLast()
             case .spTexture(let textureState):
+                try flushPendingTriangles(encoder: encoder)
                 rspState.setTextureState(
                     enabled: textureState.enabled,
                     scaleS: textureState.scaleS,
@@ -122,18 +123,26 @@ public final class F3DEX2Interpreter {
                     drawBatch.texel0Texture = nil
                     drawBatch.texel1Texture = nil
                 }
+                synchronizeBatchState()
             case .dpSetTextureImage(let descriptor):
+                try flushPendingTriangles(encoder: encoder)
                 textureImage = descriptor
             case .dpLoadBlock(let command):
+                try flushPendingTriangles(encoder: encoder)
                 lastLoadBlock = command
                 synchronizeTextures()
             case .dpLoadTile(let command):
+                try flushPendingTriangles(encoder: encoder)
                 lastLoadTile = command
                 synchronizeTextures()
             case .dpSetTile(let descriptor):
+                try flushPendingTriangles(encoder: encoder)
                 try rdpState.setTileDescriptor(descriptor)
+                synchronizeBatchState()
             case .dpSetTileSize(let command):
+                try flushPendingTriangles(encoder: encoder)
                 tileSizes[Int(command.tile)] = command
+                synchronizeBatchState()
             case .dpSetCombineMode(let combineMode):
                 try flushPendingTriangles(encoder: encoder)
                 rawCombineMode = combineMode
@@ -152,11 +161,17 @@ public final class F3DEX2Interpreter {
                 )
                 synchronizeBatchState()
             case .dpSetPrimColor(let primitiveColor):
+                try flushPendingTriangles(encoder: encoder)
                 rdpState.primitiveColor = primitiveColor
+                synchronizeBatchState()
             case .dpSetEnvColor(let color):
+                try flushPendingTriangles(encoder: encoder)
                 rdpState.environmentColor = color
+                synchronizeBatchState()
             case .dpSetFogColor(let color):
+                try flushPendingTriangles(encoder: encoder)
                 rdpState.fogColor = color
+                synchronizeBatchState()
             default:
                 logWarning("Skipping unsupported F3DEX2 command: \(command.name).")
             }
@@ -399,7 +414,12 @@ private extension F3DEX2Interpreter {
             drawBatch.combinerUniforms = CombinerUniforms(
                 rdpState: rdpState,
                 geometryMode: rspState.geometryMode,
-                textureScale: Self.textureScale(for: rspState.textureState)
+                textureSamplingState: Self.textureSamplingState(
+                    for: rspState.textureState,
+                    tileDescriptor: try? rdpState.tileDescriptor(at: Int(rspState.textureState.tile)),
+                    tileSize: tileSizes[safe: Int(rspState.textureState.tile)] ?? nil,
+                    texture: drawBatch.texel0Texture
+                )
             )
             if let environmentFogColor {
                 drawBatch.combinerUniforms.fogColor = environmentFogColor
@@ -413,11 +433,13 @@ private extension F3DEX2Interpreter {
         guard rspState.textureState.enabled, let textureImage else {
             drawBatch.texel0Texture = nil
             drawBatch.texel1Texture = nil
+            synchronizeBatchState()
             return
         }
 
         drawBatch.texel0Texture = textureResolver(textureImage.address)
         drawBatch.texel1Texture = nil
+        synchronizeBatchState()
     }
 
     func flushPendingTriangles(encoder: MTLRenderCommandEncoder) throws {
@@ -490,14 +512,72 @@ private extension F3DEX2Interpreter {
         )
     }
 
-    static func textureScale(for textureState: TextureState) -> SIMD2<Float> {
+    static func textureSamplingState(
+        for textureState: TextureState,
+        tileDescriptor: TileDescriptor?,
+        tileSize: TileSizeCommand?,
+        texture: MTLTexture?
+    ) -> TextureSamplingState {
         guard textureState.enabled else {
-            return SIMD2<Float>(repeating: 1.0)
+            return TextureSamplingState()
         }
 
         let scaleS = textureState.scaleS == 0 ? 1.0 : Float(textureState.scaleS) / 65_536.0
         let scaleT = textureState.scaleT == 0 ? 1.0 : Float(textureState.scaleT) / 65_536.0
-        return SIMD2<Float>(scaleS, scaleT)
+        let dimensions = SIMD2<Float>(
+            Float(max(texture?.width ?? 1, 1)),
+            Float(max(texture?.height ?? 1, 1))
+        )
+        let tileOrigin = tileOrigin(for: tileSize)
+        let tileSpan = tileSpan(for: tileSize, texture: texture)
+
+        return TextureSamplingState(
+            scale: SIMD2<Float>(scaleS, scaleT),
+            offset: -tileOrigin,
+            dimensions: dimensions,
+            tileSpan: tileSpan,
+            clamp: SIMD2<UInt32>(
+                tileDescriptor?.clampS == true ? 1 : 0,
+                tileDescriptor?.clampT == true ? 1 : 0
+            ),
+            mirror: SIMD2<UInt32>(
+                tileDescriptor?.mirrorS == true ? 1 : 0,
+                tileDescriptor?.mirrorT == true ? 1 : 0
+            )
+        )
+    }
+
+    static func tileOrigin(for tileSize: TileSizeCommand?) -> SIMD2<Float> {
+        guard let tileSize else {
+            return .zero
+        }
+
+        return SIMD2<Float>(
+            Float(tileSize.upperLeftS) / 4.0,
+            Float(tileSize.upperLeftT) / 4.0
+        )
+    }
+
+    static func tileSpan(
+        for tileSize: TileSizeCommand?,
+        texture: MTLTexture?
+    ) -> SIMD2<Float> {
+        guard let tileSize else {
+            return SIMD2<Float>(
+                Float(max(texture?.width ?? 1, 1)),
+                Float(max(texture?.height ?? 1, 1))
+            )
+        }
+
+        let width = max(
+            (Float(tileSize.lowerRightS) - Float(tileSize.upperLeftS)) / 4.0 + 1.0,
+            1.0
+        )
+        let height = max(
+            (Float(tileSize.lowerRightT) - Float(tileSize.upperLeftT)) / 4.0 + 1.0,
+            1.0
+        )
+        return SIMD2<Float>(width, height)
     }
 }
 
@@ -509,6 +589,31 @@ private extension UInt32 {
             UInt8((self >> 8) & 0xFF),
             UInt8(self & 0xFF),
         ]
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        guard indices.contains(index) else {
+            return nil
+        }
+        return self[index]
+    }
+}
+
+extension F3DEX2Interpreter {
+    static func makeTextureSamplingState(
+        for textureState: TextureState,
+        tileDescriptor: TileDescriptor?,
+        tileSize: TileSizeCommand?,
+        texture: MTLTexture?
+    ) -> TextureSamplingState {
+        textureSamplingState(
+            for: textureState,
+            tileDescriptor: tileDescriptor,
+            tileSize: tileSize,
+            texture: texture
+        )
     }
 }
 

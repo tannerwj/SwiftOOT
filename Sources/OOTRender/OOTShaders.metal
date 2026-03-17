@@ -34,11 +34,15 @@ struct CombinerUniforms {
     float4 environmentColor;
     float4 fogColor;
     float2 textureScale;
+    float2 textureOffset;
+    float2 textureDimensions;
+    float2 textureTileSpan;
+    uint2 textureClamp;
+    uint2 textureMirror;
     float alphaCompareThreshold;
     uint alphaCompareMode;
     uint geometryMode;
     uint renderMode;
-    uint2 reserved;
 };
 
 struct N64VertexIn {
@@ -115,7 +119,7 @@ vertex VertexOut oot_passthrough_vertex(
 
     VertexOut out;
     out.position = clipPosition;
-    out.texCoord = vertexIn.texCoord * combinerUniforms.textureScale;
+    out.texCoord = ((float2(rawVertex.texCoord) / 32.0) * combinerUniforms.textureScale) + combinerUniforms.textureOffset;
     out.color = evaluateShadeColor(
         shadeData,
         frameUniforms,
@@ -132,7 +136,7 @@ vertex VertexOut oot_draw_batch_vertex(
 ) {
     VertexOut out;
     out.position = vertexIn.clipPosition;
-    out.texCoord = vertexIn.texCoord;
+    out.texCoord = (vertexIn.texCoord * combinerUniforms.textureScale) + combinerUniforms.textureOffset;
     out.color = evaluateShadeColor(
         vertexIn.shadeData,
         frameUniforms,
@@ -334,6 +338,58 @@ float evaluateAlphaCycle(
     return clamp((a - b) * c + d, 0.0, 1.0);
 }
 
+float wrappedTexelCoordinate(
+    float coordinate,
+    float tileSpan,
+    uint clampMode,
+    uint mirrorMode
+) {
+    float safeSpan = max(tileSpan, 1.0);
+    float maxCoordinate = max(safeSpan - 1.0, 0.0);
+
+    if (clampMode != 0u) {
+        return clamp(coordinate, 0.0, maxCoordinate);
+    }
+
+    if (mirrorMode != 0u) {
+        float period = safeSpan * 2.0;
+        float mirrored = fmod(coordinate, period);
+        if (mirrored < 0.0) {
+            mirrored += period;
+        }
+        if (mirrored >= safeSpan) {
+            mirrored = period - mirrored - 1.0;
+        }
+        return clamp(mirrored, 0.0, maxCoordinate);
+    }
+
+    float wrapped = fmod(coordinate, safeSpan);
+    if (wrapped < 0.0) {
+        wrapped += safeSpan;
+    }
+    return clamp(wrapped, 0.0, maxCoordinate);
+}
+
+float2 normalizedTextureCoordinate(
+    float2 texelCoordinate,
+    constant CombinerUniforms& combinerUniforms
+) {
+    float wrappedS = wrappedTexelCoordinate(
+        texelCoordinate.x,
+        combinerUniforms.textureTileSpan.x,
+        combinerUniforms.textureClamp.x,
+        combinerUniforms.textureMirror.x
+    );
+    float wrappedT = wrappedTexelCoordinate(
+        texelCoordinate.y,
+        combinerUniforms.textureTileSpan.y,
+        combinerUniforms.textureClamp.y,
+        combinerUniforms.textureMirror.y
+    );
+    float2 dimensions = max(combinerUniforms.textureDimensions, float2(1.0));
+    return (float2(wrappedS, wrappedT) + 0.5) / dimensions;
+}
+
 fragment float4 oot_combiner_fragment(
     VertexOut in [[stage_in]],
     constant FrameUniforms& frameUniforms [[buffer(1)]],
@@ -343,8 +399,9 @@ fragment float4 oot_combiner_fragment(
 ) {
     constexpr sampler textureSampler(coord::normalized, address::clamp_to_edge, filter::nearest);
 
-    float4 texel0 = float4(texel0Texture.sample(textureSampler, in.texCoord));
-    float4 texel1 = float4(texel1Texture.sample(textureSampler, in.texCoord));
+    float2 sampleCoordinate = normalizedTextureCoordinate(in.texCoord, combinerUniforms);
+    float4 texel0 = float4(texel0Texture.sample(textureSampler, sampleCoordinate));
+    float4 texel1 = float4(texel1Texture.sample(textureSampler, sampleCoordinate));
     float noiseValue = combinerNoise(in.position.xy + in.texCoord);
     float4 noiseColor = float4(noiseValue);
 
