@@ -342,7 +342,7 @@ private struct GameplayShellView: View {
     private var renderSettings = RenderSettings()
 
     @State
-    private var selectedDebuggerTab: DebugSidebarTab = .actorInspector
+    private var selectedDebuggerTab: DebugSidebarTab = .commentary
 
     var body: some View {
         NavigationSplitView {
@@ -430,6 +430,13 @@ private struct GameplayShellView: View {
                                     selectedActorID: $selectedActorID
                                 )
                             }
+                            .overlay {
+                                DirectorCommentaryWorldMarkerOverlay(
+                                    runtime: runtime,
+                                    sceneBounds: renderPayload.baseScene.sceneBounds,
+                                    cameraConfiguration: renderPayload.gameplayCameraConfiguration
+                                )
+                            }
                         } else {
                             VStack(spacing: 12) {
                                 Text("Scene Viewer")
@@ -472,6 +479,21 @@ private struct GameplayShellView: View {
                                 .padding(.top, 28)
                                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                                 .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                        }
+
+                        if
+                            runtime.isDirectorCommentaryEnabled,
+                            runtime.isPauseMenuPresented == false,
+                            let activeCommentary = runtime.activeDirectorCommentaryAnnotation
+                        {
+                            DirectorCommentaryOverlayCard(annotation: activeCommentary) {
+                                runtime.selectDirectorCommentaryAnnotation(id: activeCommentary.id)
+                                selectedDebuggerTab = .commentary
+                            }
+                            .padding(.leading, 24)
+                            .padding(.bottom, 24)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                            .transition(.move(edge: .leading).combined(with: .opacity))
                         }
 
                         VStack(spacing: 16) {

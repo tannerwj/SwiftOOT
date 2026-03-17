@@ -85,6 +85,95 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testDirectorCommentaryResolvesSceneActorAndMechanicTriggers() throws {
+        let kokiriScene = makeScene(
+            sceneID: 0x55,
+            sceneName: "spot04",
+            roomSpawns: [0: []]
+        )
+        let dekuTreeScene = makeScene(
+            sceneID: 0x00,
+            sceneName: "ydan",
+            roomSpawns: [
+                0: [makeSpawn(id: 85, name: "ACTOR_EN_DEKUBABA", position: Vector3s(x: 0, y: 0, z: -48))],
+            ],
+            spawns: [
+                SceneSpawnPoint(
+                    index: 0,
+                    roomID: 0,
+                    position: Vector3s(x: 0, y: 0, z: 0),
+                    rotation: Vector3s(x: 0, y: 0x4000, z: 0)
+                ),
+            ],
+            collision: CollisionMesh(
+                minimumBounds: Vector3s(x: -100, y: -20, z: -100),
+                maximumBounds: Vector3s(x: 100, y: 120, z: 100),
+                vertices: [],
+                polygons: [],
+                surfaceTypes: [],
+                bgCameras: [],
+                waterBoxes: []
+            )
+        )
+        let fixture = RuntimeFixture(
+            scene: kokiriScene,
+            actorTable: [
+                makeActorTableEntry(id: 85, name: "ACTOR_EN_DEKUBABA", category: .enemy),
+            ]
+        )
+        let runtime = GameRuntime(
+            contentLoader: MockContentLoader(
+                scenesByID: [
+                    kokiriScene.manifest.id: kokiriScene,
+                    dekuTreeScene.manifest.id: dekuTreeScene,
+                ],
+                actorTable: fixture.contentLoader.actorTable
+            ),
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        runtime.setDirectorCommentaryEnabled(true)
+        try runtime.loadScene(id: kokiriScene.manifest.id)
+
+        XCTAssertEqual(runtime.activeDirectorCommentaryAnnotationID, "scene_kokiri_forest")
+
+        try runtime.loadScene(id: dekuTreeScene.manifest.id)
+
+        XCTAssertEqual(runtime.activeDirectorCommentaryAnnotationID, "actor_deku_baba")
+        XCTAssertTrue(
+            runtime.activeDirectorCommentaryAnnotations.contains(where: { $0.id == "scene_deku_tree" })
+        )
+
+        runtime.combatState.lockOnTarget = CombatTargetSnapshot(
+            actorID: 85,
+            actorType: "DekuBabaActor",
+            position: Vec3f(x: 0, y: 0, z: -48),
+            anchorHeight: 44,
+            distance: 48
+        )
+        runtime.refreshDirectorCommentary(forcePresentation: true)
+
+        XCTAssertTrue(
+            runtime.activeDirectorCommentaryAnnotations.contains(where: { $0.id == "mechanic_z_targeting" })
+        )
+
+        let snapshot = runtime.developerRuntimeStateSnapshot()
+        XCTAssertEqual(snapshot.directorCommentary?.isEnabled, true)
+        XCTAssertEqual(snapshot.directorCommentary?.activeAnnotationID, "mechanic_z_targeting")
+        XCTAssertEqual(
+            snapshot.directorCommentary?.activeAnnotationIDs,
+            [
+                "actor_deku_baba",
+                "mechanic_z_targeting",
+                "scene_deku_tree",
+                "mechanic_follow_camera",
+                "mechanic_collision_floor_snap",
+            ]
+        )
+    }
+
+    @MainActor
     func testStartAdvancesFromBootToTitleScreen() async {
         let runtime = GameRuntime(
             sceneLoader: MockSceneLoader(),

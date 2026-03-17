@@ -17,7 +17,8 @@ let project = Project(
         ),
         staticFrameworkTarget(
             name: "OOTContent",
-            dependencies: [.target(name: "OOTDataModel")]
+            dependencies: [.target(name: "OOTDataModel")],
+            resources: ["Sources/OOTContent/Resources/**"]
         ),
         staticFrameworkTarget(
             name: "OOTCore",
@@ -79,7 +80,8 @@ let project = Project(
 
 private func staticFrameworkTarget(
     name: String,
-    dependencies: [TargetDependency] = []
+    dependencies: [TargetDependency] = [],
+    resources: ResourceFileElements? = nil
 ) -> Target {
     .target(
         name: name,
@@ -88,6 +90,7 @@ private func staticFrameworkTarget(
         bundleId: "com.tannerwj.SwiftOOT.\(name)",
         infoPlist: .default,
         sources: .sourceFilesList(globs: ["Sources/\(name)/**"]),
+        resources: resources,
         dependencies: dependencies
     )
 }

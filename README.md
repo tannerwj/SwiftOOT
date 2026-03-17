@@ -152,6 +152,7 @@ you set one or more of these environment variables before launching the app:
 - `SWIFTOOT_ENTRANCE`: optional entrance index override
 - `SWIFTOOT_SPAWN`: optional spawn index override
 - `SWIFTOOT_TIME_OF_DAY`: optional fixed hour value such as `18.5`
+- `SWIFTOOT_DIRECTOR_COMMENTARY`: optional `1`/`true` flag to start gameplay with commentary mode enabled
 - `SWIFTOOT_INPUT_SCRIPT`: optional JSON script path
 - `SWIFTOOT_CAPTURE_FRAME`: optional PNG output path
 - `SWIFTOOT_CAPTURE_STATE`: optional JSON output path
@@ -172,6 +173,7 @@ xcodebuild -workspace SwiftOOT.xcworkspace -scheme OOTMac -destination 'platform
 SWIFTOOT_CONTENT_ROOT=/absolute/path/to/Content/OOT \
 SWIFTOOT_SCENE=spot04 \
 SWIFTOOT_TIME_OF_DAY=18.5 \
+SWIFTOOT_DIRECTOR_COMMENTARY=1 \
 SWIFTOOT_INPUT_SCRIPT=$PWD/docs/developer-harness-script.example.json \
 SWIFTOOT_CAPTURE_FRAME=$PWD/tmp/harness/frame.png \
 SWIFTOOT_CAPTURE_STATE=$PWD/tmp/harness/state.json \

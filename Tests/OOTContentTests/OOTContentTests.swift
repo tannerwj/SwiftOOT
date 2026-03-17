@@ -5,6 +5,21 @@ import OOTDataModel
 @testable import OOTContent
 
 final class OOTContentTests: XCTestCase {
+    func testBundledDirectorCommentaryCatalogLoadsStarterAnnotations() throws {
+        let catalog = try DirectorCommentaryLibrary.loadBundledCatalog()
+
+        XCTAssertFalse(catalog.annotations.isEmpty)
+        XCTAssertTrue(catalog.annotations.contains(where: { $0.id == "scene_kokiri_forest" }))
+        XCTAssertTrue(catalog.annotations.contains(where: { $0.id == "actor_deku_baba" }))
+        XCTAssertTrue(catalog.annotations.contains(where: { $0.id == "mechanic_z_targeting" }))
+        XCTAssertTrue(
+            catalog.annotations.contains(where: { annotation in
+                annotation.id == "scene_kokiri_forest" &&
+                    annotation.bodyMarkdown.contains("carefully staged chunks")
+            })
+        )
+    }
+
     func testContentLoaderConformsToProtocol() {
         let loader: any ContentLoading = ContentLoader(sceneLoader: StubSceneLoader())
 

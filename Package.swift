@@ -48,7 +48,10 @@ let package = Package(
         ),
         .target(
             name: "OOTContent",
-            dependencies: ["OOTDataModel"]
+            dependencies: ["OOTDataModel"],
+            resources: [
+                .process("Resources"),
+            ]
         ),
         .target(
             name: "OOTExtractSupport",

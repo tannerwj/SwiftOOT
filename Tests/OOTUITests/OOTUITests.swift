@@ -129,6 +129,31 @@ final class OOTUITests: XCTestCase {
             ),
             onSelectScene: { _ in }
         )
+        _ = DirectorCommentarySidebarView(
+            runtime: GameRuntime(
+                currentState: .gameplay,
+                playState: PlayState(
+                    activeSaveSlot: 0,
+                    entryMode: .newGame,
+                    currentSceneName: "Kokiri Forest",
+                    currentSceneID: 0x55,
+                    playerName: "Link"
+                ),
+                loadedScene: makeLoadedScene(),
+                sceneLoader: UITestSceneLoader(),
+                suspender: { _ in }
+            )
+        )
+        _ = DirectorCommentaryOverlayCard(
+            annotation: DirectorCommentaryAnnotation(
+                id: "preview",
+                kind: .scene,
+                title: "Preview",
+                summary: "Shows the overlay shell can compile.",
+                bodyMarkdown: "Sample body"
+            ),
+            onOpenDetails: {}
+        )
     }
 
     func testRootViewStateMatchesRuntimeState() {
