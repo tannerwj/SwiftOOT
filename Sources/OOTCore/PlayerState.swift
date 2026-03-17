@@ -41,6 +41,8 @@ public struct ControllerInputState: Sendable, Equatable {
     public var stick: StickInput
     public var aPressed: Bool
     public var bPressed: Bool
+    public var lPressed: Bool
+    public var rPressed: Bool
     public var cLeftPressed: Bool
     public var cDownPressed: Bool
     public var cRightPressed: Bool
@@ -51,6 +53,8 @@ public struct ControllerInputState: Sendable, Equatable {
         stick: StickInput = .zero,
         aPressed: Bool = false,
         bPressed: Bool = false,
+        lPressed: Bool = false,
+        rPressed: Bool = false,
         cLeftPressed: Bool = false,
         cDownPressed: Bool = false,
         cRightPressed: Bool = false,
@@ -60,6 +64,8 @@ public struct ControllerInputState: Sendable, Equatable {
         self.stick = stick
         self.aPressed = aPressed
         self.bPressed = bPressed
+        self.lPressed = lPressed
+        self.rPressed = rPressed
         self.cLeftPressed = cLeftPressed
         self.cDownPressed = cDownPressed
         self.cRightPressed = cRightPressed

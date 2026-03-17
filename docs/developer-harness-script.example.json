@@ -14,7 +14,8 @@
       "start": 45,
       "end": 48
     },
-    "aPressed": true
+    "aPressed": true,
+    "rPressed": true
   },
   {
     "duration": 20,
@@ -22,6 +23,7 @@
       "x": 0.7,
       "y": 0.7
     },
-    "zPressed": true
+    "zPressed": true,
+    "cLeftPressed": true
   }
 ]

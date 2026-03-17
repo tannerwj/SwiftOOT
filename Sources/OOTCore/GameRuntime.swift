@@ -92,7 +92,12 @@ public struct SaveSlot: Identifiable, Codable, Sendable, Equatable {
     public var locationName: String
     public var hearts: Int
     public var hasSaveData: Bool
-    public var inventoryState: GameplayInventoryState
+    public var inventoryContext: InventoryContext
+
+    public var inventoryState: GameplayInventoryState {
+        get { inventoryContext.gameplay }
+        set { inventoryContext.gameplay = newValue }
+    }
 
     public init(
         id: Int,
@@ -100,15 +105,18 @@ public struct SaveSlot: Identifiable, Codable, Sendable, Equatable {
         locationName: String = "Unused",
         hearts: Int = 3,
         hasSaveData: Bool = false,
-        inventoryState: GameplayInventoryState? = nil
+        inventoryState: GameplayInventoryState? = nil,
+        inventoryContext: InventoryContext? = nil
     ) {
-        let resolvedInventoryState = inventoryState ?? .starter(hearts: hearts)
+        let resolvedInventoryContext = inventoryContext ?? InventoryContext(
+            gameplay: inventoryState ?? .starter(hearts: hearts)
+        )
         self.id = id
         self.playerName = playerName
         self.locationName = locationName
-        self.hearts = max(1, resolvedInventoryState.maximumHealthUnits / 2)
+        self.hearts = max(1, resolvedInventoryContext.gameplay.maximumHealthUnits / 2)
         self.hasSaveData = hasSaveData
-        self.inventoryState = resolvedInventoryState
+        self.inventoryContext = resolvedInventoryContext
     }
 
     public static func empty(id: Int) -> Self {
@@ -122,7 +130,7 @@ public struct SaveSlot: Identifiable, Codable, Sendable, Equatable {
             locationName: "Kokiri Forest",
             hearts: 3,
             hasSaveData: true,
-            inventoryState: .starter(hearts: 3)
+            inventoryContext: .starter(hearts: 3)
         )
     }
 
@@ -132,6 +140,7 @@ public struct SaveSlot: Identifiable, Codable, Sendable, Equatable {
         case locationName
         case hearts
         case hasSaveData
+        case inventoryContext
         case inventoryState
     }
 
@@ -142,10 +151,15 @@ public struct SaveSlot: Identifiable, Codable, Sendable, Equatable {
         let locationName = try container.decode(String.self, forKey: .locationName)
         let hearts = try container.decode(Int.self, forKey: .hearts)
         let hasSaveData = try container.decode(Bool.self, forKey: .hasSaveData)
-        let inventoryState = try container.decodeIfPresent(
+        let inventoryContext = try container.decodeIfPresent(
+            InventoryContext.self,
+            forKey: .inventoryContext
+        ) ?? InventoryContext(
+            gameplay: try container.decodeIfPresent(
             GameplayInventoryState.self,
             forKey: .inventoryState
-        ) ?? .starter(hearts: hearts)
+            ) ?? .starter(hearts: hearts)
+        )
 
         self.init(
             id: id,
@@ -153,7 +167,7 @@ public struct SaveSlot: Identifiable, Codable, Sendable, Equatable {
             locationName: locationName,
             hearts: hearts,
             hasSaveData: hasSaveData,
-            inventoryState: inventoryState
+            inventoryContext: inventoryContext
         )
     }
 
@@ -164,6 +178,7 @@ public struct SaveSlot: Identifiable, Codable, Sendable, Equatable {
         try container.encode(locationName, forKey: .locationName)
         try container.encode(hearts, forKey: .hearts)
         try container.encode(hasSaveData, forKey: .hasSaveData)
+        try container.encode(inventoryContext, forKey: .inventoryContext)
         try container.encode(inventoryState, forKey: .inventoryState)
     }
 }
@@ -549,7 +564,7 @@ public final class GameRuntime {
     public var inputState: InputState
     public var controllerInputState: ControllerInputState
     public var hudState: GameplayHUDState
-    public var inventoryState: GameplayInventoryState
+    public var inventoryContext: InventoryContext
     public var selectedTitleOption: TitleMenuOption
     public var fileSelectMode: FileSelectMode?
     public var statusMessage: String?
@@ -633,6 +648,16 @@ public final class GameRuntime {
     @ObservationIgnored
     var activeDekuStickState: EquippedDekuStickState?
 
+    public var inventoryState: GameplayInventoryState {
+        get { inventoryContext.gameplay }
+        set { inventoryContext.gameplay = newValue }
+    }
+
+    public var pauseMenuState: PauseMenuState {
+        get { inventoryContext.pauseMenu }
+        set { inventoryContext.pauseMenu = newValue }
+    }
+
     public init(
         currentState: GameState = .boot,
         playState: PlayState? = nil,
@@ -643,6 +668,7 @@ public final class GameRuntime {
         controllerInputState: ControllerInputState = ControllerInputState(),
         hudState: GameplayHUDState = GameplayHUDState(),
         inventoryState: GameplayInventoryState = .starter(hearts: 3),
+        inventoryContext: InventoryContext? = nil,
         selectedTitleOption: TitleMenuOption = .newGame,
         fileSelectMode: FileSelectMode? = nil,
         statusMessage: String? = nil,
@@ -676,7 +702,7 @@ public final class GameRuntime {
         self.inputState = inputState
         self.controllerInputState = controllerInputState
         self.hudState = hudState
-        self.inventoryState = inventoryState
+        self.inventoryContext = inventoryContext ?? InventoryContext(gameplay: inventoryState)
         self.selectedTitleOption = selectedTitleOption
         self.fileSelectMode = fileSelectMode
         self.statusMessage = statusMessage
@@ -806,7 +832,9 @@ public final class GameRuntime {
             },
             actionLabel: gameplayActionLabel,
             statusMessage: statusMessage,
-            errorMessage: errorMessage
+            errorMessage: errorMessage,
+            inventoryContext: inventoryContext,
+            hudState: hudState
         )
     }
     public func start() async {
@@ -1032,7 +1060,7 @@ public final class GameRuntime {
         let normalizedIndex = normalizedSlotIndex(index)
         let slot = SaveSlot.starter(id: normalizedIndex)
         saveContext.slots[normalizedIndex] = slot
-        inventoryState = slot.inventoryState
+        inventoryContext = slot.inventoryContext
         hudState = .starter(hearts: slot.hearts)
         synchronizeHUDStateWithInventory()
         itemGetSequence = nil
@@ -1061,7 +1089,7 @@ public final class GameRuntime {
             return
         }
 
-        inventoryState = slot.inventoryState
+        inventoryContext = slot.inventoryContext
         hudState = .starter(hearts: slot.hearts)
         synchronizeHUDStateWithInventory()
         itemGetSequence = nil
@@ -1273,6 +1301,17 @@ public final class GameRuntime {
             return
         }
 
+        let currentInput = controllerInputState
+        let previousInput = previousControllerInputState
+        defer {
+            previousControllerInputState = currentInput
+        }
+
+        if handlePauseMenuInput(currentInput: currentInput, previousInput: previousInput) {
+            syncCombatObservationState()
+            return
+        }
+
         gameTime.advance()
         if let fixedTimeOfDayOverride {
             gameTime.timeOfDay = fixedTimeOfDayOverride
@@ -1280,7 +1319,7 @@ public final class GameRuntime {
 
         let playerInput = (isGameplayPresentationActive || isCButtonItemEditorPresented)
             ? ControllerInputState()
-            : controllerInputState
+            : currentInput
         let movementInput = movementInputState(for: playerInput)
 
         if let playerState {
@@ -1308,7 +1347,11 @@ public final class GameRuntime {
         updateCombatStateAfterActorStep(playState: playState, currentInput: playerInput)
         processSceneTransitionsIfNeeded()
         let allowPrimaryAction = canUsePrimaryGameplayInput(for: playerInput)
-        applyGameplayControllerInput(allowPrimaryAction: allowPrimaryAction)
+        applyGameplayControllerInput(
+            currentInput: currentInput,
+            previousInput: previousInput,
+            allowPrimaryAction: allowPrimaryAction
+        )
         messageContext.tick(playerName: playState.playerName)
         syncCombatObservationState()
     }
@@ -1399,22 +1442,14 @@ public final class GameRuntime {
         min(max(0, index), saveContext.slots.count - 1)
     }
 
-    private func applyGameplayControllerInput(allowPrimaryAction: Bool) {
-        let currentInput = controllerInputState
-        let previousInput = previousControllerInputState
-        defer {
-            previousControllerInputState = currentInput
-        }
-
-        if currentInput.startPressed, previousInput.startPressed == false {
-            toggleCButtonItemEditor()
-            return
-        }
-
+    private func applyGameplayControllerInput(
+        currentInput: ControllerInputState,
+        previousInput: ControllerInputState,
+        allowPrimaryAction: Bool
+    ) {
         if isCButtonItemEditorPresented {
             return
         }
-
         handleGameplayItemButtons(
             currentInput: currentInput,
             previousInput: previousInput
@@ -1564,7 +1599,7 @@ public final class GameRuntime {
         hudState.currentHealthUnits = inventoryState.currentHealthUnits
         hudState.maximumHealthUnits = inventoryState.maximumHealthUnits
         hudState.smallKeyCount = inventoryState.smallKeyCount(for: currentSceneIdentity)
-        hudState.bButtonItem = .sword
+        hudState.bButtonItem = inventoryContext.equipment.equippedSword == nil ? .none : .sword
 
         for button in GameplayCButton.allCases {
             if let item = inventoryState.cButtonLoadout[button] {
@@ -1595,7 +1630,7 @@ public final class GameRuntime {
             locationName: sceneName ?? playState.currentSceneName,
             hearts: max(1, inventoryState.maximumHealthUnits / 2),
             hasSaveData: true,
-            inventoryState: inventoryState
+            inventoryContext: inventoryContext
         )
     }
 

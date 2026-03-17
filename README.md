@@ -136,7 +136,8 @@ you set one or more of these environment variables before launching the app:
 - `SWIFTOOT_CAPTURE_VIEWPORT`: optional capture size such as `960x540`
 
 The script format is a top-level JSON array. Each step must define exactly one
-of `duration` or `frameRange`, and may set `stick`, `aPressed`, `bPressed`,
+of `duration` or `frameRange`, and may set `stick`, `lPressed`, `rPressed`,
+`aPressed`, `bPressed`, `cLeftPressed`, `cDownPressed`, `cRightPressed`,
 `zPressed`, and `startPressed`. See
 [`docs/developer-harness-script.example.json`](docs/developer-harness-script.example.json)
 for a checked-in example.

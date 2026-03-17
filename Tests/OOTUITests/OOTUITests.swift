@@ -135,9 +135,14 @@ final class OOTUITests: XCTestCase {
         XCTAssertTrue(inputManager.handleKeyDown(try makeKeyEvent(type: .keyDown, character: "", keyCode: 56)))
         XCTAssertTrue(runtime.controllerInputState.bPressed)
 
+        XCTAssertTrue(inputManager.handleKeyDown(try makeKeyEvent(type: .keyDown, character: "q", keyCode: 12)))
+        XCTAssertTrue(runtime.controllerInputState.lPressed)
+
+        XCTAssertTrue(inputManager.handleKeyDown(try makeKeyEvent(type: .keyDown, character: "e", keyCode: 14)))
+        XCTAssertTrue(runtime.controllerInputState.rPressed)
+
         XCTAssertTrue(inputManager.handleKeyDown(try makeKeyEvent(type: .keyDown, character: "\r", keyCode: 36)))
         XCTAssertTrue(runtime.controllerInputState.startPressed)
-
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "w", keyCode: 13)))
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: " ", keyCode: 49)))
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "1", keyCode: 18)))
@@ -145,11 +150,15 @@ final class OOTUITests: XCTestCase {
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "3", keyCode: 20)))
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "\t", keyCode: 48)))
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "", keyCode: 56)))
+        XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "q", keyCode: 12)))
+        XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "e", keyCode: 14)))
         XCTAssertTrue(inputManager.handleKeyUp(try makeKeyEvent(type: .keyUp, character: "\r", keyCode: 36)))
 
         XCTAssertEqual(runtime.controllerInputState.stick, .zero)
         XCTAssertFalse(runtime.controllerInputState.aPressed)
         XCTAssertFalse(runtime.controllerInputState.bPressed)
+        XCTAssertFalse(runtime.controllerInputState.lPressed)
+        XCTAssertFalse(runtime.controllerInputState.rPressed)
         XCTAssertFalse(runtime.controllerInputState.cLeftPressed)
         XCTAssertFalse(runtime.controllerInputState.cDownPressed)
         XCTAssertFalse(runtime.controllerInputState.cRightPressed)
@@ -157,15 +166,59 @@ final class OOTUITests: XCTestCase {
         XCTAssertFalse(runtime.controllerInputState.startPressed)
     }
 
+    func testPauseMenuViewCompilesWithRuntimePauseState() {
+        let runtime = GameRuntime(
+            playState: PlayState(
+                activeSaveSlot: 0,
+                entryMode: .newGame,
+                currentSceneName: "Kokiri Forest",
+                currentRoomID: 1,
+                playerName: "Link",
+                scene: makeLoadedScene()
+            ),
+            playerState: PlayerState(position: Vec3f(x: 12, y: 0, z: -18)),
+            inventoryContext: InventoryContext(
+                gameplay: GameplayInventoryState(hasSlingshot: true, slingshotAmmo: 15),
+                equipment: EquipmentCollection(
+                    ownedSwords: [.masterSword, .biggoronSword],
+                    equippedSword: .masterSword,
+                    ownedShields: [.hylianShield, .mirrorShield],
+                    equippedShield: .hylianShield,
+                    ownedTunics: [.kokiri, .zora],
+                    equippedTunic: .kokiri,
+                    ownedBoots: [.kokiri, .hover],
+                    equippedBoots: .kokiri
+                ),
+                questStatus: QuestStatus(
+                    medallions: [.forest],
+                    songs: [.zeldasLullaby],
+                    heartPieceCount: 2
+                ),
+                pauseMenu: PauseMenuState(
+                    isPresented: true,
+                    activeSubscreen: .items,
+                    itemCursor: PauseMenuCursor(row: 1, column: 0)
+                )
+            ),
+            contentLoader: StubContentLoader(),
+            sceneLoader: UITestSceneLoader(),
+            suspender: { _ in }
+        )
+
+        _ = PauseMenuView(runtime: runtime)
+    }
+
     func testDeveloperInputScriptSupportsDurationsAndExplicitFrameRanges() throws {
         let script = try DeveloperInputScript(
             steps: [
                 DeveloperInputStep(
                     duration: 3,
-                    stick: DeveloperInputVector(x: 0, y: 1)
+                    stick: DeveloperInputVector(x: 0, y: 1),
+                    lPressed: true
                 ),
                 DeveloperInputStep(
                     frameRange: DeveloperInputFrameRange(start: 5, end: 6),
+                    rPressed: true,
                     aPressed: true,
                     zPressed: true
                 ),
@@ -173,12 +226,24 @@ final class OOTUITests: XCTestCase {
         )
 
         XCTAssertEqual(script.totalFrameCount, 7)
-        XCTAssertEqual(script.inputState(for: 0).stick, StickInput(x: 0, y: 1))
-        XCTAssertEqual(script.inputState(for: 2).stick, StickInput(x: 0, y: 1))
+        XCTAssertEqual(
+            script.inputState(for: 0),
+            ControllerInputState(
+                stick: StickInput(x: 0, y: 1),
+                lPressed: true
+            )
+        )
+        XCTAssertEqual(
+            script.inputState(for: 2),
+            ControllerInputState(
+                stick: StickInput(x: 0, y: 1),
+                lPressed: true
+            )
+        )
         XCTAssertEqual(script.inputState(for: 3), ControllerInputState())
         XCTAssertEqual(
             script.inputState(for: 5),
-            ControllerInputState(aPressed: true, zPressed: true)
+            ControllerInputState(aPressed: true, rPressed: true, zPressed: true)
         )
     }
 
@@ -191,7 +256,9 @@ final class OOTUITests: XCTestCase {
                 ),
                 DeveloperInputStep(
                     frameRange: DeveloperInputFrameRange(start: 4, end: 6),
-                    aPressed: true
+                    rPressed: true,
+                    aPressed: true,
+                    cLeftPressed: true
                 ),
             ]
         )
@@ -200,7 +267,9 @@ final class OOTUITests: XCTestCase {
             script.inputState(for: 5),
             ControllerInputState(
                 stick: StickInput(x: 0, y: 1),
-                aPressed: true
+                aPressed: true,
+                rPressed: true,
+                cLeftPressed: true
             )
         )
     }
@@ -513,6 +582,32 @@ final class OOTUITests: XCTestCase {
         XCTAssertEqual(enemySkeleton.animationState.animation?.name, "gDekuBabaFastChompAnim")
     }
 
+    func testRenderSceneAppliesSwordAndShieldDisplayListOverridesFromEquipment() throws {
+        let payload = try SceneRenderPayloadBuilder.makePayload(
+            scene: makeLoadedScene(),
+            textureAssetURLs: [:],
+            contentLoader: HUDArtContentLoader(object: makePlayerRenderTestObject())
+        )
+
+        let renderScene = SceneRenderPayloadBuilder.renderScene(
+            from: payload,
+            playerState: PlayerState(),
+            inventoryContext: InventoryContext(
+                gameplay: .starter(hearts: 3),
+                equipment: EquipmentCollection(
+                    ownedSwords: [.masterSword, .biggoronSword],
+                    equippedSword: .biggoronSword,
+                    ownedShields: [.hylianShield, .mirrorShield],
+                    equippedShield: .mirrorShield
+                )
+            )
+        )
+
+        let linkSkeleton = try XCTUnwrap(renderScene.skeletons.first { $0.name == "Link" })
+        XCTAssertEqual(linkSkeleton.skeleton.limbs[0].displayListPath, "meshes/gLinkAdultLeftHandHoldingBgsNearDL.dl.json")
+        XCTAssertEqual(linkSkeleton.skeleton.limbs[1].displayListPath, "meshes/gLinkAdultRightHandHoldingMirrorShieldNearDL.dl.json")
+    }
+
     func testGameplayHUDArtLibraryLoadsKnownGameplayKeepTextures() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
             UUID().uuidString,
@@ -799,7 +894,7 @@ final class OOTUITests: XCTestCase {
             from: Data(contentsOf: stateURL)
         )
         XCTAssertEqual(capturedState.runtime.sceneID, runtime.playState?.currentSceneID)
-        XCTAssertGreaterThan(capturedState.render.drawCallCount, 0)
+        XCTAssertGreaterThan(try XCTUnwrap(capturedState.render).drawCallCount, 0)
     }
 
     func testRealExtractedSpot02RendersTexturedSkyboxWhenConfigured() throws {
@@ -1190,6 +1285,51 @@ private func makeSkeletonTestObject() -> LoadedObject {
                 values: [0, 0, 0],
                 limbCount: 1
             ),
+        ]
+    )
+}
+
+private func makePlayerRenderTestObject() -> LoadedObject {
+    let leftHandPath = "meshes/gLinkAdultLeftHandNearDL.dl.json"
+    let rightHandPath = "meshes/gLinkAdultRightHandClosedNearDL.dl.json"
+
+    return LoadedObject(
+        manifest: ObjectManifest(
+            name: "object_link_boy",
+            meshes: [
+                ObjectMeshAsset(name: "gLinkAdultLeftHandNearDL", displayListPath: leftHandPath),
+                ObjectMeshAsset(name: "gLinkAdultLeftHandHoldingBgsNearDL", displayListPath: "meshes/gLinkAdultLeftHandHoldingBgsNearDL.dl.json"),
+                ObjectMeshAsset(name: "gLinkAdultLeftHandHoldingMasterSwordNearDL", displayListPath: "meshes/gLinkAdultLeftHandHoldingMasterSwordNearDL.dl.json"),
+                ObjectMeshAsset(name: "gLinkAdultRightHandClosedNearDL", displayListPath: rightHandPath),
+                ObjectMeshAsset(name: "gLinkAdultRightHandHoldingHylianShieldNearDL", displayListPath: "meshes/gLinkAdultRightHandHoldingHylianShieldNearDL.dl.json"),
+                ObjectMeshAsset(name: "gLinkAdultRightHandHoldingMirrorShieldNearDL", displayListPath: "meshes/gLinkAdultRightHandHoldingMirrorShieldNearDL.dl.json"),
+            ]
+        ),
+        skeletonsByName: [
+            "gLinkAdultSkel": SkeletonData(
+                type: .normal,
+                limbs: [
+                    LimbData(translation: Vector3s(x: 0, y: 0, z: 0), displayListPath: leftHandPath),
+                    LimbData(translation: Vector3s(x: 0, y: 0, z: 0), displayListPath: rightHandPath),
+                ]
+            ),
+        ],
+        animationsByName: [
+            "gLinkAdultIdleAnim": ObjectAnimationData(
+                name: "gLinkAdultIdleAnim",
+                kind: .player,
+                frameCount: 1,
+                values: [0],
+                limbCount: 2
+            ),
+        ],
+        displayListsByPath: [
+            leftHandPath: [],
+            "meshes/gLinkAdultLeftHandHoldingBgsNearDL.dl.json": [],
+            "meshes/gLinkAdultLeftHandHoldingMasterSwordNearDL.dl.json": [],
+            rightHandPath: [],
+            "meshes/gLinkAdultRightHandHoldingHylianShieldNearDL.dl.json": [],
+            "meshes/gLinkAdultRightHandHoldingMirrorShieldNearDL.dl.json": [],
         ]
     )
 }

@@ -124,6 +124,143 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testPauseMenuTogglesFromStartInputAndCyclesSubscreens() async {
+        let runtime = GameRuntime(
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+        await runtime.start()
+        runtime.chooseTitleOption(.newGame)
+        runtime.confirmSelectedSaveSlot()
+
+        runtime.setControllerInput(ControllerInputState(startPressed: true))
+        runtime.updateFrame()
+
+        XCTAssertTrue(runtime.isPauseMenuPresented)
+        XCTAssertEqual(runtime.pauseMenuState.activeSubscreen, .items)
+
+        runtime.setControllerInput(ControllerInputState())
+        runtime.updateFrame()
+
+        runtime.setControllerInput(ControllerInputState(rPressed: true))
+        runtime.updateFrame()
+        XCTAssertEqual(runtime.pauseMenuState.activeSubscreen, .equipment)
+
+        runtime.setControllerInput(ControllerInputState())
+        runtime.updateFrame()
+
+        runtime.setControllerInput(ControllerInputState(lPressed: true))
+        runtime.updateFrame()
+        XCTAssertEqual(runtime.pauseMenuState.activeSubscreen, .items)
+
+        runtime.setControllerInput(ControllerInputState())
+        runtime.updateFrame()
+
+        runtime.setControllerInput(ControllerInputState(bPressed: true))
+        runtime.updateFrame()
+        XCTAssertFalse(runtime.isPauseMenuPresented)
+    }
+
+    @MainActor
+    func testPauseMenuAssignsSelectedInventoryItemToCButtons() async {
+        let runtime = GameRuntime(
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+        await runtime.start()
+        runtime.chooseTitleOption(.newGame)
+        runtime.confirmSelectedSaveSlot()
+
+        runtime.inventoryState = GameplayInventoryState(
+            hasSlingshot: true,
+            slingshotAmmo: 20,
+            cButtonLoadout: GameplayCButtonLoadout()
+        )
+        runtime.pauseMenuState = PauseMenuState(
+            isPresented: true,
+            activeSubscreen: .items,
+            itemCursor: PauseMenuCursor(row: 1, column: 0)
+        )
+
+        runtime.assignSelectedPauseMenuItem(to: .left)
+
+        XCTAssertEqual(runtime.inventoryState.cButtonLoadout.left, .slingshot)
+        XCTAssertEqual(runtime.hudState.cButtons.left.item, .slingshot)
+        XCTAssertEqual(runtime.saveContext.slots[0].inventoryContext.gameplay.cButtonLoadout.left, .slingshot)
+    }
+
+    @MainActor
+    func testPauseMenuEquipmentSelectionUpdatesEquippedGearAndHUDState() async {
+        let runtime = GameRuntime(
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+        await runtime.start()
+        runtime.chooseTitleOption(.newGame)
+        runtime.confirmSelectedSaveSlot()
+
+        runtime.inventoryContext.equipment.ownedTunics = [.kokiri, .zora]
+        runtime.inventoryContext.equipment.ownedBoots = [.kokiri, .hover]
+        runtime.pauseMenuState = PauseMenuState(
+            isPresented: true,
+            activeSubscreen: .equipment,
+            equipmentCursor: PauseMenuCursor(row: 0, column: 0)
+        )
+
+        runtime.activatePauseMenuSelection()
+        XCTAssertNil(runtime.inventoryContext.equipment.equippedSword)
+        XCTAssertEqual(runtime.hudState.bButtonItem, .none)
+
+        runtime.pauseMenuState.equipmentCursor = PauseMenuCursor(row: 1, column: 0)
+        runtime.activatePauseMenuSelection()
+        XCTAssertEqual(runtime.inventoryContext.equipment.equippedSword, .masterSword)
+        XCTAssertEqual(runtime.hudState.bButtonItem, .sword)
+
+        runtime.pauseMenuState.equipmentCursor = PauseMenuCursor(row: 2, column: 2)
+        runtime.activatePauseMenuSelection()
+        XCTAssertEqual(runtime.inventoryContext.equipment.equippedTunic, .zora)
+
+        runtime.pauseMenuState.equipmentCursor = PauseMenuCursor(row: 2, column: 3)
+        runtime.activatePauseMenuSelection()
+        XCTAssertEqual(runtime.inventoryContext.equipment.equippedBoots, .hover)
+        XCTAssertEqual(runtime.saveContext.slots[0].inventoryContext.equipment.equippedBoots, .hover)
+    }
+
+    @MainActor
+    func testDeveloperRuntimeStateSnapshotIncludesPauseAndInventoryContext() async {
+        let runtime = GameRuntime(
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+        await runtime.start()
+        runtime.chooseTitleOption(.newGame)
+        runtime.confirmSelectedSaveSlot()
+
+        runtime.inventoryState = GameplayInventoryState(
+            hasSlingshot: true,
+            slingshotAmmo: 20,
+            cButtonLoadout: GameplayCButtonLoadout(left: .slingshot)
+        )
+        runtime.pauseMenuState = PauseMenuState(
+            isPresented: true,
+            activeSubscreen: .questStatus,
+            itemCursor: PauseMenuCursor(row: 1, column: 0),
+            equipmentCursor: PauseMenuCursor(row: 2, column: 3)
+        )
+        runtime.inventoryContext.equipment.ownedBoots = [.kokiri, .hover]
+        runtime.inventoryContext.equipment.equippedBoots = .hover
+        runtime.synchronizeHUDStateWithInventory()
+
+        let snapshot = runtime.developerRuntimeStateSnapshot()
+
+        XCTAssertTrue(snapshot.inventoryContext.pauseMenu.isPresented)
+        XCTAssertEqual(snapshot.inventoryContext.pauseMenu.activeSubscreen, .questStatus)
+        XCTAssertEqual(snapshot.inventoryContext.gameplay.cButtonLoadout.left, .slingshot)
+        XCTAssertEqual(snapshot.inventoryContext.equipment.equippedBoots, .hover)
+        XCTAssertEqual(snapshot.hudState.cButtons.left.item, .slingshot)
+    }
+
+    @MainActor
     func testContinueWithoutSaveStaysOnTitleScreen() async {
         let runtime = GameRuntime(
             sceneLoader: MockSceneLoader(),
@@ -2530,8 +2667,7 @@ final class OOTCoreTests: XCTestCase {
         )
         runtime.synchronizeHUDStateWithInventory()
 
-        runtime.setControllerInput(ControllerInputState(startPressed: true))
-        runtime.updateFrame()
+        runtime.toggleCButtonItemEditor()
 
         XCTAssertTrue(runtime.isCButtonItemEditorPresented)
 
@@ -2544,8 +2680,7 @@ final class OOTCoreTests: XCTestCase {
 
         runtime.setControllerInput(ControllerInputState())
         runtime.updateFrame()
-        runtime.setControllerInput(ControllerInputState(startPressed: true))
-        runtime.updateFrame()
+        runtime.toggleCButtonItemEditor()
 
         XCTAssertFalse(runtime.isCButtonItemEditorPresented)
 

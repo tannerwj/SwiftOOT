@@ -38,33 +38,13 @@ public enum DeveloperHarnessRunner {
         harness: DeveloperHarnessConfiguration,
         runtime: GameRuntime
     ) throws {
-        guard let loadedScene = runtime.loadedScene else {
-            throw DeveloperHarnessCaptureError.invalidRuntimeState("No scene is loaded for capture.")
-        }
-
-        let renderPayload = try SceneRenderPayloadBuilder.makePayload(
-            scene: loadedScene,
-            textureAssetURLs: runtime.textureAssetURLs,
-            contentLoader: runtime.contentLoader
-        )
-        let renderScene = SceneRenderPayloadBuilder.renderScene(
-            from: renderPayload,
-            playerState: runtime.playerState
-        )
-        let renderer = try OOTRenderer(
-            scene: renderScene,
-            textureBindings: renderPayload.textureBindings,
-            gameplayCameraConfiguration: SceneRenderPayloadBuilder.makeGameplayCameraConfiguration(
-                scene: loadedScene,
-                playerState: runtime.playerState
-            )
-        )
-        renderer.setTimeOfDay(runtime.gameTime.timeOfDay)
-
-        let renderCapture = try renderer.captureCurrentScene(size: harness.captureViewport.size)
         let runtimeSnapshot = runtime.developerRuntimeStateSnapshot()
+        let renderCapture = try makeRenderCaptureIfNeeded(harness: harness, runtime: runtime)
 
         if let frameURL = harness.captureFrameURL {
+            guard let renderCapture else {
+                throw DeveloperHarnessCaptureError.invalidRuntimeState("No rendered frame is available for capture.")
+            }
             try DeveloperHarnessCaptureWriter.writeFrameCapture(
                 renderCapture,
                 to: frameURL
@@ -78,5 +58,39 @@ public enum DeveloperHarnessRunner {
                 to: stateURL
             )
         }
+    }
+
+    @MainActor
+    private static func makeRenderCaptureIfNeeded(
+        harness: DeveloperHarnessConfiguration,
+        runtime: GameRuntime
+    ) throws -> RenderedSceneCapture? {
+        guard harness.captureFrameURL != nil else {
+            return nil
+        }
+        guard let loadedScene = runtime.loadedScene else {
+            throw DeveloperHarnessCaptureError.invalidRuntimeState("No scene is loaded for capture.")
+        }
+
+        let renderPayload = try SceneRenderPayloadBuilder.makePayload(
+            scene: loadedScene,
+            textureAssetURLs: runtime.textureAssetURLs,
+            contentLoader: runtime.contentLoader
+        )
+        let renderScene = SceneRenderPayloadBuilder.renderScene(
+            from: renderPayload,
+            playerState: runtime.playerState,
+            inventoryContext: runtime.inventoryContext
+        )
+        let renderer = try OOTRenderer(
+            scene: renderScene,
+            textureBindings: renderPayload.textureBindings,
+            gameplayCameraConfiguration: SceneRenderPayloadBuilder.makeGameplayCameraConfiguration(
+                scene: loadedScene,
+                playerState: runtime.playerState
+            )
+        )
+        renderer.setTimeOfDay(runtime.gameTime.timeOfDay)
+        return try renderer.captureCurrentScene(size: harness.captureViewport.size)
     }
 }

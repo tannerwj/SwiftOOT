@@ -153,6 +153,8 @@ public struct DeveloperRuntimeStateSnapshot: Codable, Sendable, Equatable {
     public var actionLabel: String?
     public var statusMessage: String?
     public var errorMessage: String?
+    public var inventoryContext: InventoryContext
+    public var hudState: GameplayHUDState
 
     public init(
         gameState: GameState,
@@ -171,7 +173,9 @@ public struct DeveloperRuntimeStateSnapshot: Codable, Sendable, Equatable {
         talkTarget: TalkTargetSnapshot?,
         actionLabel: String?,
         statusMessage: String?,
-        errorMessage: String?
+        errorMessage: String?,
+        inventoryContext: InventoryContext,
+        hudState: GameplayHUDState
     ) {
         self.gameState = gameState
         self.frameCount = frameCount
@@ -190,5 +194,7 @@ public struct DeveloperRuntimeStateSnapshot: Codable, Sendable, Equatable {
         self.actionLabel = actionLabel
         self.statusMessage = statusMessage
         self.errorMessage = errorMessage
+        self.inventoryContext = inventoryContext
+        self.hudState = hudState
     }
 }
