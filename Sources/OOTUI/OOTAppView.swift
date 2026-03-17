@@ -330,6 +330,9 @@ private struct GameplayShellView: View {
     @State
     private var xrayOverlaySettings = XRayOverlaySettings()
 
+    @State
+    private var renderSettings = RenderSettings()
+
     var body: some View {
         NavigationSplitView {
             DebugSidebar(
@@ -341,6 +344,7 @@ private struct GameplayShellView: View {
                 objectTableByID: objectTableByID,
                 selectedActorID: $selectedActorID,
                 xrayOverlaySettings: $xrayOverlaySettings,
+                renderSettings: $renderSettings,
                 onSelectScene: { sceneID in
                     Task {
                         await runtime.selectScene(id: sceneID)
@@ -366,6 +370,7 @@ private struct GameplayShellView: View {
                         ),
                         timeOfDay: runtime.gameTime.timeOfDay,
                         textureBindings: renderPayload.textureBindings,
+                        renderSettings: renderSettings,
                         inputHandler: inputManager,
                         toggleAllXRayLayers: {
                             xrayOverlaySettings.toggleAll()

@@ -23,6 +23,17 @@ struct FrameUniforms {
     float4 directionalLightColor;
     float4 directionalLightDirection;
     float4 fogColor;
+    float4 renderTweaks;
+};
+
+struct PostProcessUniforms {
+    float2 sourceSize;
+    float2 destinationSize;
+    float2 subpixelJitter;
+    float edgeSoftness;
+    float toneMapExposure;
+    float fxaaSpan;
+    uint presentationMode;
 };
 
 struct CombinerUniforms {
@@ -64,6 +75,8 @@ struct XRayDebugVertexIn {
 
 constant uint kGeometryModeFog = 0x00010000;
 constant uint kGeometryModeLighting = 0x00020000;
+constant uint kPresentationModeN64 = 0;
+constant uint kPresentationModeEnhanced = 1;
 
 float computeFogFactor(float4 clipPosition, float4 fogParameters) {
     float fogStart = fogParameters.x;
@@ -102,6 +115,22 @@ float4 evaluateShadeColor(
     return float4(litColor, shadeData.w);
 }
 
+float4 applyPresentationTweaks(
+    float4 clipPosition,
+    constant FrameUniforms& frameUniforms
+) {
+    float4 adjusted = clipPosition;
+    float depthQuantizationSteps = frameUniforms.renderTweaks.x;
+    float safeW = max(fabs(adjusted.w), 0.0001);
+    if (depthQuantizationSteps > 1.0) {
+        float quantizedDepth = round((adjusted.z / safeW) * depthQuantizationSteps) / depthQuantizationSteps;
+        adjusted.z = quantizedDepth * safeW;
+    }
+
+    adjusted.xy += frameUniforms.renderTweaks.yz * safeW;
+    return adjusted;
+}
+
 vertex VertexOut oot_passthrough_vertex(
     N64VertexIn rawVertex [[stage_in]],
     constant FrameUniforms& frameUniforms [[buffer(1)]],
@@ -113,7 +142,10 @@ vertex VertexOut oot_passthrough_vertex(
     vertexIn.color = float4(rawVertex.shadeData) / 255.0;
     vertexIn.normal = float3(0.0);
 
-    float4 clipPosition = frameUniforms.mvp * float4(vertexIn.position, 1.0);
+    float4 clipPosition = applyPresentationTweaks(
+        frameUniforms.mvp * float4(vertexIn.position, 1.0),
+        frameUniforms
+    );
     float4 shadeData = vertexIn.color;
     if ((combinerUniforms.geometryMode & kGeometryModeLighting) != 0u) {
         shadeData = float4(
@@ -140,7 +172,7 @@ vertex VertexOut oot_draw_batch_vertex(
     constant CombinerUniforms& combinerUniforms [[buffer(2)]]
 ) {
     VertexOut out;
-    out.position = vertexIn.clipPosition;
+    out.position = applyPresentationTweaks(vertexIn.clipPosition, frameUniforms);
     out.texCoord = (vertexIn.texCoord * combinerUniforms.textureScale) + combinerUniforms.textureOffset;
     out.color = evaluateShadeColor(
         vertexIn.shadeData,
@@ -156,7 +188,10 @@ vertex VertexOut oot_xray_debug_vertex(
     constant FrameUniforms& frameUniforms [[buffer(1)]]
 ) {
     VertexOut out;
-    out.position = frameUniforms.mvp * float4(vertexIn.position, 1.0);
+    out.position = applyPresentationTweaks(
+        frameUniforms.mvp * float4(vertexIn.position, 1.0),
+        frameUniforms
+    );
     out.texCoord = float2(0.0);
     out.color = vertexIn.color;
     out.fog = 1.0;
@@ -412,13 +447,12 @@ fragment float4 oot_combiner_fragment(
     constant FrameUniforms& frameUniforms [[buffer(1)]],
     constant CombinerUniforms& combinerUniforms [[buffer(2)]],
     texture2d<half> texel0Texture [[texture(0)]],
-    texture2d<half> texel1Texture [[texture(1)]]
+    texture2d<half> texel1Texture [[texture(1)]],
+    sampler texelSampler [[sampler(0)]]
 ) {
-    constexpr sampler textureSampler(coord::normalized, address::clamp_to_edge, filter::nearest);
-
     float2 sampleCoordinate = normalizedTextureCoordinate(in.texCoord, combinerUniforms);
-    float4 texel0 = float4(texel0Texture.sample(textureSampler, sampleCoordinate));
-    float4 texel1 = float4(texel1Texture.sample(textureSampler, sampleCoordinate));
+    float4 texel0 = float4(texel0Texture.sample(texelSampler, sampleCoordinate));
+    float4 texel1 = float4(texel1Texture.sample(texelSampler, sampleCoordinate));
     float noiseValue = combinerNoise(in.position.xy + in.texCoord);
     float4 noiseColor = float4(noiseValue);
 
@@ -480,4 +514,165 @@ fragment float4 oot_combiner_fragment(
     }
 
     return finalColor;
+}
+
+float3 luminanceWeights() {
+    return float3(0.299, 0.587, 0.114);
+}
+
+float sampledLuma(texture2d<float, access::sample> sourceTexture, sampler sourceSampler, float2 uv) {
+    return dot(sourceTexture.sample(sourceSampler, uv).rgb, luminanceWeights());
+}
+
+float4 readClamped(texture2d<float, access::sample> sourceTexture, int2 coordinate) {
+    int maxX = int(sourceTexture.get_width()) - 1;
+    int maxY = int(sourceTexture.get_height()) - 1;
+    uint2 clampedCoordinate = uint2(
+        clamp(coordinate.x, 0, maxX),
+        clamp(coordinate.y, 0, maxY)
+    );
+    return sourceTexture.read(clampedCoordinate);
+}
+
+float4 sampleThreePoint(
+    texture2d<float, access::sample> sourceTexture,
+    float2 uv,
+    float2 sourceSize
+) {
+    float2 pixel = (uv * sourceSize) - 0.5;
+    int2 origin = int2(floor(pixel));
+    float2 fractional = fract(pixel);
+
+    float4 c00 = readClamped(sourceTexture, origin);
+    float4 c10 = readClamped(sourceTexture, origin + int2(1, 0));
+    float4 c01 = readClamped(sourceTexture, origin + int2(0, 1));
+    float4 c11 = readClamped(sourceTexture, origin + int2(1, 1));
+
+    if (fractional.x + fractional.y < 1.0) {
+        return c00 + (fractional.x * (c10 - c00)) + (fractional.y * (c01 - c00));
+    }
+
+    float2 inverseFraction = 1.0 - fractional;
+    return c11 + (inverseFraction.x * (c01 - c11)) + (inverseFraction.y * (c10 - c11));
+}
+
+float4 applyEdgeSoftening(
+    texture2d<float, access::sample> sourceTexture,
+    float2 uv,
+    float2 texelSize,
+    float4 color,
+    float edgeSoftness
+) {
+    float centerLuma = dot(color.rgb, luminanceWeights());
+    float contrast = 0.0;
+    contrast = max(contrast, fabs(dot(sourceTexture.sample(sampler(coord::normalized, address::clamp_to_edge, filter::linear), uv + float2(texelSize.x, 0.0)).rgb, luminanceWeights()) - centerLuma));
+    contrast = max(contrast, fabs(dot(sourceTexture.sample(sampler(coord::normalized, address::clamp_to_edge, filter::linear), uv - float2(texelSize.x, 0.0)).rgb, luminanceWeights()) - centerLuma));
+    contrast = max(contrast, fabs(dot(sourceTexture.sample(sampler(coord::normalized, address::clamp_to_edge, filter::linear), uv + float2(0.0, texelSize.y)).rgb, luminanceWeights()) - centerLuma));
+    contrast = max(contrast, fabs(dot(sourceTexture.sample(sampler(coord::normalized, address::clamp_to_edge, filter::linear), uv - float2(0.0, texelSize.y)).rgb, luminanceWeights()) - centerLuma));
+
+    float blend = smoothstep(0.08, 0.32, contrast) * edgeSoftness;
+    if (blend <= 0.0) {
+        return color;
+    }
+
+    float4 blurred = (
+        sourceTexture.sample(sampler(coord::normalized, address::clamp_to_edge, filter::linear), uv + float2(-texelSize.x, 0.0)) +
+        sourceTexture.sample(sampler(coord::normalized, address::clamp_to_edge, filter::linear), uv + float2(texelSize.x, 0.0)) +
+        sourceTexture.sample(sampler(coord::normalized, address::clamp_to_edge, filter::linear), uv + float2(0.0, -texelSize.y)) +
+        sourceTexture.sample(sampler(coord::normalized, address::clamp_to_edge, filter::linear), uv + float2(0.0, texelSize.y))
+    ) * 0.25;
+
+    return mix(color, blurred, blend);
+}
+
+float bayerThreshold(uint2 coordinate) {
+    constexpr float bayer4x4[16] = {
+        0.0 / 16.0, 8.0 / 16.0, 2.0 / 16.0, 10.0 / 16.0,
+        12.0 / 16.0, 4.0 / 16.0, 14.0 / 16.0, 6.0 / 16.0,
+        3.0 / 16.0, 11.0 / 16.0, 1.0 / 16.0, 9.0 / 16.0,
+        15.0 / 16.0, 7.0 / 16.0, 13.0 / 16.0, 5.0 / 16.0,
+    };
+    uint index = ((coordinate.y & 3u) * 4u) + (coordinate.x & 3u);
+    return bayer4x4[index];
+}
+
+float4 posterizeRGB5551(float4 color, uint2 coordinate) {
+    float threshold = (bayerThreshold(coordinate) - 0.5) / 31.0;
+    float3 quantized = clamp(round((color.rgb + threshold) * 31.0) / 31.0, 0.0, 1.0);
+    float alpha = color.a >= 0.5 ? 1.0 : 0.0;
+    return float4(quantized, alpha);
+}
+
+float4 applyEnhancedFXAA(
+    texture2d<float, access::sample> sourceTexture,
+    float2 uv,
+    float2 texelSize,
+    float4 color,
+    float span
+) {
+    float lumaCenter = dot(color.rgb, luminanceWeights());
+    float lumaNorth = sampledLuma(sourceTexture, sampler(coord::normalized, address::clamp_to_edge, filter::linear), uv + float2(0.0, -texelSize.y));
+    float lumaSouth = sampledLuma(sourceTexture, sampler(coord::normalized, address::clamp_to_edge, filter::linear), uv + float2(0.0, texelSize.y));
+    float lumaEast = sampledLuma(sourceTexture, sampler(coord::normalized, address::clamp_to_edge, filter::linear), uv + float2(texelSize.x, 0.0));
+    float lumaWest = sampledLuma(sourceTexture, sampler(coord::normalized, address::clamp_to_edge, filter::linear), uv + float2(-texelSize.x, 0.0));
+
+    float lumaMin = min(lumaCenter, min(min(lumaNorth, lumaSouth), min(lumaEast, lumaWest)));
+    float lumaMax = max(lumaCenter, max(max(lumaNorth, lumaSouth), max(lumaEast, lumaWest)));
+    float contrast = lumaMax - lumaMin;
+    if (contrast < 0.0312) {
+        return color;
+    }
+
+    float2 edgeDirection = float2(lumaWest - lumaEast, lumaNorth - lumaSouth);
+    float directionMagnitude = max(length(edgeDirection), 0.0001);
+    float2 normalizedDirection = (edgeDirection / directionMagnitude) * texelSize * span;
+    float4 blendA = sourceTexture.sample(
+        sampler(coord::normalized, address::clamp_to_edge, filter::linear),
+        uv + normalizedDirection * (1.0 / 3.0 - 0.5)
+    );
+    float4 blendB = sourceTexture.sample(
+        sampler(coord::normalized, address::clamp_to_edge, filter::linear),
+        uv + normalizedDirection * (2.0 / 3.0 - 0.5)
+    );
+    return mix(color, (blendA + blendB) * 0.5, clamp(contrast * 2.5, 0.0, 1.0));
+}
+
+float3 toneMapEnhanced(float3 color, float exposure) {
+    float3 exposed = max(color, 0.0) * max(exposure, 0.01);
+    float3 mapped = (exposed * (2.51 * exposed + 0.03)) / (exposed * (2.43 * exposed + 0.59) + 0.14);
+    return pow(clamp(mapped, 0.0, 1.0), 1.0 / 2.2);
+}
+
+kernel void oot_post_process(
+    texture2d<float, access::sample> sourceTexture [[texture(0)]],
+    texture2d<float, access::write> destinationTexture [[texture(1)]],
+    constant PostProcessUniforms& uniforms [[buffer(0)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    uint destinationWidth = destinationTexture.get_width();
+    uint destinationHeight = destinationTexture.get_height();
+    if (gid.x >= destinationWidth || gid.y >= destinationHeight) {
+        return;
+    }
+
+    float2 destinationSize = max(uniforms.destinationSize, float2(1.0));
+    float2 sourceTexelSize = 1.0 / max(uniforms.sourceSize, float2(1.0));
+    float2 uv = (float2(gid) + 0.5 + uniforms.subpixelJitter) / destinationSize;
+
+    float4 color;
+    if (uniforms.presentationMode == kPresentationModeN64) {
+        color = sampleThreePoint(sourceTexture, uv, uniforms.sourceSize);
+        color = applyEdgeSoftening(sourceTexture, uv, sourceTexelSize, color, uniforms.edgeSoftness);
+        color = posterizeRGB5551(color, gid);
+    } else {
+        color = sourceTexture.sample(
+            sampler(coord::normalized, address::clamp_to_edge, filter::linear),
+            uv
+        );
+        color = applyEnhancedFXAA(sourceTexture, uv, sourceTexelSize, color, uniforms.fxaaSpan);
+        color.rgb = toneMapEnhanced(color.rgb, uniforms.toneMapExposure);
+        color.a = 1.0;
+    }
+
+    destinationTexture.write(color, gid);
 }

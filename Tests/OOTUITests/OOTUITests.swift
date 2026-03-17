@@ -25,6 +25,11 @@ final class OOTUITests: XCTestCase {
                 suspender: { _ in }
             )
         )
+        _ = RenderSettingsView(
+            renderSettings: .constant(
+                RenderSettings(presentationMode: .n64Aesthetic)
+            )
+        )
         _ = MessageView(
             presentation: MessagePresentation(
                 messageID: 0x1000,
@@ -650,6 +655,60 @@ final class OOTUITests: XCTestCase {
             ),
             0
         )
+    }
+
+    func testFixtureRuntimeCaptureSupportsBothPresentationModes() async throws {
+        guard MTLCreateSystemDefaultDevice() != nil else {
+            throw XCTSkip("Metal is unavailable on this host")
+        }
+
+        let fixture = try ChestRuntimeContentFixture()
+        defer { fixture.cleanup() }
+
+        let sceneLoader = SceneLoader(contentRoot: fixture.contentRoot)
+        let contentLoader = ContentLoader(sceneLoader: sceneLoader)
+        let runtime = GameRuntime(
+            contentLoader: contentLoader,
+            sceneLoader: sceneLoader,
+            suspender: { _ in }
+        )
+
+        await runtime.start()
+        runtime.chooseTitleOption(.newGame)
+        runtime.confirmSelectedSaveSlot()
+        try runtime.loadScene(id: fixture.sceneID)
+
+        let payload = try SceneRenderPayloadBuilder.makePayload(
+            scene: try XCTUnwrap(runtime.loadedScene),
+            textureAssetURLs: runtime.textureAssetURLs,
+            contentLoader: runtime.contentLoader
+        )
+        let renderScene = SceneRenderPayloadBuilder.renderScene(
+            from: payload,
+            playerState: nil,
+            actors: []
+        )
+        let captureSize = CGSize(width: 960, height: 540)
+
+        let n64Renderer = try OOTRenderer(
+            scene: renderScene,
+            textureBindings: payload.textureBindings,
+            renderSettings: RenderSettings(presentationMode: .n64Aesthetic),
+            gameplayCameraConfiguration: payload.gameplayCameraConfiguration
+        )
+        let n64Capture = try n64Renderer.captureCurrentScene(size: captureSize)
+
+        let enhancedRenderer = try OOTRenderer(
+            scene: renderScene,
+            textureBindings: payload.textureBindings,
+            renderSettings: RenderSettings(presentationMode: .enhanced),
+            gameplayCameraConfiguration: payload.gameplayCameraConfiguration
+        )
+        let enhancedCapture = try enhancedRenderer.captureCurrentScene(size: captureSize)
+
+        XCTAssertGreaterThan(n64Capture.frameStats.drawCallCount, 0)
+        XCTAssertGreaterThan(enhancedCapture.frameStats.drawCallCount, 0)
+        XCTAssertNotEqual(n64Capture.pixelsBGRA, enhancedCapture.pixelsBGRA)
     }
 
     func testRenderSceneIncludesSkeletonRenderableActors() throws {
