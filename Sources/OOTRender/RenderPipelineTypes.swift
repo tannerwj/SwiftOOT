@@ -47,6 +47,7 @@ public struct FrameUniforms: Sendable, Equatable {
     public var directionalLightColor: SIMD4<Float>
     public var directionalLightDirection: SIMD4<Float>
     public var fogColor: SIMD4<Float>
+    public var renderTweaks: SIMD4<Float>
 
     public init(
         mvp: simd_float4x4,
@@ -54,7 +55,8 @@ public struct FrameUniforms: Sendable, Equatable {
         ambientColor: SIMD4<Float> = SceneEnvironmentState.default.ambientColor,
         directionalLightColor: SIMD4<Float> = SceneEnvironmentState.default.directionalLightColor,
         directionalLightDirection: SIMD4<Float> = SceneEnvironmentState.default.directionalLightDirection,
-        fogColor: SIMD4<Float> = SceneEnvironmentState.default.fogColor
+        fogColor: SIMD4<Float> = SceneEnvironmentState.default.fogColor,
+        renderTweaks: SIMD4<Float> = .zero
     ) {
         self.mvp = mvp
         self.fogParameters = fogParameters
@@ -62,6 +64,7 @@ public struct FrameUniforms: Sendable, Equatable {
         self.directionalLightColor = directionalLightColor
         self.directionalLightDirection = directionalLightDirection
         self.fogColor = fogColor
+        self.renderTweaks = renderTweaks
     }
 
     public static var identity: FrameUniforms {
@@ -80,7 +83,8 @@ public struct FrameUniforms: Sendable, Equatable {
             ambientColor: environment.ambientColor,
             directionalLightColor: environment.directionalLightColor,
             directionalLightDirection: environment.directionalLightDirection,
-            fogColor: environment.fogColor
+            fogColor: environment.fogColor,
+            renderTweaks: renderTweaks
         )
     }
 }
@@ -358,6 +362,12 @@ enum OOTRenderBufferIndex: Int {
     case vertices = 0
     case frameUniforms = 1
     case combinerUniforms = 2
+}
+
+enum OOTRenderSamplerIndex: Int {
+    case texel = 0
+    case point = 1
+    case linear = 2
 }
 
 enum OOTRenderVertexAttribute: Int {

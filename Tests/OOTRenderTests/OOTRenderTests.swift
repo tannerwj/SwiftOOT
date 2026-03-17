@@ -30,8 +30,16 @@ final class OOTRenderTests: XCTestCase {
     }
 
     func testFrameUniformsAndCombinerUniformsMatchMetalPacking() {
-        XCTAssertEqual(MemoryLayout<FrameUniforms>.stride, 144)
+        XCTAssertEqual(MemoryLayout<FrameUniforms>.stride, 160)
         XCTAssertEqual(MemoryLayout<CombinerUniforms>.stride, 176)
+    }
+
+    func testRendererStoresCurrentRenderSettings() throws {
+        let renderer = try OOTRenderer(
+            renderSettings: RenderSettings(presentationMode: .enhanced)
+        )
+
+        XCTAssertEqual(renderer.currentRenderSettings.presentationMode, .enhanced)
     }
 
     func testRendererUsesN64VertexDescriptorLayout() throws {
@@ -438,6 +446,35 @@ final class OOTRenderTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(reportedStats.cpuRenderTimeMilliseconds, 0)
     }
 
+    func testRendererSwitchesPresentationModeWithoutReinitialization() throws {
+        guard MTLCreateSystemDefaultDevice() != nil else {
+            throw XCTSkip("Metal is unavailable on this host")
+        }
+
+        let renderer = try OOTRenderer(
+            scene: OOTRenderScene.syntheticScene(
+                vertices: makeTriangleVertices(
+                    color: RGBA8(red: 255, green: 96, blue: 32, alpha: 255)
+                ),
+                skyColor: SIMD4<Float>(0.12, 0.18, 0.28, 1.0)
+            ),
+            renderSettings: RenderSettings(presentationMode: .n64Aesthetic)
+        )
+
+        let n64Capture = try renderer.captureCurrentScene(size: CGSize(width: 640, height: 480))
+        renderer.updateRenderSettings(RenderSettings(presentationMode: .enhanced))
+        let enhancedCapture = try renderer.captureCurrentScene(size: CGSize(width: 640, height: 480))
+
+        XCTAssertNotEqual(n64Capture.pixelsBGRA, enhancedCapture.pixelsBGRA)
+        XCTAssertGreaterThan(
+            differingByteCount(
+                lhs: n64Capture.pixelsBGRA,
+                rhs: enhancedCapture.pixelsBGRA
+            ),
+            10_000
+        )
+    }
+
     func testRendererCompositesXRayOverlayInSeparatePass() throws {
         guard MTLCreateSystemDefaultDevice() != nil else {
             throw XCTSkip("Metal is unavailable on this host")
@@ -526,6 +563,14 @@ final class OOTRenderTests: XCTestCase {
                 ? actualChannel - expectedChannel
                 : expectedChannel - actualChannel
             XCTAssertLessThanOrEqual(delta, accuracy, file: file, line: line)
+        }
+    }
+
+    private func differingByteCount(lhs: [UInt8], rhs: [UInt8]) -> Int {
+        zip(lhs, rhs).reduce(into: 0) { count, bytes in
+            if bytes.0 != bytes.1 {
+                count += 1
+            }
         }
     }
 

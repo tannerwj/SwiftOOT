@@ -70,6 +70,12 @@ private struct XRayOverlayPassStats {
     var triangleCount: Int = 0
 }
 
+private struct CachedSceneRenderTargets {
+    var size: SIMD2<Int>
+    var colorTexture: MTLTexture
+    var depthTexture: MTLTexture
+}
+
 public final class OOTRenderer: NSObject, MTKViewDelegate {
     public static let preferredFramesPerSecond = 60
     public static let depthPixelFormat: MTLPixelFormat = .depth32Float
@@ -93,6 +99,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     public let commandQueue: MTLCommandQueue
     public let renderPipelineState: MTLRenderPipelineState
     private let xrayDebugPipelineState: MTLRenderPipelineState
+    private let postProcessPipelineState: MTLComputePipelineState
     public let sceneBounds: SceneBounds
     let vertexDescriptor: MTLVertexDescriptor
     let orbitCameraController: OrbitCameraController
@@ -115,12 +122,18 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     private(set) var isDebugCameraEnabled = false
     private var frameTickHandler: @MainActor () -> Void
     private var timeOfDay: Double
+    private let nearestTextureSamplerState: MTLSamplerState
+    private let linearTextureSamplerState: MTLSamplerState
+    private var renderSettings: RenderSettings
+    private var presentationFrameIndex: UInt32 = 0
+    private var cachedSceneRenderTargets: CachedSceneRenderTargets?
 
     public init(
         bundle: Bundle = resourceBundle,
         sceneVertices: [N64Vertex]? = nil,
         scene: OOTRenderScene? = nil,
         textureBindings: [UInt32: MTLTexture] = [:],
+        renderSettings: RenderSettings = RenderSettings(),
         gameplayCameraConfiguration: GameplayCameraConfiguration? = nil,
         frameStatsHandler: @escaping (SceneFrameStats) -> Void = { _ in },
         frameTickHandler: @escaping @MainActor () -> Void = {}
@@ -151,6 +164,10 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         )
         let flatColorFragmentFunction = try Self.makeFunction(
             named: "oot_flat_color_fragment",
+            in: library
+        )
+        let postProcessFunction = try Self.makeFunction(
+            named: "oot_post_process",
             in: library
         )
         let vertexDescriptor = makeN64VertexDescriptor()
@@ -205,6 +222,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         self.frameTickHandler = frameTickHandler
         self.environmentRenderer = EnvironmentRenderer(environment: renderScene.environment)
         self.timeOfDay = 6.0
+        self.renderSettings = renderSettings
         self.renderPipelineState = try device.makeRenderPipelineState(
             descriptor: pipelineDescriptor
         )
@@ -212,6 +230,21 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
             device: device,
             vertexFunction: xrayDebugVertexFunction,
             fragmentFunction: flatColorFragmentFunction
+        )
+        self.postProcessPipelineState = try device.makeComputePipelineState(
+            function: postProcessFunction
+        )
+        self.nearestTextureSamplerState = try Self.makeTextureSamplerState(
+            device: device,
+            filter: .nearest,
+            maxAnisotropy: 1,
+            label: "OOTTextureNearest"
+        )
+        self.linearTextureSamplerState = try Self.makeTextureSamplerState(
+            device: device,
+            filter: .linear,
+            maxAnisotropy: 8,
+            label: "OOTTextureLinear"
         )
         super.init()
     }
@@ -225,7 +258,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         view.preferredFramesPerSecond = Self.preferredFramesPerSecond
         view.enableSetNeedsDisplay = false
         view.isPaused = false
-        view.framebufferOnly = true
+        view.framebufferOnly = false
         view.delegate = self
         orbitCameraController.updateViewportSize(view.drawableSize)
         gameplayCameraController?.updateViewportSize(view.drawableSize)
@@ -256,6 +289,14 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         }
 
         gameplayCameraController.updateConfiguration(configuration)
+    }
+
+    public func updateRenderSettings(_ settings: RenderSettings) {
+        renderSettings = settings
+    }
+
+    public var currentRenderSettings: RenderSettings {
+        renderSettings
     }
 
     public func toggleDebugCamera() {
@@ -331,7 +372,6 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         inFlightSemaphore.wait()
 
         guard
-            let renderPassDescriptor = view.currentRenderPassDescriptor,
             let drawable = view.currentDrawable,
             let commandBuffer = commandQueue.makeCommandBuffer()
         else {
@@ -347,40 +387,17 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
             frameTickHandler()
         }
         let renderStartUptime = DispatchTime.now().uptimeNanoseconds
-        let cameraMatrices = activeCameraMatrices()
-        let frameUniforms = FrameUniforms(mvp: cameraMatrices.viewProjectionMatrix)
-            .withEnvironment(environmentRenderer.currentState(timeOfDay: timeOfDay))
-        advanceFrameUniformBuffer(with: frameUniforms)
-        renderPassDescriptor.colorAttachments[0].clearColor = clearColorForCurrentEnvironment()
-        configureDepthAttachment(for: renderPassDescriptor)
-
         do {
-            var frameStats = try encodeSceneFrame(
+            let frameStats = try renderPresentedScene(
                 with: commandBuffer,
-                renderPassDescriptor: renderPassDescriptor,
-                viewportSize: view.drawableSize,
-                frameUniforms: frameUniforms,
-                skyboxViewProjection: makeSkyboxViewProjection(from: cameraMatrices),
+                destinationTexture: drawable.texture,
+                destinationSize: view.drawableSize,
                 renderStartUptime: renderStartUptime
             )
-            if
-                let colorTexture = renderPassDescriptor.colorAttachments[0].texture,
-                let xrayDebugScene = renderScene.xrayDebugScene,
-                xrayDebugScene.isEmpty == false
-            {
-                let overlayStats = try encodeXRayOverlayPass(
-                    with: commandBuffer,
-                    colorTexture: colorTexture,
-                    viewportSize: view.drawableSize,
-                    frameUniforms: frameUniforms,
-                    xrayDebugScene: xrayDebugScene
-                )
-                frameStats.drawCallCount += overlayStats.drawCallCount
-                frameStats.triangleCount += overlayStats.triangleCount
-            }
             frameStatsHandler(frameStats)
             commandBuffer.present(drawable)
             commandBuffer.commit()
+            presentationFrameIndex &+= 1
         } catch {
             commandBuffer.commit()
         }
@@ -389,37 +406,32 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
     public func captureCurrentScene(size: CGSize) throws -> RenderedSceneCapture {
         let width = max(Int(size.width.rounded()), 1)
         let height = max(Int(size.height.rounded()), 1)
-        let viewportSize = CGSize(width: width, height: height)
-        orbitCameraController.updateViewportSize(viewportSize)
-        gameplayCameraController?.updateViewportSize(viewportSize)
-
         let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .bgra8Unorm,
             width: width,
             height: height,
             mipmapped: false
         )
-        textureDescriptor.usage = [.renderTarget, .shaderRead]
+        textureDescriptor.usage = [.shaderWrite, .shaderRead]
         textureDescriptor.storageMode = .shared
 
         guard let renderTarget = device.makeTexture(descriptor: textureDescriptor) else {
             throw OOTRendererError.metalUnavailable
         }
 
-        var capturedStats = SceneFrameStats()
-        let previousFrameStatsHandler = frameStatsHandler
-        frameStatsHandler = { stats in
-            capturedStats = stats
-            previousFrameStatsHandler(stats)
-        }
-        defer {
-            frameStatsHandler = previousFrameStatsHandler
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else {
+            throw OOTRendererError.metalUnavailable
         }
 
-        try renderCurrentSceneToTexture(
-            renderTarget,
-            frameUniforms: activeFrameUniforms()
+        let capturedStats = try renderPresentedScene(
+            with: commandBuffer,
+            destinationTexture: renderTarget,
+            destinationSize: CGSize(width: width, height: height),
+            renderStartUptime: DispatchTime.now().uptimeNanoseconds
         )
+        frameStatsHandler(capturedStats)
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
 
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
         renderTarget.getBytes(
@@ -697,6 +709,28 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         descriptor.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
         return try device.makeRenderPipelineState(descriptor: descriptor)
     }
+
+    private static func makeTextureSamplerState(
+        device: MTLDevice,
+        filter: MTLSamplerMinMagFilter,
+        maxAnisotropy: Int,
+        label: String
+    ) throws -> MTLSamplerState {
+        let descriptor = MTLSamplerDescriptor()
+        descriptor.label = label
+        descriptor.minFilter = filter
+        descriptor.magFilter = filter
+        descriptor.mipFilter = .notMipmapped
+        descriptor.maxAnisotropy = max(maxAnisotropy, 1)
+        descriptor.sAddressMode = .clampToEdge
+        descriptor.tAddressMode = .clampToEdge
+
+        guard let state = device.makeSamplerState(descriptor: descriptor) else {
+            throw OOTRendererError.metalUnavailable
+        }
+
+        return state
+    }
 }
 
 extension OOTRenderer {
@@ -743,6 +777,10 @@ private extension OOTRenderer {
             currentFrameUniformBuffer,
             offset: 0,
             index: OOTRenderBufferIndex.frameUniforms.rawValue
+        )
+        renderCommandEncoder.setFragmentSamplerState(
+            textureSamplerState(for: presentationParameters(for: viewportSize).textureSamplerMode),
+            index: OOTRenderSamplerIndex.texel.rawValue
         )
         encodeSkyboxIfNeeded(
             with: renderCommandEncoder,
@@ -987,6 +1025,10 @@ private extension OOTRenderer {
             offset: 0,
             index: OOTRenderBufferIndex.frameUniforms.rawValue
         )
+        renderCommandEncoder.setFragmentSamplerState(
+            textureSamplerState(for: renderSettings.presentationMode == .enhanced ? .linear : .nearest),
+            index: OOTRenderSamplerIndex.texel.rawValue
+        )
 
         var combinerUniforms = combinerUniforms
         renderCommandEncoder.setVertexBytes(
@@ -1041,6 +1083,12 @@ private extension OOTRenderer {
             &skyboxFrameUniforms,
             length: MemoryLayout<FrameUniforms>.stride,
             index: OOTRenderBufferIndex.frameUniforms.rawValue
+        )
+        renderCommandEncoder.setFragmentSamplerState(
+            textureSamplerState(
+                for: renderSettings.presentationMode == .enhanced ? .linear : .nearest
+            ),
+            index: OOTRenderSamplerIndex.texel.rawValue
         )
         renderCommandEncoder.setVertexBytes(
             &combinerUniforms,
@@ -1165,6 +1213,219 @@ private extension OOTRenderer {
         )
         renderPipelineCache[key] = pipelineState
         return pipelineState
+    }
+
+    func renderPresentedScene(
+        with commandBuffer: MTLCommandBuffer,
+        destinationTexture: MTLTexture,
+        destinationSize: CGSize,
+        renderStartUptime: UInt64
+    ) throws -> SceneFrameStats {
+        let parameters = presentationParameters(for: destinationSize)
+        let sceneViewportSize = CGSize(
+            width: parameters.sceneRenderSize.x,
+            height: parameters.sceneRenderSize.y
+        )
+        orbitCameraController.updateViewportSize(sceneViewportSize)
+        gameplayCameraController?.updateViewportSize(sceneViewportSize)
+
+        let cameraMatrices = activeCameraMatrices()
+        let frameUniforms = frameUniforms(
+            for: parameters,
+            cameraMatrices: cameraMatrices
+        )
+        advanceFrameUniformBuffer(with: frameUniforms)
+
+        let sceneTargets = try sceneRenderTargets(for: parameters.sceneRenderSize)
+        let renderPassDescriptor = sceneRenderPassDescriptor(
+            colorTexture: sceneTargets.colorTexture,
+            depthTexture: sceneTargets.depthTexture
+        )
+
+        var frameStats = try encodeSceneFrame(
+            with: commandBuffer,
+            renderPassDescriptor: renderPassDescriptor,
+            viewportSize: sceneViewportSize,
+            frameUniforms: frameUniforms,
+            skyboxViewProjection: makeSkyboxViewProjection(from: cameraMatrices),
+            renderStartUptime: renderStartUptime
+        )
+
+        if
+            let xrayDebugScene = renderScene.xrayDebugScene,
+            xrayDebugScene.isEmpty == false
+        {
+            let overlayStats = try encodeXRayOverlayPass(
+                with: commandBuffer,
+                colorTexture: sceneTargets.colorTexture,
+                viewportSize: sceneViewportSize,
+                frameUniforms: frameUniforms,
+                xrayDebugScene: xrayDebugScene
+            )
+            frameStats.drawCallCount += overlayStats.drawCallCount
+            frameStats.triangleCount += overlayStats.triangleCount
+        }
+
+        try encodePostProcessPass(
+            with: commandBuffer,
+            sourceTexture: sceneTargets.colorTexture,
+            destinationTexture: destinationTexture,
+            parameters: parameters
+        )
+        return frameStats
+    }
+
+    func presentationParameters(for destinationSize: CGSize) -> RenderPresentationParameters {
+        let destination = SIMD2<Int>(
+            max(Int(destinationSize.width.rounded(.up)), 1),
+            max(Int(destinationSize.height.rounded(.up)), 1)
+        )
+        switch renderSettings.presentationMode {
+        case .n64Aesthetic:
+            let jitterSequence: [SIMD2<Float>] = [
+                SIMD2<Float>(0.25, -0.25),
+                SIMD2<Float>(-0.25, 0.25),
+                SIMD2<Float>(-0.25, -0.25),
+                SIMD2<Float>(0.25, 0.25),
+            ]
+            let jitter = jitterSequence[Int(presentationFrameIndex % UInt32(jitterSequence.count))]
+            return RenderPresentationParameters(
+                presentationMode: .n64Aesthetic,
+                sceneRenderSize: RenderPresentationParameters.n64RenderSize,
+                destinationSize: destination,
+                textureSamplerMode: .nearest,
+                depthQuantizationSteps: 2048,
+                subpixelJitter: jitter / SIMD2<Float>(320, 240)
+            )
+        case .enhanced:
+            return RenderPresentationParameters(
+                presentationMode: .enhanced,
+                sceneRenderSize: destination,
+                destinationSize: destination,
+                textureSamplerMode: .linear
+            )
+        }
+    }
+
+    func frameUniforms(
+        for parameters: RenderPresentationParameters,
+        cameraMatrices: CameraMatrices
+    ) -> FrameUniforms {
+        FrameUniforms(
+            mvp: cameraMatrices.viewProjectionMatrix,
+            renderTweaks: SIMD4<Float>(
+                parameters.depthQuantizationSteps,
+                parameters.subpixelJitter.x,
+                parameters.subpixelJitter.y,
+                0.0
+            )
+        )
+        .withEnvironment(environmentRenderer.currentState(timeOfDay: timeOfDay))
+    }
+
+    func sceneRenderTargets(
+        for size: SIMD2<Int>
+    ) throws -> CachedSceneRenderTargets {
+        if let cachedSceneRenderTargets, cachedSceneRenderTargets.size == size {
+            return cachedSceneRenderTargets
+        }
+
+        let colorDescriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm,
+            width: size.x,
+            height: size.y,
+            mipmapped: false
+        )
+        colorDescriptor.usage = [.renderTarget, .shaderRead]
+        colorDescriptor.storageMode = .private
+
+        guard let colorTexture = device.makeTexture(descriptor: colorDescriptor) else {
+            throw OOTRendererError.metalUnavailable
+        }
+
+        let depthTexture = try makeDepthTexture(width: size.x, height: size.y)
+        let renderTargets = CachedSceneRenderTargets(
+            size: size,
+            colorTexture: colorTexture,
+            depthTexture: depthTexture
+        )
+        cachedSceneRenderTargets = renderTargets
+        return renderTargets
+    }
+
+    func sceneRenderPassDescriptor(
+        colorTexture: MTLTexture,
+        depthTexture: MTLTexture
+    ) -> MTLRenderPassDescriptor {
+        let renderPassDescriptor = MTLRenderPassDescriptor()
+        renderPassDescriptor.colorAttachments[0].texture = colorTexture
+        renderPassDescriptor.colorAttachments[0].loadAction = .clear
+        renderPassDescriptor.colorAttachments[0].storeAction = .store
+        renderPassDescriptor.colorAttachments[0].clearColor = clearColorForCurrentEnvironment()
+        renderPassDescriptor.depthAttachment.texture = depthTexture
+        configureDepthAttachment(for: renderPassDescriptor)
+        return renderPassDescriptor
+    }
+
+    func encodePostProcessPass(
+        with commandBuffer: MTLCommandBuffer,
+        sourceTexture: MTLTexture,
+        destinationTexture: MTLTexture,
+        parameters: RenderPresentationParameters
+    ) throws {
+        guard let computeEncoder = commandBuffer.makeComputeCommandEncoder() else {
+            throw OOTRendererError.metalUnavailable
+        }
+        defer {
+            computeEncoder.endEncoding()
+        }
+
+        computeEncoder.setComputePipelineState(postProcessPipelineState)
+        computeEncoder.setTexture(sourceTexture, index: 0)
+        computeEncoder.setTexture(destinationTexture, index: 1)
+
+        var uniforms = PostProcessUniforms(
+            sourceSize: SIMD2<Float>(
+                Float(parameters.sceneRenderSize.x),
+                Float(parameters.sceneRenderSize.y)
+            ),
+            destinationSize: SIMD2<Float>(
+                Float(parameters.destinationSize.x),
+                Float(parameters.destinationSize.y)
+            ),
+            subpixelJitter: parameters.presentationMode == .n64Aesthetic ? parameters.subpixelJitter : .zero,
+            edgeSoftness: parameters.presentationMode == .n64Aesthetic ? 0.7 : 0.0,
+            toneMapExposure: parameters.presentationMode == .enhanced ? 1.15 : 1.0,
+            fxaaSpan: parameters.presentationMode == .enhanced ? 1.5 : 0.0,
+            presentationMode: parameters.presentationMode
+        )
+        computeEncoder.setBytes(
+            &uniforms,
+            length: MemoryLayout<PostProcessUniforms>.stride,
+            index: 0
+        )
+
+        let threadWidth = postProcessPipelineState.threadExecutionWidth
+        let threadHeight = max(postProcessPipelineState.maxTotalThreadsPerThreadgroup / threadWidth, 1)
+        let threadsPerThreadgroup = MTLSize(width: threadWidth, height: threadHeight, depth: 1)
+        let threadsPerGrid = MTLSize(
+            width: parameters.destinationSize.x,
+            height: parameters.destinationSize.y,
+            depth: 1
+        )
+        computeEncoder.dispatchThreads(
+            threadsPerGrid,
+            threadsPerThreadgroup: threadsPerThreadgroup
+        )
+    }
+
+    func textureSamplerState(for mode: TextureSamplerMode) -> MTLSamplerState {
+        switch mode {
+        case .nearest:
+            return nearestTextureSamplerState
+        case .linear:
+            return linearTextureSamplerState
+        }
     }
 
     func clearColor(for skyColor: SIMD4<Float>) -> MTLClearColor {

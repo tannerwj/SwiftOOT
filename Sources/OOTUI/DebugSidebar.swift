@@ -74,6 +74,9 @@ public struct DebugSidebar: View {
     @Binding
     private var xrayOverlaySettings: XRayOverlaySettings
 
+    @Binding
+    private var renderSettings: RenderSettings
+
     @State
     private var selectedTab: DebugSidebarTab = .actorInspector
 
@@ -101,6 +104,7 @@ public struct DebugSidebar: View {
         objectTableByID: [Int: ObjectTableEntry] = [:],
         selectedActorID: Binding<ObjectIdentifier?> = .constant(nil),
         xrayOverlaySettings: Binding<XRayOverlaySettings> = .constant(XRayOverlaySettings()),
+        renderSettings: Binding<RenderSettings> = .constant(RenderSettings()),
         onSelectScene: @escaping @Sendable (Int) -> Void = { _ in }
     ) {
         self.runtime = runtime
@@ -111,6 +115,7 @@ public struct DebugSidebar: View {
         self.objectTableByID = objectTableByID
         self._selectedActorID = selectedActorID
         self._xrayOverlaySettings = xrayOverlaySettings
+        self._renderSettings = renderSettings
         self.onSelectScene = onSelectScene
     }
 
@@ -364,6 +369,7 @@ private extension DebugSidebar {
     var renderStatsContent: some View {
         VStack(alignment: .leading, spacing: 16) {
             InspectorSection("Renderer") {
+                LabeledValueRow(label: "Mode", value: renderSettings.presentationMode.title)
                 LabeledValueRow(label: "FPS", value: numberLabel(framesPerSecond, digits: 1))
                 LabeledValueRow(label: "CPU Update", value: millisecondsLabel(updateFrameTimeMilliseconds))
                 LabeledValueRow(label: "CPU Render", value: millisecondsLabel(frameStats.cpuRenderTimeMilliseconds))
@@ -373,6 +379,10 @@ private extension DebugSidebar {
                 LabeledValueRow(label: "Triangles", value: "\(frameStats.triangleCount)")
                 LabeledValueRow(label: "Draw Calls", value: "\(frameStats.drawCallCount)")
                 LabeledValueRow(label: "Visible Rooms", value: "\(frameStats.roomCount)")
+            }
+
+            InspectorSection("Render Settings") {
+                RenderSettingsView(renderSettings: $renderSettings)
             }
 
             InspectorSection("Runtime") {

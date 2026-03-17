@@ -19,6 +19,7 @@ public struct MetalView: NSViewRepresentable {
     private let scene: OOTRenderScene
     private let timeOfDay: Double
     private let textureBindings: [UInt32: MTLTexture]
+    private let renderSettings: RenderSettings
     private let inputHandler: (any GameplayInputHandling)?
     private let toggleAllXRayLayers: () -> Void
     private let gameplayCameraConfiguration: GameplayCameraConfiguration?
@@ -29,6 +30,7 @@ public struct MetalView: NSViewRepresentable {
         scene: OOTRenderScene,
         timeOfDay: Double,
         textureBindings: [UInt32: MTLTexture] = [:],
+        renderSettings: RenderSettings = RenderSettings(),
         inputHandler: (any GameplayInputHandling)? = nil,
         toggleAllXRayLayers: @escaping () -> Void = {},
         gameplayCameraConfiguration: GameplayCameraConfiguration? = nil,
@@ -38,6 +40,7 @@ public struct MetalView: NSViewRepresentable {
         self.scene = scene
         self.timeOfDay = timeOfDay
         self.textureBindings = textureBindings
+        self.renderSettings = renderSettings
         self.inputHandler = inputHandler
         self.toggleAllXRayLayers = toggleAllXRayLayers
         self.gameplayCameraConfiguration = gameplayCameraConfiguration
@@ -55,6 +58,7 @@ public struct MetalView: NSViewRepresentable {
             renderer = try OOTRenderer(
                 scene: scene,
                 textureBindings: textureBindings,
+                renderSettings: renderSettings,
                 gameplayCameraConfiguration: gameplayCameraConfiguration,
                 frameStatsHandler: frameStatsHandler
             )
@@ -77,6 +81,7 @@ public struct MetalView: NSViewRepresentable {
         context.coordinator.renderer?.setFrameStatsHandler(frameStatsHandler)
         context.coordinator.renderer?.updateScene(scene, textureBindings: textureBindings)
         context.coordinator.renderer?.updateGameplayCameraConfiguration(gameplayCameraConfiguration)
+        context.coordinator.renderer?.updateRenderSettings(renderSettings)
         context.coordinator.renderer?.setTimeOfDay(timeOfDay)
         nsView.clearColor = context.coordinator.renderer?.clearColorForCurrentEnvironment() ?? nsView.clearColor
         if let nsView = nsView as? OrbitInputMTKView {

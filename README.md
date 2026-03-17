@@ -10,6 +10,15 @@ A build-time CLI extracts game data from the OoT decompilation (C source + XML a
 
 **Modules:** OOTDataModel · OOTExtractCLI · OOTContent · OOTCore · OOTRender · OOTUI · OOTTelemetry · OOTMac
 
+## Rendering Modes
+
+The gameplay debugger sidebar now exposes a live render-mode toggle:
+
+- `N64 Aesthetic` renders through a 320x240 offscreen target with retro post-processing.
+- `Enhanced` renders at native window resolution with smoother filtering and post AA.
+
+Switching modes updates the current scene immediately without reloading gameplay state.
+
 ## Prerequisites
 
 - macOS 26.0+
