@@ -66,6 +66,8 @@ extension GameRuntime {
             stick: .zero,
             aPressed: false,
             bPressed: input.bPressed,
+            lPressed: input.lPressed,
+            rPressed: input.rPressed,
             cLeftPressed: input.cLeftPressed,
             cDownPressed: input.cDownPressed,
             cRightPressed: input.cRightPressed,
@@ -172,6 +174,7 @@ private extension GameRuntime {
     func shieldShouldBeRaised(for input: ControllerInputState) -> Bool {
         currentState == .gameplay &&
             isGameplayPresentationActive == false &&
+            inventoryContext.equipment.equippedShield != nil &&
             input.zPressed &&
             currentLockOnTargetActor() == nil
     }
@@ -363,6 +366,11 @@ private extension GameRuntime {
         }
 
         guard activePlayerAttackState == nil else {
+            bButtonChargeFrames = 0
+            return
+        }
+
+        guard inventoryContext.equipment.equippedSword != nil else {
             bButtonChargeFrames = 0
             return
         }

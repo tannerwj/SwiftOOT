@@ -46,6 +46,8 @@ public struct DeveloperInputStep: Codable, Sendable, Equatable {
         case duration
         case frameRange
         case stick
+        case lPressed
+        case rPressed
         case aPressed
         case bPressed
         case cLeftPressed
@@ -58,6 +60,8 @@ public struct DeveloperInputStep: Codable, Sendable, Equatable {
     public var duration: Int?
     public var frameRange: DeveloperInputFrameRange?
     public var stick: DeveloperInputVector?
+    public var lPressed: Bool
+    public var rPressed: Bool
     public var aPressed: Bool
     public var bPressed: Bool
     public var cLeftPressed: Bool
@@ -70,6 +74,8 @@ public struct DeveloperInputStep: Codable, Sendable, Equatable {
         duration: Int? = nil,
         frameRange: DeveloperInputFrameRange? = nil,
         stick: DeveloperInputVector? = nil,
+        lPressed: Bool = false,
+        rPressed: Bool = false,
         aPressed: Bool = false,
         bPressed: Bool = false,
         cLeftPressed: Bool = false,
@@ -81,6 +87,8 @@ public struct DeveloperInputStep: Codable, Sendable, Equatable {
         self.duration = duration
         self.frameRange = frameRange
         self.stick = stick
+        self.lPressed = lPressed
+        self.rPressed = rPressed
         self.aPressed = aPressed
         self.bPressed = bPressed
         self.cLeftPressed = cLeftPressed
@@ -95,6 +103,8 @@ public struct DeveloperInputStep: Codable, Sendable, Equatable {
         duration = try container.decodeIfPresent(Int.self, forKey: .duration)
         frameRange = try container.decodeIfPresent(DeveloperInputFrameRange.self, forKey: .frameRange)
         stick = try container.decodeIfPresent(DeveloperInputVector.self, forKey: .stick)
+        lPressed = try container.decodeIfPresent(Bool.self, forKey: .lPressed) ?? false
+        rPressed = try container.decodeIfPresent(Bool.self, forKey: .rPressed) ?? false
         aPressed = try container.decodeIfPresent(Bool.self, forKey: .aPressed) ?? false
         bPressed = try container.decodeIfPresent(Bool.self, forKey: .bPressed) ?? false
         cLeftPressed = try container.decodeIfPresent(Bool.self, forKey: .cLeftPressed) ?? false
@@ -110,6 +120,8 @@ public struct DeveloperInputScript: Codable, Sendable, Equatable {
         var startFrame: Int
         var endFrame: Int
         var stick: StickInput?
+        var lPressed: Bool
+        var rPressed: Bool
         var aPressed: Bool
         var bPressed: Bool
         var cLeftPressed: Bool
@@ -140,6 +152,8 @@ public struct DeveloperInputScript: Codable, Sendable, Equatable {
             if let stick = step.stick {
                 resolvedInput.stick = stick
             }
+            resolvedInput.lPressed = resolvedInput.lPressed || step.lPressed
+            resolvedInput.rPressed = resolvedInput.rPressed || step.rPressed
             resolvedInput.aPressed = resolvedInput.aPressed || step.aPressed
             resolvedInput.bPressed = resolvedInput.bPressed || step.bPressed
             resolvedInput.cLeftPressed = resolvedInput.cLeftPressed || step.cLeftPressed
@@ -207,6 +221,8 @@ public struct DeveloperInputScript: Codable, Sendable, Equatable {
                     startFrame: startFrame,
                     endFrame: endFrame,
                     stick: step.stick?.stickInput,
+                    lPressed: step.lPressed,
+                    rPressed: step.rPressed,
                     aPressed: step.aPressed,
                     bPressed: step.bPressed,
                     cLeftPressed: step.cLeftPressed,

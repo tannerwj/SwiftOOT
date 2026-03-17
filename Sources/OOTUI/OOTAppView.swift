@@ -338,6 +338,7 @@ private struct GameplayShellView: View {
                         scene: SceneRenderPayloadBuilder.renderScene(
                             from: renderPayload,
                             playerState: runtime.playerState,
+                            inventoryContext: runtime.inventoryContext,
                             actors: runtime.actors
                         ),
                         timeOfDay: runtime.gameTime.timeOfDay,
@@ -371,12 +372,17 @@ private struct GameplayShellView: View {
                     .padding(24)
                 }
 
-                if runtime.playState != nil {
+                if runtime.playState != nil, runtime.isPauseMenuPresented == false {
                     GameplayHUDView(runtime: runtime, renderPayload: renderPayload)
                         .transition(.opacity)
                 }
 
-                if let itemGetOverlay = runtime.activeItemGetOverlay {
+                if runtime.isPauseMenuPresented {
+                    PauseMenuView(runtime: runtime)
+                        .transition(.opacity)
+                }
+
+                if let itemGetOverlay = runtime.activeItemGetOverlay, runtime.isPauseMenuPresented == false {
                     ItemGetView(state: itemGetOverlay)
                         .padding(.top, 28)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -386,7 +392,9 @@ private struct GameplayShellView: View {
                 VStack(spacing: 16) {
                     Spacer()
 
-                    if let presentation = runtime.activeMessagePresentation {
+                    if runtime.isPauseMenuPresented {
+                        EmptyView()
+                    } else if let presentation = runtime.activeMessagePresentation {
                         MessageView(presentation: presentation)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     } else if let actionLabel = runtime.gameplayActionLabel {

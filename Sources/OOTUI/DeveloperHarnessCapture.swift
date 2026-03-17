@@ -23,7 +23,7 @@ struct DeveloperHarnessStateCapture: Codable, Sendable, Equatable {
     }
 
     var runtime: DeveloperRuntimeStateSnapshot
-    var render: RenderSnapshot
+    var render: RenderSnapshot?
 }
 
 enum DeveloperHarnessCaptureError: LocalizedError {
@@ -78,18 +78,20 @@ enum DeveloperHarnessCaptureWriter {
 
     static func writeStateCapture(
         runtimeSnapshot: DeveloperRuntimeStateSnapshot,
-        renderCapture: RenderedSceneCapture,
+        renderCapture: RenderedSceneCapture?,
         to url: URL
     ) throws {
         try ensureParentDirectory(for: url)
 
         let stateCapture = DeveloperHarnessStateCapture(
             runtime: runtimeSnapshot,
-            render: .init(
-                width: renderCapture.width,
-                height: renderCapture.height,
-                frameStats: renderCapture.frameStats
-            )
+            render: renderCapture.map {
+                .init(
+                    width: $0.width,
+                    height: $0.height,
+                    frameStats: $0.frameStats
+                )
+            }
         )
 
         let encoder = JSONEncoder()

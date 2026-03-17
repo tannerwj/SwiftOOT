@@ -31,10 +31,13 @@ struct PlayerRenderAssets {
     let skeletonAsset: OOTRenderSkeletonAsset
     let animationLibrary: AnimationLibrary
 
-    func makeSkeleton(for playerState: PlayerState) -> OOTRenderSkeleton {
+    func makeSkeleton(
+        for playerState: PlayerState,
+        equipment: EquipmentCollection
+    ) -> OOTRenderSkeleton {
         OOTRenderSkeleton(
             name: "Link",
-            skeleton: skeleton,
+            skeleton: configuredSkeleton(for: equipment),
             asset: skeletonAsset,
             animationState: OOTSkeletonAnimationState(
                 animation: animation(for: playerState.animationState.currentClip),
@@ -79,6 +82,108 @@ struct PlayerRenderAssets {
             SIMD4<Float>(0, 0, 0, 1)
         )
         return translation * rotation
+    }
+
+    private func configuredSkeleton(for equipment: EquipmentCollection) -> SkeletonData {
+        var configuredSkeleton = skeleton
+
+        for index in configuredSkeleton.limbs.indices {
+            guard let path = configuredSkeleton.limbs[index].displayListPath else {
+                continue
+            }
+
+            configuredSkeleton.limbs[index].displayListPath = overrideDisplayListPath(
+                for: path,
+                equipment: equipment
+            )
+            configuredSkeleton.limbs[index].lowDetailDisplayListPath = overrideDisplayListPath(
+                for: configuredSkeleton.limbs[index].lowDetailDisplayListPath,
+                equipment: equipment
+            )
+        }
+
+        return configuredSkeleton
+    }
+
+    private func overrideDisplayListPath(
+        for path: String?,
+        equipment: EquipmentCollection
+    ) -> String? {
+        guard let path else {
+            return nil
+        }
+
+        let baseName = URL(fileURLWithPath: path)
+            .deletingPathExtension()
+            .deletingPathExtension()
+            .lastPathComponent
+
+        if let swordOverride = swordDisplayListOverride(for: baseName, equipment: equipment) {
+            return "meshes/\(swordOverride).dl.json"
+        }
+        if let shieldOverride = shieldDisplayListOverride(for: baseName, equipment: equipment) {
+            return "meshes/\(shieldOverride).dl.json"
+        }
+
+        return path
+    }
+
+    private func swordDisplayListOverride(
+        for baseName: String,
+        equipment: EquipmentCollection
+    ) -> String? {
+        let usesLeftHandBase = [
+            "gLinkAdultLeftHandNearDL",
+            "gLinkAdultLeftHandClosedNearDL",
+            "gLinkAdultLeftHandFarDL",
+            "gLinkAdultLeftHandClosedFarDL",
+        ].contains(baseName)
+
+        guard usesLeftHandBase else {
+            return nil
+        }
+
+        switch equipment.equippedSword {
+        case .masterSword:
+            return baseName.hasSuffix("FarDL")
+                ? "gLinkAdultLeftHandHoldingMasterSwordFarDL"
+                : "gLinkAdultLeftHandHoldingMasterSwordNearDL"
+        case .biggoronSword:
+            return baseName.hasSuffix("FarDL")
+                ? "gLinkAdultLeftHandHoldingBgsFarDL"
+                : "gLinkAdultLeftHandHoldingBgsNearDL"
+        case nil:
+            return nil
+        }
+    }
+
+    private func shieldDisplayListOverride(
+        for baseName: String,
+        equipment: EquipmentCollection
+    ) -> String? {
+        let usesRightHandBase = [
+            "gLinkAdultRightHandNearDL",
+            "gLinkAdultRightHandClosedNearDL",
+            "gLinkAdultRightHandFarDL",
+            "gLinkAdultRightHandClosedFarDL",
+        ].contains(baseName)
+
+        guard usesRightHandBase else {
+            return nil
+        }
+
+        switch equipment.equippedShield {
+        case .hylianShield:
+            return baseName.hasSuffix("FarDL")
+                ? "gLinkAdultRightHandHoldingHylianShieldFarDL"
+                : "gLinkAdultRightHandHoldingHylianShieldNearDL"
+        case .mirrorShield:
+            return baseName.hasSuffix("FarDL")
+                ? "gLinkAdultRightHandHoldingMirrorShieldFarDL"
+                : "gLinkAdultRightHandHoldingMirrorShieldNearDL"
+        case nil:
+            return nil
+        }
     }
 }
 
@@ -216,13 +321,19 @@ enum SceneRenderPayloadBuilder {
     static func renderScene(
         from payload: SceneRenderPayload,
         playerState: PlayerState?,
+        inventoryContext: InventoryContext? = nil,
         actors: [any Actor] = []
     ) -> OOTRenderScene {
         var scene = payload.baseScene
         var skeletons: [OOTRenderSkeleton] = []
 
         if let playerState, let playerRenderAssets = payload.playerRenderAssets {
-            skeletons.append(playerRenderAssets.makeSkeleton(for: playerState))
+            skeletons.append(
+                playerRenderAssets.makeSkeleton(
+                    for: playerState,
+                    equipment: inventoryContext?.equipment ?? .starter
+                )
+            )
         }
         if let chestRenderAssets = payload.chestRenderAssets {
             skeletons.append(
