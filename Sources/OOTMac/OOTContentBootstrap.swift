@@ -109,10 +109,23 @@ final class OOTContentBootstrapModel {
         }
 
         let sceneLoader = SceneLoader(contentRoot: resolvedContentRoot)
+        let saveRepository = try? SaveRepository.applicationSupportRepository()
+        let saveContext: SaveContext
+        let saveStatusMessage: String?
+        do {
+            saveContext = try saveRepository?.loadSaveContextIfPresent() ?? SaveContext()
+            saveStatusMessage = nil
+        } catch {
+            saveContext = SaveContext()
+            saveStatusMessage = "Saved data was unreadable and has been reset."
+        }
         configuredContentRoot = resolvedContentRoot
         runtime = GameRuntime(
+            saveContext: saveContext,
+            statusMessage: saveStatusMessage,
             contentLoader: ContentLoader(sceneLoader: sceneLoader),
-            sceneLoader: sceneLoader
+            sceneLoader: sceneLoader,
+            saveRepository: saveRepository
         )
         errorMessage = nil
         startRuntimeIfNeeded()
