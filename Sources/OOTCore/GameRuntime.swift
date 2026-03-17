@@ -1206,6 +1206,7 @@ public final class GameRuntime {
         synchronizeHUDStateWithInventory()
         persistActiveSaveSlotState(sceneName: playState.currentSceneName)
         currentState = .gameplay
+        syncXRayTelemetry()
         startTimeLoop()
     }
 
@@ -1230,6 +1231,7 @@ public final class GameRuntime {
             playState: playState
         )
         self.playState = playState
+        syncXRayTelemetry()
     }
 
     public func activateDoorTransition(id triggerID: Int) throws {
@@ -1257,6 +1259,7 @@ public final class GameRuntime {
             )
             self.playState = playState
             self.sceneManager = sceneManager
+            syncXRayTelemetry()
         case .sceneTransition(let request):
             self.sceneManager = sceneManager
             try loadScene(id: request.sceneID, entranceIndex: request.entranceIndex)
@@ -1289,6 +1292,7 @@ public final class GameRuntime {
             )
             self.playState = playState
             self.sceneManager = sceneManager
+            syncXRayTelemetry()
         case .sceneTransition(let request):
             self.sceneManager = sceneManager
             try loadScene(id: request.sceneID, entranceIndex: request.entranceIndex)
@@ -1309,6 +1313,7 @@ public final class GameRuntime {
 
         if handlePauseMenuInput(currentInput: currentInput, previousInput: previousInput) {
             syncCombatObservationState()
+            syncXRayTelemetry()
             return
         }
 
@@ -1340,6 +1345,7 @@ public final class GameRuntime {
         guard let actorContext, let playState else {
             messageContext.tick(playerName: self.playState?.playerName ?? "Link")
             syncCombatObservationState()
+            syncXRayTelemetry()
             return
         }
 
@@ -1354,6 +1360,7 @@ public final class GameRuntime {
         )
         messageContext.tick(playerName: playState.playerName)
         syncCombatObservationState()
+        syncXRayTelemetry()
     }
 
     public func advanceGameplayFrame() {
@@ -1434,6 +1441,7 @@ public final class GameRuntime {
             startTimeLoop()
         } else {
             stopTimeLoop()
+            clearXRayTelemetry()
         }
         telemetryPublisher.publish("gameRuntime.state.\(nextState.rawValue)")
     }
@@ -1730,6 +1738,7 @@ public final class GameRuntime {
             actorContext = nil
             playerState = nil
             collisionSystem = nil
+            clearXRayTelemetry()
             return
         }
 
@@ -1737,6 +1746,7 @@ public final class GameRuntime {
             actorContext = nil
             playerState = nil
             collisionSystem = nil
+            clearXRayTelemetry()
             return
         }
 
@@ -1747,6 +1757,7 @@ public final class GameRuntime {
             playerState = nil
             collisionSystem = nil
             statusMessage = "Gameplay scene content failed to load. Continuing with placeholder gameplay."
+            clearXRayTelemetry()
             telemetryPublisher.publish("gameRuntime.sceneLoadFailed")
         }
     }

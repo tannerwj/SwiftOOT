@@ -3,6 +3,7 @@ import Metal
 import OOTContent
 import OOTCore
 import OOTDataModel
+import OOTTelemetry
 import simd
 @testable import OOTRender
 @testable import OOTUI
@@ -560,6 +561,97 @@ final class OOTUITests: XCTestCase {
         XCTAssertEqual((runtime.actors.first as? TreasureChestActor)?.isOpened, true)
     }
 
+    func testGameplaySceneRendersXRayOverlayFromRuntimeTelemetry() async throws {
+        guard MTLCreateSystemDefaultDevice() != nil else {
+            throw XCTSkip("Metal is unavailable on this host")
+        }
+
+        let fixture = try ChestRuntimeContentFixture()
+        defer { fixture.cleanup() }
+
+        let sceneLoader = SceneLoader(contentRoot: fixture.contentRoot)
+        let contentLoader = ContentLoader(sceneLoader: sceneLoader)
+        let runtime = GameRuntime(
+            contentLoader: contentLoader,
+            sceneLoader: sceneLoader,
+            suspender: { _ in }
+        )
+
+        await runtime.start()
+        runtime.chooseTitleOption(.newGame)
+        runtime.confirmSelectedSaveSlot()
+        try runtime.loadScene(id: fixture.sceneID)
+
+        let payload = try SceneRenderPayloadBuilder.makePayload(
+            scene: try XCTUnwrap(runtime.loadedScene),
+            textureAssetURLs: runtime.textureAssetURLs,
+            contentLoader: runtime.contentLoader
+        )
+        let xraySnapshot = try XCTUnwrap(runtime.xrayTelemetrySnapshot)
+        var xraySettings = XRayOverlaySettings()
+        xraySettings.setAll(true)
+
+        let baseRenderScene = SceneRenderPayloadBuilder.renderScene(
+            from: payload,
+            playerState: nil,
+            actors: []
+        )
+        let xrayRenderScene = SceneRenderPayloadBuilder.renderScene(
+            from: payload,
+            playerState: nil,
+            actors: [],
+            xrayTelemetrySnapshot: xraySnapshot,
+            xrayOverlaySettings: xraySettings
+        )
+
+        XCTAssertNil(baseRenderScene.xrayDebugScene)
+        XCTAssertFalse(try XCTUnwrap(xrayRenderScene.xrayDebugScene).isEmpty)
+
+        var baseStats = SceneFrameStats()
+        let baseRenderer = try OOTRenderer(
+            scene: baseRenderScene,
+            textureBindings: payload.textureBindings
+        ) { stats in
+            baseStats = stats
+        }
+        let baseRenderTarget = try makeRenderTargetTexture(device: baseRenderer.device)
+        baseRenderer.orbitCameraController.updateViewportSize(
+            CGSize(width: baseRenderTarget.width, height: baseRenderTarget.height)
+        )
+        try baseRenderer.renderCurrentSceneToTexture(
+            baseRenderTarget,
+            frameUniforms: baseRenderer.orbitCameraController.frameUniforms()
+        )
+
+        var xrayStats = SceneFrameStats()
+        let xrayRenderer = try OOTRenderer(
+            scene: xrayRenderScene,
+            textureBindings: payload.textureBindings
+        ) { stats in
+            xrayStats = stats
+        }
+        let xrayRenderTarget = try makeRenderTargetTexture(device: xrayRenderer.device)
+        xrayRenderer.orbitCameraController.updateViewportSize(
+            CGSize(width: xrayRenderTarget.width, height: xrayRenderTarget.height)
+        )
+        try xrayRenderer.renderCurrentSceneToTexture(
+            xrayRenderTarget,
+            frameUniforms: xrayRenderer.orbitCameraController.frameUniforms()
+        )
+
+        XCTAssertGreaterThan(xrayStats.drawCallCount, baseStats.drawCallCount)
+        XCTAssertGreaterThan(
+            countDifferingPixels(
+                lhs: xrayRenderTarget,
+                rhs: baseRenderTarget,
+                widthStride: 16,
+                heightStride: 16,
+                maxY: xrayRenderTarget.height
+            ),
+            0
+        )
+    }
+
     func testRenderSceneIncludesSkeletonRenderableActors() throws {
         let payload = try SceneRenderPayloadBuilder.makePayload(
             scene: makeLoadedScene(),
@@ -612,6 +704,150 @@ final class OOTUITests: XCTestCase {
         let linkSkeleton = try XCTUnwrap(renderScene.skeletons.first { $0.name == "Link" })
         XCTAssertEqual(linkSkeleton.skeleton.limbs[0].displayListPath, "meshes/gLinkAdultLeftHandHoldingBgsNearDL.dl.json")
         XCTAssertEqual(linkSkeleton.skeleton.limbs[1].displayListPath, "meshes/gLinkAdultRightHandHoldingMirrorShieldNearDL.dl.json")
+    }
+
+    func testXRayDebugSceneBuilderBuildsLinesTrianglesAndCameraFrustum() {
+        let snapshot = XRayTelemetrySnapshot(
+            scene: XRaySceneSnapshot(
+                collisionPolygons: [
+                    XRayCollisionPolygon(
+                        kind: .walkable,
+                        surfaceTypeIndex: 0,
+                        vertices: [
+                            XRayVector3(x: -40, y: 0, z: -40),
+                            XRayVector3(x: 40, y: 0, z: -40),
+                            XRayVector3(x: 0, y: 0, z: 40),
+                        ]
+                    )
+                ],
+                bgCameras: [
+                    XRaySceneBgCameraSnapshot(
+                        index: 0,
+                        position: XRayVector3(x: 0, y: 24, z: 32),
+                        forward: XRayVector3(x: 0, y: 0, z: -1),
+                        fieldOfViewRadians: .pi / 3,
+                        crawlspacePoints: [
+                            XRayVector3(x: -12, y: 0, z: -12),
+                            XRayVector3(x: 12, y: 0, z: 12),
+                        ]
+                    )
+                ],
+                waterBoxes: [
+                    XRaySceneWaterBoxSnapshot(
+                        minimum: XRayVector3(x: -30, y: 8, z: -30),
+                        maximum: XRayVector3(x: 30, y: 8, z: 30),
+                        ySurface: 8
+                    )
+                ],
+                paths: [
+                    XRayScenePathSnapshot(
+                        index: 0,
+                        pointsName: "path_0",
+                        points: [
+                            XRayVector3(x: -20, y: 0, z: 0),
+                            XRayVector3(x: 20, y: 0, z: 0),
+                        ]
+                    )
+                ],
+                triggerVolumes: [
+                    XRaySceneTriggerSnapshot(
+                        id: 1,
+                        kind: "loadingZone",
+                        minimum: XRayVector3(x: -10, y: 0, z: -10),
+                        maximum: XRayVector3(x: 10, y: 20, z: 10)
+                    )
+                ],
+                spawnPoints: [
+                    XRaySceneSpawnSnapshot(
+                        index: 0,
+                        roomID: 0,
+                        position: XRayVector3(x: 0, y: 0, z: 0),
+                        rotation: XRayVector3(x: 0, y: 0, z: 0)
+                    )
+                ],
+                actorSpawns: [
+                    XRaySceneActorSpawnSnapshot(
+                        actorID: 1,
+                        actorName: "ACTOR_TEST",
+                        roomName: "room_0",
+                        position: XRayVector3(x: 18, y: 0, z: -12),
+                        rotation: XRayVector3(x: 0, y: 0, z: 0)
+                    )
+                ]
+            ),
+            activeActors: [
+                XRayActorSnapshot(
+                    profileID: 1,
+                    actorType: "Player",
+                    category: "player",
+                    roomID: 0,
+                    position: XRayVector3(x: 0, y: 0, z: 0),
+                    rotation: XRayVector3(x: 0, y: 0, z: 0),
+                    boundsCollider: XRayColliderSnapshot(
+                        role: .actorBounds,
+                        kind: .cylinder,
+                        cylinder: XRayCylinder(
+                            center: XRayVector3(x: 0, y: 0, z: 0),
+                            radius: 12,
+                            height: 32
+                        )
+                    ),
+                    bodyCollider: XRayColliderSnapshot(
+                        role: .body,
+                        kind: .cylinder,
+                        cylinder: XRayCylinder(
+                            center: XRayVector3(x: 0, y: 0, z: 0),
+                            radius: 10,
+                            height: 28
+                        )
+                    ),
+                    attackColliders: [
+                        XRayColliderSnapshot(
+                            role: .attack,
+                            kind: .triangles,
+                            triangles: [
+                                XRayTriangle(
+                                    a: XRayVector3(x: 0, y: 12, z: 0),
+                                    b: XRayVector3(x: 18, y: 16, z: 0),
+                                    c: XRayVector3(x: 8, y: 4, z: 14)
+                                )
+                            ]
+                        )
+                    ]
+                )
+            ]
+        )
+        var settings = XRayOverlaySettings()
+        settings.setAll(true)
+
+        let xrayScene = XRayDebugSceneBuilder.build(from: snapshot, settings: settings)
+
+        XCTAssertNotNil(xrayScene)
+        XCTAssertFalse(try! XCTUnwrap(xrayScene).lineSegments.isEmpty)
+        XCTAssertFalse(try! XCTUnwrap(xrayScene).filledTriangles.isEmpty)
+        XCTAssertNotNil(xrayScene?.cameraFrustumColor)
+    }
+
+    func testXRayOverlaySettingsToggleAllEnablesAndClearsEveryLayer() {
+        var settings = XRayOverlaySettings()
+
+        XCTAssertFalse(settings.anyEnabled)
+        XCTAssertFalse(settings.allEnabled)
+
+        settings.toggleAll()
+        XCTAssertTrue(settings.anyEnabled)
+        XCTAssertTrue(settings.allEnabled)
+
+        settings.bodyColliders = false
+        XCTAssertTrue(settings.anyEnabled)
+        XCTAssertFalse(settings.allEnabled)
+
+        settings.toggleAll()
+        XCTAssertTrue(settings.allEnabled)
+
+        settings.toggleAll()
+        XCTAssertFalse(settings.anyEnabled)
+        XCTAssertFalse(settings.allEnabled)
     }
 
     func testGameplayHUDArtLibraryLoadsKnownGameplayKeepTextures() throws {

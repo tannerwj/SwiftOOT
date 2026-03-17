@@ -601,6 +601,135 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testLoadScenePublishesXRayTelemetrySnapshotForSceneAndActorState() throws {
+        let collision = CollisionMesh(
+            vertices: [
+                Vector3s(x: -16, y: 0, z: -16),
+                Vector3s(x: 16, y: 0, z: -16),
+                Vector3s(x: 0, y: 0, z: 16),
+            ],
+            polygons: [
+                CollisionPoly(
+                    surfaceType: 0,
+                    vertexA: 0,
+                    vertexB: 1,
+                    vertexC: 2,
+                    normal: Vector3s(x: 0, y: 0x7FFF, z: 0),
+                    distance: 0
+                )
+            ],
+            surfaceTypes: [
+                CollisionSurfaceType(low: 0, high: 0)
+            ],
+            bgCameras: [
+                CollisionBgCamera(
+                    setting: 0,
+                    count: 1,
+                    cameraData: CollisionBgCameraData(
+                        position: Vector3s(x: 0, y: 40, z: 80),
+                        rotation: Vector3s(x: 0, y: 0, z: 0),
+                        fov: 60,
+                        parameter: 0,
+                        unknown: 0
+                    )
+                )
+            ],
+            waterBoxes: [
+                CollisionWaterBox(
+                    xMin: -12,
+                    ySurface: 6,
+                    zMin: -12,
+                    xLength: 24,
+                    zLength: 24,
+                    properties: 0
+                )
+            ]
+        )
+        let fixture = RuntimeFixture(
+            scene: makeScene(
+                roomSpawns: [
+                    0: [
+                        makeSpawn(
+                            id: 1,
+                            name: "ACTOR_EN_KO",
+                            position: Vector3s(x: 12, y: 0, z: -18)
+                        )
+                    ]
+                ],
+                spawns: [
+                    SceneSpawnPoint(
+                        index: 0,
+                        roomID: 0,
+                        position: Vector3s(x: 0, y: 0, z: 0),
+                        rotation: Vector3s(x: 0, y: 0, z: 0)
+                    )
+                ],
+                transitionTriggers: [
+                    SceneTransitionTrigger(
+                        id: 7,
+                        kind: .loadingZone,
+                        roomID: 0,
+                        destinationRoomID: 1,
+                        effect: .fade,
+                        volume: SceneTriggerVolume(
+                            minimum: Vector3s(x: -4, y: 0, z: -4),
+                            maximum: Vector3s(x: 4, y: 12, z: 4)
+                        )
+                    )
+                ],
+                collision: collision,
+                paths: [
+                    ScenePathDefinition(
+                        index: 0,
+                        pointsName: "path_0",
+                        points: [
+                            Vector3s(x: -8, y: 0, z: 0),
+                            Vector3s(x: 8, y: 0, z: 0),
+                        ]
+                    )
+                ]
+            ),
+            actorTable: [
+                makeActorTableEntry(id: 1, name: "ACTOR_EN_KO", category: .npc)
+            ]
+        )
+        let publisher = TelemetryPublisher()
+        let runtime = GameRuntime(
+            contentLoader: fixture.contentLoader,
+            sceneLoader: MockSceneLoader(),
+            telemetryPublisher: publisher,
+            suspender: { _ in }
+        )
+
+        XCTAssertNil(runtime.xrayTelemetrySnapshot)
+
+        try runtime.loadScene(id: 0x55)
+
+        let snapshot = try XCTUnwrap(runtime.xrayTelemetrySnapshot)
+        let scene = try XCTUnwrap(snapshot.scene)
+
+        XCTAssertEqual(scene.collisionPolygons.count, 1)
+        XCTAssertEqual(scene.collisionPolygons.first?.kind, .walkable)
+        XCTAssertEqual(scene.bgCameras.count, 1)
+        XCTAssertEqual(scene.waterBoxes.count, 1)
+        XCTAssertEqual(scene.paths.count, 1)
+        XCTAssertEqual(scene.triggerVolumes.count, 1)
+        XCTAssertEqual(scene.spawnPoints.count, 1)
+        XCTAssertEqual(scene.actorSpawns.count, 1)
+
+        let playerSnapshot = try XCTUnwrap(snapshot.activeActors.first { $0.category == "player" })
+        XCTAssertNotNil(playerSnapshot.boundsCollider)
+        XCTAssertNotNil(playerSnapshot.bodyCollider)
+
+        let npcSnapshot = try XCTUnwrap(snapshot.activeActors.first { $0.profileID == 1 })
+        XCTAssertEqual(npcSnapshot.category, "npc")
+        XCTAssertEqual(npcSnapshot.position, XRayVector3(x: 12, y: 0, z: -18))
+        XCTAssertEqual(npcSnapshot.spawnPosition, XRayVector3(x: 12, y: 0, z: -18))
+
+        XCTAssertEqual(publisher.xraySnapshot, snapshot)
+    }
+
+    @MainActor
     func testLoadSceneSpawnsGenericNPCActorsUsingDefaultRegistry() throws {
         let fixture = RuntimeFixture(
             scene: makeScene(
@@ -3313,7 +3442,8 @@ private func makeScene(
     spawns: [SceneSpawnPoint] = [],
     transitionTriggers: [SceneTransitionTrigger] = [],
     exits: [SceneExitDefinition] = [],
-    collision: CollisionMesh? = nil
+    collision: CollisionMesh? = nil,
+    paths: [ScenePathDefinition] = []
 ) -> LoadedScene {
     let sortedRooms = roomSpawns.keys.sorted()
     let manifestRooms = sortedRooms.map { roomID in
@@ -3350,6 +3480,7 @@ private func makeScene(
         collision: collision,
         actors: actors,
         spawns: SceneSpawnsFile(sceneName: sceneName, spawns: spawns),
+        paths: ScenePathsFile(sceneName: sceneName, paths: paths),
         exits: SceneExitsFile(sceneName: sceneName, exits: exits),
         sceneHeader: SceneHeaderDefinition(
             sceneName: sceneName,

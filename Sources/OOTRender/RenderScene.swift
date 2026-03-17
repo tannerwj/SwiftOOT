@@ -46,6 +46,7 @@ public struct OOTRenderScene: Sendable, Equatable {
     public var skeletons: [OOTRenderSkeleton]
     public var environment: SceneEnvironmentFile?
     public var skyColor: SIMD4<Float>
+    public var xrayDebugScene: XRayDebugScene?
 
     public init(
         rooms: [OOTRenderRoom],
@@ -56,12 +57,14 @@ public struct OOTRenderScene: Sendable, Equatable {
             155.0 / 255.0,
             52.0 / 255.0,
             1.0
-        )
+        ),
+        xrayDebugScene: XRayDebugScene? = nil
     ) {
         self.rooms = rooms
         self.skeletons = skeletons
         self.environment = environment
         self.skyColor = skyColor
+        self.xrayDebugScene = xrayDebugScene
     }
 
     public var visibleRooms: [OOTRenderRoom] {
@@ -94,7 +97,8 @@ public struct OOTRenderScene: Sendable, Equatable {
             ],
             skeletons: [],
             environment: environment,
-            skyColor: skyColor
+            skyColor: skyColor,
+            xrayDebugScene: nil
         )
     }
 }

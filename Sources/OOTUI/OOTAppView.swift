@@ -327,6 +327,9 @@ private struct GameplayShellView: View {
     @State
     private var selectedActorID: ObjectIdentifier?
 
+    @State
+    private var xrayOverlaySettings = XRayOverlaySettings()
+
     var body: some View {
         NavigationSplitView {
             DebugSidebar(
@@ -337,6 +340,7 @@ private struct GameplayShellView: View {
                 errorMessage: activeErrorMessage,
                 objectTableByID: objectTableByID,
                 selectedActorID: $selectedActorID,
+                xrayOverlaySettings: $xrayOverlaySettings,
                 onSelectScene: { sceneID in
                     Task {
                         await runtime.selectScene(id: sceneID)
@@ -356,11 +360,16 @@ private struct GameplayShellView: View {
                             from: renderPayload,
                             playerState: runtime.playerState,
                             inventoryContext: runtime.inventoryContext,
-                            actors: runtime.actors
+                            actors: runtime.actors,
+                            xrayTelemetrySnapshot: runtime.xrayTelemetrySnapshot,
+                            xrayOverlaySettings: xrayOverlaySettings
                         ),
                         timeOfDay: runtime.gameTime.timeOfDay,
                         textureBindings: renderPayload.textureBindings,
                         inputHandler: inputManager,
+                        toggleAllXRayLayers: {
+                            xrayOverlaySettings.toggleAll()
+                        },
                         gameplayCameraConfiguration: runtime.loadedScene.flatMap {
                             SceneRenderPayloadBuilder.makeGameplayCameraConfiguration(
                                 scene: $0,

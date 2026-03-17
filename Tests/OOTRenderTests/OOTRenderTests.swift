@@ -438,6 +438,46 @@ final class OOTRenderTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(reportedStats.cpuRenderTimeMilliseconds, 0)
     }
 
+    func testRendererCompositesXRayOverlayInSeparatePass() throws {
+        guard MTLCreateSystemDefaultDevice() != nil else {
+            throw XCTSkip("Metal is unavailable on this host")
+        }
+
+        var reportedStats = SceneFrameStats()
+        let overlayScene = OOTRenderScene(
+            rooms: OOTRenderScene.syntheticScene(
+                vertices: makeTriangleVertices(
+                    color: RGBA8(red: 255, green: 0, blue: 0, alpha: 255)
+                )
+            ).rooms,
+            xrayDebugScene: XRayDebugScene(
+                filledTriangles: [
+                    XRayDebugTriangle(
+                        a: SIMD3<Float>(-0.45, -0.35, 0),
+                        b: SIMD3<Float>(0.45, -0.35, 0),
+                        c: SIMD3<Float>(0.0, 0.55, 0),
+                        color: SIMD4<Float>(0.0, 0.2, 1.0, 0.6)
+                    )
+                ]
+            )
+        )
+        let renderer = try OOTRenderer(scene: overlayScene) { stats in
+            reportedStats = stats
+        }
+        let texture = try makeRenderTargetTexture(renderer: renderer)
+
+        try renderer.renderCurrentSceneToTexture(
+            texture,
+            frameUniforms: .identity
+        )
+
+        let blendedPixel = pixel(in: texture, x: 32, y: 32)
+        XCTAssertGreaterThan(blendedPixel[0], 120)
+        XCTAssertGreaterThan(blendedPixel[2], 80)
+        XCTAssertEqual(reportedStats.triangleCount, 2)
+        XCTAssertEqual(reportedStats.drawCallCount, 2)
+    }
+
     private func makeRenderTargetTexture(
         renderer: OOTRenderer,
         width: Int = 64,

@@ -71,6 +71,9 @@ public struct DebugSidebar: View {
     @Binding
     private var selectedActorID: ObjectIdentifier?
 
+    @Binding
+    private var xrayOverlaySettings: XRayOverlaySettings
+
     @State
     private var selectedTab: DebugSidebarTab = .actorInspector
 
@@ -97,6 +100,7 @@ public struct DebugSidebar: View {
         errorMessage: String? = nil,
         objectTableByID: [Int: ObjectTableEntry] = [:],
         selectedActorID: Binding<ObjectIdentifier?> = .constant(nil),
+        xrayOverlaySettings: Binding<XRayOverlaySettings> = .constant(XRayOverlaySettings()),
         onSelectScene: @escaping @Sendable (Int) -> Void = { _ in }
     ) {
         self.runtime = runtime
@@ -106,6 +110,7 @@ public struct DebugSidebar: View {
         self.errorMessage = errorMessage
         self.objectTableByID = objectTableByID
         self._selectedActorID = selectedActorID
+        self._xrayOverlaySettings = xrayOverlaySettings
         self.onSelectScene = onSelectScene
     }
 
@@ -375,6 +380,18 @@ private extension DebugSidebar {
                 LabeledValueRow(label: "Game Frame", value: "\(runtime.gameTime.frameCount)")
                 LabeledValueRow(label: "Actor Count", value: "\(runtime.actors.count)")
                 LabeledValueRow(label: "Message", value: runtime.activeMessagePresentation == nil ? "Idle" : "Presenting")
+            }
+
+            InspectorSection("X-Ray") {
+                Toggle(
+                    "All Layers",
+                    isOn: Binding(
+                        get: { xrayOverlaySettings.allEnabled },
+                        set: { xrayOverlaySettings.setAll($0) }
+                    )
+                )
+
+                XRayOverlay(settings: $xrayOverlaySettings)
             }
         }
     }
