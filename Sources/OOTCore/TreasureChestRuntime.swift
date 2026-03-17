@@ -263,6 +263,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
     public var dungeonStateByScene: [SceneIdentity: DungeonInventoryState]
     public var openedTreasureFlags: Set<TreasureFlagKey>
     public var triggeredDungeonEventFlags: Set<DungeonEventFlagKey>
+    public var visitedSceneIDs: Set<Int>
     public var hasSlingshot: Bool
     public var slingshotAmmo: Int
     public var slingshotCapacity: Int
@@ -283,6 +284,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         dungeonStateByScene: [SceneIdentity: DungeonInventoryState] = [:],
         openedTreasureFlags: Set<TreasureFlagKey> = [],
         triggeredDungeonEventFlags: Set<DungeonEventFlagKey> = [],
+        visitedSceneIDs: Set<Int> = [],
         hasSlingshot: Bool = false,
         slingshotAmmo: Int = 0,
         slingshotCapacity: Int = 30,
@@ -302,6 +304,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         self.dungeonStateByScene = dungeonStateByScene
         self.openedTreasureFlags = openedTreasureFlags
         self.triggeredDungeonEventFlags = triggeredDungeonEventFlags
+        self.visitedSceneIDs = visitedSceneIDs
         self.hasSlingshot = hasSlingshot
         self.slingshotAmmo = max(0, slingshotAmmo)
         self.slingshotCapacity = max(0, slingshotCapacity)
@@ -336,6 +339,13 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         triggeredDungeonEventFlags.contains(key)
     }
 
+    public func hasVisitedScene(_ sceneID: Int?) -> Bool {
+        guard let sceneID else {
+            return false
+        }
+        return visitedSceneIDs.contains(sceneID)
+    }
+
     public func dungeonState(for scene: SceneIdentity) -> DungeonInventoryState {
         dungeonStateByScene[scene, default: DungeonInventoryState()]
     }
@@ -350,6 +360,13 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
 
     public mutating func markDungeonEventTriggered(_ key: DungeonEventFlagKey) {
         triggeredDungeonEventFlags.insert(key)
+    }
+
+    public mutating func markSceneVisited(_ sceneID: Int?) {
+        guard let sceneID else {
+            return
+        }
+        visitedSceneIDs.insert(sceneID)
     }
 
     public mutating func apply(
@@ -520,6 +537,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         case dungeonStateByScene
         case openedTreasureFlags
         case triggeredDungeonEventFlags
+        case visitedSceneIDs
         case hasSlingshot
         case slingshotAmmo
         case slingshotCapacity
@@ -551,6 +569,10 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
             Set<DungeonEventFlagKey>.self,
             forKey: .triggeredDungeonEventFlags
         ) ?? []
+        visitedSceneIDs = try container.decodeIfPresent(
+            Set<Int>.self,
+            forKey: .visitedSceneIDs
+        ) ?? []
         hasSlingshot = try container.decodeIfPresent(Bool.self, forKey: .hasSlingshot) ?? false
         slingshotAmmo = max(0, try container.decodeIfPresent(Int.self, forKey: .slingshotAmmo) ?? 0)
         slingshotCapacity = max(0, try container.decodeIfPresent(Int.self, forKey: .slingshotCapacity) ?? 30)
@@ -577,6 +599,7 @@ public struct GameplayInventoryState: Sendable, Codable, Equatable {
         try container.encode(dungeonStateByScene, forKey: .dungeonStateByScene)
         try container.encode(openedTreasureFlags, forKey: .openedTreasureFlags)
         try container.encode(triggeredDungeonEventFlags, forKey: .triggeredDungeonEventFlags)
+        try container.encode(visitedSceneIDs, forKey: .visitedSceneIDs)
         try container.encode(hasSlingshot, forKey: .hasSlingshot)
         try container.encode(slingshotAmmo, forKey: .slingshotAmmo)
         try container.encode(slingshotCapacity, forKey: .slingshotCapacity)

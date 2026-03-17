@@ -658,6 +658,14 @@ public final class GameRuntime {
         set { inventoryContext.pauseMenu = newValue }
     }
 
+    public var visitedSceneIDs: Set<Int> {
+        var visitedSceneIDs = inventoryState.visitedSceneIDs
+        if let currentSceneID = playState?.currentSceneID ?? loadedScene?.manifest.id ?? selectedSceneID {
+            visitedSceneIDs.insert(currentSceneID)
+        }
+        return visitedSceneIDs
+    }
+
     public init(
         currentState: GameState = .boot,
         playState: PlayState? = nil,
@@ -1188,6 +1196,7 @@ public final class GameRuntime {
 
         availableScenes = try loadAvailableScenes()
         selectedSceneID = sceneID
+        inventoryState.markSceneVisited(loadedScene.manifest.id)
         self.loadedScene = loadedScene
         self.textureAssetURLs = textureAssetURLs
         self.playState = playState

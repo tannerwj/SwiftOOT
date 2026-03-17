@@ -5,13 +5,14 @@ import OOTCore
 import OOTDataModel
 import OOTRender
 
-private enum DebugSidebarTab: String, CaseIterable, Identifiable {
+public enum DebugSidebarTab: String, CaseIterable, Identifiable {
     case actorInspector
     case sceneInfo
     case inventory
     case renderStats
+    case map
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
     var title: String {
         switch self {
@@ -23,6 +24,8 @@ private enum DebugSidebarTab: String, CaseIterable, Identifiable {
             return "Inventory"
         case .renderStats:
             return "Render"
+        case .map:
+            return "Map"
         }
     }
 
@@ -36,6 +39,8 @@ private enum DebugSidebarTab: String, CaseIterable, Identifiable {
             return "square.grid.3x3.topleft.filled"
         case .renderStats:
             return "chart.xyaxis.line"
+        case .map:
+            return "globe.americas.fill"
         }
     }
 }
@@ -77,8 +82,8 @@ public struct DebugSidebar: View {
     @Binding
     private var renderSettings: RenderSettings
 
-    @State
-    private var selectedTab: DebugSidebarTab = .actorInspector
+    @Binding
+    private var selectedTab: DebugSidebarTab
 
     @State
     private var actorSearchText = ""
@@ -105,6 +110,7 @@ public struct DebugSidebar: View {
         selectedActorID: Binding<ObjectIdentifier?> = .constant(nil),
         xrayOverlaySettings: Binding<XRayOverlaySettings> = .constant(XRayOverlaySettings()),
         renderSettings: Binding<RenderSettings> = .constant(RenderSettings()),
+        selectedTab: Binding<DebugSidebarTab> = .constant(.actorInspector),
         onSelectScene: @escaping @Sendable (Int) -> Void = { _ in }
     ) {
         self.runtime = runtime
@@ -116,6 +122,7 @@ public struct DebugSidebar: View {
         self._selectedActorID = selectedActorID
         self._xrayOverlaySettings = xrayOverlaySettings
         self._renderSettings = renderSettings
+        self._selectedTab = selectedTab
         self.onSelectScene = onSelectScene
     }
 
@@ -177,6 +184,8 @@ public struct DebugSidebar: View {
                         inventoryContent
                     case .renderStats:
                         renderStatsContent
+                    case .map:
+                        mapContent
                     }
                 }
                 .padding(16)
@@ -402,6 +411,32 @@ private extension DebugSidebar {
                 )
 
                 XRayOverlay(settings: $xrayOverlaySettings)
+            }
+        }
+    }
+
+    var mapContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            InspectorSection("Map Controls") {
+                Text("Use the detail pane for pan, zoom, and region selection. Click a selected region again to jump there during gameplay.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            InspectorSection("Current Focus") {
+                LabeledValueRow(label: "Scene", value: sceneTitle)
+                LabeledValueRow(label: "Discovered Scenes", value: "\(runtime.visitedSceneIDs.count)")
+                LabeledValueRow(
+                    label: "Interaction",
+                    value: runtime.playState == nil ? "Inspect Only" : "Teleport Enabled"
+                )
+            }
+
+            InspectorSection("Legend") {
+                LegendValueRow(color: Color(red: 0.27, green: 0.63, blue: 0.43), label: "Overworld area")
+                LegendValueRow(color: Color(red: 0.54, green: 0.34, blue: 0.21), label: "Town area")
+                LegendValueRow(color: Color(red: 0.96, green: 0.44, blue: 0.34), label: "Dungeon entrance")
+                LegendValueRow(color: Color(red: 1.0, green: 0.26, blue: 0.16), label: "Player marker")
             }
         }
     }
@@ -1177,6 +1212,23 @@ struct ActorViewportSelectionOverlay: View {
                     y: CGFloat(projection.viewportPoint.y)
                 )
             )
+        }
+    }
+}
+
+private struct LegendValueRow: View {
+    let color: Color
+    let label: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(color)
+                .frame(width: 10, height: 10)
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
         }
     }
 }
