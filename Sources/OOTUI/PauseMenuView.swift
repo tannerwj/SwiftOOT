@@ -80,12 +80,28 @@ private extension PauseMenuView {
     }
 
     var footer: some View {
-        HStack(spacing: 20) {
-            PauseHintChip(label: "Q / E or L / R", detail: "Change screen")
-            PauseHintChip(label: "Stick / D-Pad", detail: "Move cursor")
-            PauseHintChip(label: "A", detail: runtime.pauseMenuState.activeSubscreen == .equipment ? "Equip" : "Select")
-            PauseHintChip(label: "1 / 2 / 3", detail: "Assign item")
-            PauseHintChip(label: "Start / B", detail: "Close")
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 20) {
+                PauseHintChip(label: "Q / E or L / R", detail: "Change screen")
+                PauseHintChip(label: "Stick / D-Pad", detail: "Move cursor")
+                PauseHintChip(label: "A", detail: runtime.pauseMenuState.activeSubscreen == .equipment ? "Equip" : "Select")
+                PauseHintChip(label: "1 / 2 / 3", detail: "Assign item")
+                PauseHintChip(label: "Tab / Z", detail: "Save")
+                PauseHintChip(label: "Start / B", detail: "Close")
+
+                Spacer()
+
+                Button("Save Quest") {
+                    runtime.saveCurrentGame()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+
+            if let statusMessage = runtime.statusMessage {
+                Text(statusMessage)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(Color(red: 0.98, green: 0.87, blue: 0.44))
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

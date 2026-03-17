@@ -305,6 +305,279 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual(runtime.hudState.maximumHealthUnits, 8)
     }
 
+    func testSaveRepositoryRoundTripsVersionedSaveContext() throws {
+        let fileURL = uniqueSaveFileURL()
+        let repository = SaveRepository(fileURL: fileURL)
+        let scene = SceneIdentity(id: 0x55, name: "spot04")
+        let saveContext = SaveContext(
+            slots: [
+                SaveSlot(
+                    id: 0,
+                    playerName: "Link",
+                    locationName: "Temple of Time",
+                    hearts: 5,
+                    hasSaveData: true,
+                    inventoryContext: InventoryContext(
+                        gameplay: GameplayInventoryState(
+                            hasSlingshot: true,
+                            slingshotAmmo: 20,
+                            currentHealthUnits: 9,
+                            maximumHealthUnits: 10
+                        ),
+                        equipment: EquipmentCollection(
+                            ownedSwords: [.masterSword],
+                            equippedSword: .masterSword,
+                            ownedShields: [.hylianShield],
+                            equippedShield: .hylianShield,
+                            ownedTunics: [.kokiri],
+                            equippedTunic: .kokiri,
+                            ownedBoots: [.kokiri],
+                            equippedBoots: .kokiri
+                        ),
+                        questStatus: QuestStatus(
+                            medallions: [.forest],
+                            stones: [.kokiriEmerald],
+                            songs: [.zeldasLullaby]
+                        )
+                    ),
+                    runtimeState: SaveRuntimeState(
+                        currentMagic: 32,
+                        maximumMagic: 64,
+                        rupees: 99,
+                        globalEventFlags: [1, 3, 5],
+                        sceneEventFlags: [scene: [2, 4]],
+                        spawnLocation: SaveSpawnLocation(
+                            sceneID: scene.id,
+                            sceneName: scene.name,
+                            entranceIndex: 1,
+                            spawnIndex: 2
+                        ),
+                        playTimeFrames: 7_260,
+                        deathCount: 2,
+                        goldSkulltulaFlags: [TreasureFlagKey(scene: scene, flag: 8)]
+                    )
+                ),
+                .empty(id: 1),
+                .empty(id: 2),
+            ],
+            selectedSlotIndex: 1
+        )
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+
+        try repository.save(saveContext)
+        let reloadedContext = try XCTUnwrap(repository.loadSaveContextIfPresent())
+
+        XCTAssertEqual(reloadedContext, saveContext)
+    }
+
+    func testSaveRepositoryRejectsChecksumMismatch() throws {
+        let fileURL = uniqueSaveFileURL()
+        let repository = SaveRepository(fileURL: fileURL)
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+
+        try repository.save(
+            SaveContext(
+                slots: [
+                    SaveSlot.starter(id: 0),
+                    .empty(id: 1),
+                    .empty(id: 2),
+                ]
+            )
+        )
+
+        let originalData = try Data(contentsOf: fileURL)
+        var envelope = try XCTUnwrap(JSONSerialization.jsonObject(with: originalData) as? [String: Any])
+        envelope["checksum"] = String(repeating: "0", count: 64)
+        let corruptedData = try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
+        try corruptedData.write(to: fileURL, options: .atomic)
+
+        XCTAssertThrowsError(try repository.loadSaveContextIfPresent()) { error in
+            guard case SaveRepository.Error.checksumMismatch = error else {
+                return XCTFail("Expected checksum mismatch, got \(error)")
+            }
+        }
+    }
+
+    @MainActor
+    func testPauseMenuSaveShortcutPersistsActiveSaveSlot() throws {
+        let fileURL = uniqueSaveFileURL()
+        let repository = SaveRepository(fileURL: fileURL)
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+
+        let runtime = GameRuntime(
+            currentState: .gameplay,
+            playState: PlayState(
+                activeSaveSlot: 0,
+                entryMode: .continueGame,
+                currentSceneName: "Kokiri Forest",
+                currentSceneID: 0x55,
+                currentEntranceIndex: 3,
+                currentSpawnIndex: 1,
+                playerName: "Link"
+            ),
+            saveContext: SaveContext(
+                slots: [
+                    SaveSlot.starter(id: 0),
+                    .empty(id: 1),
+                    .empty(id: 2),
+                ]
+            ),
+            hudState: GameplayHUDState(
+                currentHealthUnits: 5,
+                maximumHealthUnits: 6,
+                currentMagic: 24,
+                maximumMagic: 48,
+                rupees: 77
+            ),
+            inventoryContext: InventoryContext(
+                gameplay: GameplayInventoryState(
+                    hasSlingshot: true,
+                    slingshotAmmo: 15,
+                    currentHealthUnits: 5,
+                    maximumHealthUnits: 6
+                ),
+                questStatus: QuestStatus(
+                    songs: [.zeldasLullaby]
+                ),
+                pauseMenu: PauseMenuState(
+                    isPresented: true,
+                    activeSubscreen: .items
+                )
+            ),
+            sceneLoader: MockSceneLoader(),
+            saveRepository: repository,
+            suspender: { _ in }
+        )
+        runtime.globalEventFlags = [7]
+        runtime.sceneEventFlags = [SceneIdentity(id: 0x55, name: "Kokiri Forest"): [9]]
+        runtime.deathCount = 4
+        runtime.goldSkulltulaFlags = [TreasureFlagKey(scene: SceneIdentity(id: 0x55, name: "Kokiri Forest"), flag: 12)]
+
+        runtime.setControllerInput(ControllerInputState(zPressed: true))
+        runtime.updateFrame()
+
+        let persistedContext = try XCTUnwrap(repository.loadSaveContextIfPresent())
+        let slot = persistedContext.slots[0]
+        XCTAssertEqual(slot.runtimeState.rupees, 77)
+        XCTAssertEqual(slot.runtimeState.currentMagic, 24)
+        XCTAssertEqual(slot.runtimeState.spawnLocation.sceneID, 0x55)
+        XCTAssertEqual(slot.runtimeState.spawnLocation.entranceIndex, 3)
+        XCTAssertEqual(slot.runtimeState.spawnLocation.spawnIndex, 1)
+        XCTAssertEqual(slot.runtimeState.deathCount, 4)
+        XCTAssertEqual(slot.runtimeState.globalEventFlags, [7])
+        XCTAssertEqual(slot.runtimeState.sceneEventFlags[SceneIdentity(id: 0x55, name: "Kokiri Forest")], [9])
+        XCTAssertEqual(slot.runtimeState.goldSkulltulaFlags.count, 1)
+        XCTAssertEqual(runtime.statusMessage, "Saved File 1.")
+    }
+
+    @MainActor
+    func testSceneTransitionAutoSavePersistsUpdatedScenePreview() throws {
+        let fileURL = uniqueSaveFileURL()
+        let repository = SaveRepository(fileURL: fileURL)
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+
+        let kokiriScene = makeScene(sceneID: 0x55, sceneName: "spot04", roomSpawns: [0: []])
+        let kakarikoScene = makeScene(sceneID: 0x01, sceneName: "spot01", roomSpawns: [0: []])
+        let contentLoader = MockContentLoader(
+            scenesByID: [
+                0x55: kokiriScene,
+                0x01: kakarikoScene,
+            ],
+            actorTable: []
+        )
+        let sceneLoader = ConfigurableSceneLoader(
+            sceneEntries: [
+                SceneTableEntry(index: 0x55, segmentName: "spot04_scene", enumName: "SCENE_KOKIRI_FOREST"),
+                SceneTableEntry(index: 0x01, segmentName: "spot01_scene", enumName: "SCENE_KAKARIKO_VILLAGE"),
+            ],
+            scenesByID: [
+                0x55: kokiriScene,
+                0x01: kakarikoScene,
+            ]
+        )
+        let runtime = GameRuntime(
+            currentState: .gameplay,
+            playState: PlayState(
+                activeSaveSlot: 0,
+                entryMode: .continueGame,
+                currentSceneName: "spot04",
+                currentSceneID: 0x55,
+                playerName: "Link"
+            ),
+            saveContext: SaveContext(
+                slots: [
+                    SaveSlot.starter(id: 0),
+                    .empty(id: 1),
+                    .empty(id: 2),
+                ]
+            ),
+            contentLoader: contentLoader,
+            sceneLoader: sceneLoader,
+            saveRepository: repository,
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+        try runtime.loadScene(id: 0x01)
+
+        let persistedContext = try XCTUnwrap(repository.loadSaveContextIfPresent())
+        XCTAssertEqual(persistedContext.slots[0].locationName, "spot01")
+        XCTAssertEqual(persistedContext.slots[0].runtimeState.spawnLocation.sceneID, 0x01)
+    }
+
+    @MainActor
+    func testSaveFlowReloadsSlotFromRepositoryAfterRelaunch() async throws {
+        let fileURL = uniqueSaveFileURL()
+        let repository = SaveRepository(fileURL: fileURL)
+        defer { try? FileManager.default.removeItem(at: fileURL.deletingLastPathComponent()) }
+
+        let scene = makeScene(sceneID: 0x55, sceneName: "spot04", roomSpawns: [0: []])
+        let contentLoader = MockContentLoader(
+            scenesByID: [0x55: scene],
+            actorTable: []
+        )
+        let sceneLoader = ConfigurableSceneLoader(
+            sceneEntries: [
+                SceneTableEntry(index: 0x55, segmentName: "spot04_scene", enumName: "SCENE_KOKIRI_FOREST"),
+            ],
+            scenesByID: [0x55: scene]
+        )
+
+        let runtime = GameRuntime(
+            contentLoader: contentLoader,
+            sceneLoader: sceneLoader,
+            saveRepository: repository,
+            suspender: { _ in }
+        )
+        await runtime.start()
+        runtime.chooseTitleOption(.newGame)
+        runtime.confirmSelectedSaveSlot()
+        try runtime.loadScene(id: 0x55)
+        runtime.hudState.rupees = 123
+        runtime.hudState.currentMagic = 20
+        runtime.pauseMenuState = PauseMenuState(isPresented: true, activeSubscreen: .items)
+        runtime.setControllerInput(ControllerInputState(zPressed: true))
+        runtime.updateFrame()
+
+        let persistedContext = try XCTUnwrap(repository.loadSaveContextIfPresent())
+        let reloadedRuntime = GameRuntime(
+            saveContext: persistedContext,
+            contentLoader: contentLoader,
+            sceneLoader: sceneLoader,
+            saveRepository: repository,
+            suspender: { _ in }
+        )
+        await reloadedRuntime.start()
+        reloadedRuntime.chooseTitleOption(.continueGame)
+        reloadedRuntime.confirmSelectedSaveSlot()
+
+        XCTAssertEqual(reloadedRuntime.currentState, .gameplay)
+        XCTAssertEqual(reloadedRuntime.fileSelectMode, nil)
+        XCTAssertEqual(reloadedRuntime.hudState.rupees, 123)
+        XCTAssertEqual(reloadedRuntime.hudState.currentMagic, 20)
+        XCTAssertEqual(reloadedRuntime.playState?.currentSceneID, 0x55)
+    }
+
     @MainActor
     func testGameplayHUDActionLabelFallsBackToHUDButtonAction() {
         let runtime = GameRuntime(
@@ -3524,6 +3797,12 @@ private func makeRuntime(
         actorRegistry: actorRegistry,
         suspender: suspender
     )
+}
+
+private func uniqueSaveFileURL() -> URL {
+    FileManager.default.temporaryDirectory
+        .appendingPathComponent("swiftoot-save-tests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("save-context.json", isDirectory: false)
 }
 
 private struct RuntimeFixture {

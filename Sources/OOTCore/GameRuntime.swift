@@ -93,10 +93,39 @@ public struct SaveSlot: Identifiable, Codable, Sendable, Equatable {
     public var hearts: Int
     public var hasSaveData: Bool
     public var inventoryContext: InventoryContext
+    public var runtimeState: SaveRuntimeState
 
     public var inventoryState: GameplayInventoryState {
         get { inventoryContext.gameplay }
         set { inventoryContext.gameplay = newValue }
+    }
+
+    public var playTimeFrames: Int {
+        runtimeState.playTimeFrames
+    }
+
+    public var playTimeDisplay: String {
+        let totalSeconds = playTimeFrames / 60
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds / 60) % 60
+        let seconds = totalSeconds % 60
+
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
+        }
+
+        return String(format: "%02d:%02d", minutes, seconds)
+    }
+
+    public var questPreviewSummary: String {
+        let questStatus = inventoryContext.questStatus
+        let components = [
+            questStatus.songs.isEmpty ? nil : "\(questStatus.songs.count) Songs",
+            questStatus.stones.isEmpty ? nil : "\(questStatus.stones.count) Stones",
+            questStatus.medallions.isEmpty ? nil : "\(questStatus.medallions.count) Medallions",
+        ].compactMap { $0 }
+
+        return components.isEmpty ? "No quest items" : components.joined(separator: "  •  ")
     }
 
     public init(
@@ -106,10 +135,14 @@ public struct SaveSlot: Identifiable, Codable, Sendable, Equatable {
         hearts: Int = 3,
         hasSaveData: Bool = false,
         inventoryState: GameplayInventoryState? = nil,
-        inventoryContext: InventoryContext? = nil
+        inventoryContext: InventoryContext? = nil,
+        runtimeState: SaveRuntimeState? = nil
     ) {
         let resolvedInventoryContext = inventoryContext ?? InventoryContext(
             gameplay: inventoryState ?? .starter(hearts: hearts)
+        )
+        let resolvedRuntimeState = runtimeState ?? SaveRuntimeState(
+            spawnLocation: SaveSpawnLocation(sceneName: locationName)
         )
         self.id = id
         self.playerName = playerName
@@ -117,6 +150,7 @@ public struct SaveSlot: Identifiable, Codable, Sendable, Equatable {
         self.hearts = max(1, resolvedInventoryContext.gameplay.maximumHealthUnits / 2)
         self.hasSaveData = hasSaveData
         self.inventoryContext = resolvedInventoryContext
+        self.runtimeState = resolvedRuntimeState
     }
 
     public static func empty(id: Int) -> Self {
@@ -130,7 +164,8 @@ public struct SaveSlot: Identifiable, Codable, Sendable, Equatable {
             locationName: "Kokiri Forest",
             hearts: 3,
             hasSaveData: true,
-            inventoryContext: .starter(hearts: 3)
+            inventoryContext: .starter(hearts: 3),
+            runtimeState: .starter(sceneName: "Kokiri Forest")
         )
     }
 
@@ -142,6 +177,7 @@ public struct SaveSlot: Identifiable, Codable, Sendable, Equatable {
         case hasSaveData
         case inventoryContext
         case inventoryState
+        case runtimeState
     }
 
     public init(from decoder: any Decoder) throws {
@@ -160,6 +196,12 @@ public struct SaveSlot: Identifiable, Codable, Sendable, Equatable {
             forKey: .inventoryState
             ) ?? .starter(hearts: hearts)
         )
+        let runtimeState = try container.decodeIfPresent(
+            SaveRuntimeState.self,
+            forKey: .runtimeState
+        ) ?? SaveRuntimeState(
+            spawnLocation: SaveSpawnLocation(sceneName: locationName)
+        )
 
         self.init(
             id: id,
@@ -167,7 +209,8 @@ public struct SaveSlot: Identifiable, Codable, Sendable, Equatable {
             locationName: locationName,
             hearts: hearts,
             hasSaveData: hasSaveData,
-            inventoryContext: inventoryContext
+            inventoryContext: inventoryContext,
+            runtimeState: runtimeState
         )
     }
 
@@ -180,6 +223,7 @@ public struct SaveSlot: Identifiable, Codable, Sendable, Equatable {
         try container.encode(hasSaveData, forKey: .hasSaveData)
         try container.encode(inventoryContext, forKey: .inventoryContext)
         try container.encode(inventoryState, forKey: .inventoryState)
+        try container.encode(runtimeState, forKey: .runtimeState)
     }
 }
 
@@ -581,6 +625,10 @@ public final class GameRuntime {
     public var ocarinaSession: OcarinaSessionState?
     public var ocarinaRecognition: OcarinaRecognitionState?
     public var lastResolvedOcarinaEffect: OcarinaWorldEffectResult?
+    public var globalEventFlags: Set<Int>
+    public var sceneEventFlags: [SceneIdentity: Set<Int>]
+    public var deathCount: Int
+    public var goldSkulltulaFlags: Set<TreasureFlagKey>
 
     @ObservationIgnored
     public let contentLoader: any ContentLoading
@@ -620,6 +668,12 @@ public final class GameRuntime {
 
     @ObservationIgnored
     private let movementConfiguration: PlayerMovementConfiguration
+
+    @ObservationIgnored
+    private let saveRepository: SaveRepository?
+
+    @ObservationIgnored
+    private var activePlayTimeFrames: Int
 
     @ObservationIgnored
     var previousControllerInputState = ControllerInputState()
@@ -696,9 +750,15 @@ public final class GameRuntime {
         ocarinaSession: OcarinaSessionState? = nil,
         ocarinaRecognition: OcarinaRecognitionState? = nil,
         lastResolvedOcarinaEffect: OcarinaWorldEffectResult? = nil,
+        globalEventFlags: Set<Int> = [],
+        sceneEventFlags: [SceneIdentity: Set<Int>] = [:],
+        deathCount: Int = 0,
+        goldSkulltulaFlags: Set<TreasureFlagKey> = [],
+        activePlayTimeFrames: Int = 0,
         contentLoader: (any ContentLoading)? = nil,
         sceneLoader: (any SceneLoading)? = nil,
         telemetryPublisher: (any TelemetryPublishing)? = nil,
+        saveRepository: SaveRepository? = nil,
         timeSystem: TimeSystem = TimeSystem(gameMinutesPerRealSecond: 0.1),
         actorRegistry: ActorRegistry? = nil,
         movementConfiguration: PlayerMovementConfiguration = PlayerMovementConfiguration(),
@@ -733,10 +793,16 @@ public final class GameRuntime {
         self.ocarinaSession = ocarinaSession
         self.ocarinaRecognition = ocarinaRecognition
         self.lastResolvedOcarinaEffect = lastResolvedOcarinaEffect
+        self.globalEventFlags = globalEventFlags
+        self.sceneEventFlags = sceneEventFlags
+        self.deathCount = max(0, deathCount)
+        self.goldSkulltulaFlags = goldSkulltulaFlags
+        self.activePlayTimeFrames = max(0, activePlayTimeFrames)
         let resolvedSceneLoader = sceneLoader ?? SceneLoader()
         self.sceneLoader = resolvedSceneLoader
         self.contentLoader = contentLoader ?? ContentLoader(sceneLoader: resolvedSceneLoader)
         self.telemetryPublisher = telemetryPublisher ?? TelemetryPublisher()
+        self.saveRepository = saveRepository
         self.timeSystem = timeSystem
         actorRegistryOverride = actorRegistry
         self.movementConfiguration = movementConfiguration
@@ -1085,23 +1151,7 @@ public final class GameRuntime {
         let normalizedIndex = normalizedSlotIndex(index)
         let slot = SaveSlot.starter(id: normalizedIndex)
         saveContext.slots[normalizedIndex] = slot
-        inventoryContext = slot.inventoryContext
-        hudState = .starter(hearts: slot.hearts)
-        synchronizeHUDStateWithInventory()
-        itemGetSequence = nil
-        resetCombatState()
-        isCButtonItemEditorPresented = false
-        playState = PlayState(
-            activeSaveSlot: normalizedIndex,
-            entryMode: .newGame,
-            currentSceneName: slot.locationName,
-            playerName: slot.playerName
-        )
-        fileSelectMode = nil
-        statusMessage = nil
-        activateSceneContentIfAvailable()
-        persistActiveSaveSlotState()
-        transition(to: .gameplay)
+        beginGameplay(using: slot, entryMode: .newGame)
     }
 
     private func continueGame(from index: Int) {
@@ -1114,21 +1164,63 @@ public final class GameRuntime {
             return
         }
 
+        beginGameplay(using: slot, entryMode: .continueGame)
+    }
+
+    public func saveCurrentGame() {
+        guard currentState == .gameplay, playState != nil else {
+            statusMessage = "Start a quest before saving."
+            return
+        }
+
+        persistActiveSaveSlotState()
+        flushSaveContextToDisk(
+            telemetryEvent: "gameRuntime.manualSave",
+            successMessage: "Saved File \(saveContext.selectedSlotIndex + 1).",
+            failurePrefix: "Save failed"
+        )
+    }
+
+    private func beginGameplay(
+        using slot: SaveSlot,
+        entryMode: PlayState.EntryMode
+    ) {
         inventoryContext = slot.inventoryContext
-        hudState = .starter(hearts: slot.hearts)
+        inventoryContext.pauseMenu = PauseMenuState()
+        activePlayTimeFrames = slot.playTimeFrames
+        deathCount = slot.runtimeState.deathCount
+        globalEventFlags = slot.runtimeState.globalEventFlags
+        sceneEventFlags = slot.runtimeState.sceneEventFlags
+        goldSkulltulaFlags = slot.runtimeState.goldSkulltulaFlags
+
+        hudState = GameplayHUDState(
+            currentHealthUnits: inventoryContext.gameplay.currentHealthUnits,
+            maximumHealthUnits: inventoryContext.gameplay.maximumHealthUnits,
+            currentMagic: slot.runtimeState.currentMagic,
+            maximumMagic: slot.runtimeState.maximumMagic,
+            rupees: slot.runtimeState.rupees,
+            bButtonItem: inventoryContext.equipment.equippedSword == nil ? .none : .sword
+        )
         synchronizeHUDStateWithInventory()
         itemGetSequence = nil
         resetCombatState()
         isCButtonItemEditorPresented = false
+
+        let spawnLocation = slot.runtimeState.spawnLocation
+        let sceneName = spawnLocation.sceneName.isEmpty ? slot.locationName : spawnLocation.sceneName
         playState = PlayState(
-            activeSaveSlot: normalizedIndex,
-            entryMode: .continueGame,
-            currentSceneName: slot.locationName,
+            activeSaveSlot: normalizedSlotIndex(slot.id),
+            entryMode: entryMode,
+            currentSceneName: sceneName,
+            currentSceneID: spawnLocation.sceneID,
+            currentEntranceIndex: spawnLocation.entranceIndex,
+            currentSpawnIndex: spawnLocation.spawnIndex,
             playerName: slot.playerName
         )
         fileSelectMode = nil
         statusMessage = nil
         activateSceneContentIfAvailable()
+        persistActiveSaveSlotState()
         transition(to: .gameplay)
     }
 
@@ -1138,6 +1230,7 @@ public final class GameRuntime {
         spawnIndex: Int? = nil,
         activeRoomIDs: Set<Int>? = nil
     ) throws {
+        let previousSceneID = playState?.currentSceneID ?? loadedScene?.manifest.id
         loadMessageCatalogIfAvailable()
         let loadedScene = try contentLoader.loadScene(id: sceneID)
         let actorTableEntries = try contentLoader.loadActorTable()
@@ -1196,13 +1289,14 @@ public final class GameRuntime {
             currentSceneName: loadedScene.manifest.title ?? loadedScene.manifest.name,
             playerName: "Link"
         )
-        let playState = basePlayState.withActorRuntime(
+        var playState = basePlayState.withActorRuntime(
             scene: loadedScene,
             actorTable: actorTable,
             activeRoomIDs: selectedRooms,
             actorRuntimeHooks: hooks,
             sceneManagerState: manager.state
         )
+        playState.currentSceneName = loadedScene.manifest.title ?? loadedScene.manifest.name
 
         actorContext.spawnActors(
             for: selectedRooms,
@@ -1231,6 +1325,9 @@ public final class GameRuntime {
         synchronizeGameTime(with: loadedScene)
         synchronizeHUDStateWithInventory()
         persistActiveSaveSlotState(sceneName: playState.currentSceneName)
+        if currentState == .gameplay, previousSceneID != sceneID {
+            flushSaveContextToDisk(telemetryEvent: "gameRuntime.autoSave.sceneTransition")
+        }
         currentState = .gameplay
         syncXRayTelemetry()
         startTimeLoop()
@@ -1344,6 +1441,7 @@ public final class GameRuntime {
         }
 
         gameTime.advance()
+        activePlayTimeFrames += 1
         if let fixedTimeOfDayOverride {
             gameTime.timeOfDay = fixedTimeOfDayOverride
         }
@@ -1668,14 +1766,63 @@ public final class GameRuntime {
             return
         }
 
+        var persistedInventoryContext = inventoryContext
+        persistedInventoryContext.pauseMenu = PauseMenuState()
+        persistedInventoryContext.gameplay.goldSkulltulaTokenCount = max(
+            persistedInventoryContext.gameplay.goldSkulltulaTokenCount,
+            goldSkulltulaFlags.count
+        )
+
+        let resolvedSceneName = sceneName ?? playState.currentSceneName
+        let resolvedSceneID = playState.currentSceneID ?? loadedScene?.manifest.id ?? sceneID(for: resolvedSceneName)
+
         saveContext.slots[index] = SaveSlot(
             id: index,
             playerName: playState.playerName,
-            locationName: sceneName ?? playState.currentSceneName,
+            locationName: resolvedSceneName,
             hearts: max(1, inventoryState.maximumHealthUnits / 2),
             hasSaveData: true,
-            inventoryContext: inventoryContext
+            inventoryContext: persistedInventoryContext,
+            runtimeState: SaveRuntimeState(
+                currentMagic: hudState.currentMagic,
+                maximumMagic: hudState.maximumMagic,
+                rupees: hudState.rupees,
+                globalEventFlags: globalEventFlags,
+                sceneEventFlags: sceneEventFlags,
+                spawnLocation: SaveSpawnLocation(
+                    sceneID: resolvedSceneID,
+                    sceneName: resolvedSceneName,
+                    entranceIndex: playState.currentEntranceIndex,
+                    spawnIndex: playState.currentSpawnIndex
+                ),
+                playTimeFrames: activePlayTimeFrames,
+                deathCount: deathCount,
+                goldSkulltulaFlags: goldSkulltulaFlags
+            )
         )
+    }
+
+    private func flushSaveContextToDisk(
+        telemetryEvent: String,
+        successMessage: String? = nil,
+        failurePrefix: String? = nil
+    ) {
+        guard let saveRepository else {
+            return
+        }
+
+        do {
+            try saveRepository.save(saveContext)
+            if let successMessage {
+                statusMessage = successMessage
+            }
+            telemetryPublisher.publish(telemetryEvent)
+        } catch {
+            if let failurePrefix {
+                statusMessage = "\(failurePrefix): \(error.localizedDescription)"
+            }
+            telemetryPublisher.publish("\(telemetryEvent).failed")
+        }
     }
 
     private struct SceneViewerSnapshot: Sendable {
@@ -1778,7 +1925,8 @@ public final class GameRuntime {
             return
         }
 
-        guard let sceneID = sceneID(for: playState.currentSceneName) else {
+        let resolvedSceneID = playState.currentSceneID ?? sceneID(for: playState.currentSceneName)
+        guard let sceneID = resolvedSceneID else {
             actorContext = nil
             playerState = nil
             collisionSystem = nil
@@ -1787,7 +1935,11 @@ public final class GameRuntime {
         }
 
         do {
-            try loadScene(id: sceneID)
+            try loadScene(
+                id: sceneID,
+                entranceIndex: playState.currentEntranceIndex,
+                spawnIndex: playState.currentSpawnIndex
+            )
         } catch {
             actorContext = nil
             playerState = nil
