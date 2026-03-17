@@ -6,7 +6,12 @@ extension SceneExtractor {
         let fileManager = FileManager.default
         let scenes = try Self.loadScenes(
             in: context.source,
-            sceneName: context.sceneName,
+            sceneNames: context.sceneNames,
+            fileManager: fileManager
+        )
+        try Self.writeSceneSelectionCache(
+            scenes,
+            outputRoot: context.output,
             fileManager: fileManager
         )
         let metadataReferences = try? Self.loadMetadataReferences(
@@ -41,7 +46,7 @@ extension SceneExtractor {
                         fileManager: fileManager
                     )
                 } catch let error as SceneExtractorError where error.isMissingSource {
-                    guard context.sceneName == nil else {
+                    guard context.isSceneScoped == false else {
                         throw error
                     }
                     print("[\(name)] skipped scene \(scene.name): \(error.localizedDescription)")
@@ -60,7 +65,7 @@ extension SceneExtractor {
                     throw error
                 }
                 guard vertexArrays.isEmpty == false else {
-                    guard context.sceneName == nil else {
+                    guard context.isSceneScoped == false else {
                         throw SceneExtractorError.noVertexData(scene.name, room.outputName, sourceFile.path)
                     }
                     print(
@@ -71,7 +76,7 @@ extension SceneExtractor {
                     continue sceneLoop
                 }
                 guard displayLists.isEmpty == false else {
-                    guard context.sceneName == nil else {
+                    guard context.isSceneScoped == false else {
                         throw SceneExtractorError.noDisplayListData(scene.name, room.outputName, sourceFile.path)
                     }
                     print(
@@ -128,7 +133,7 @@ extension SceneExtractor {
                     fileManager: fileManager
                 )
             } catch let error as SceneExtractorError where error.isMissingSource {
-                guard context.sceneName == nil else {
+                guard context.isSceneScoped == false else {
                     throw error
                 }
                 print("[\(name)] skipped scene metadata for \(scene.name): \(error.localizedDescription)")
@@ -136,6 +141,11 @@ extension SceneExtractor {
                 continue
             }
             let sceneSource = try Self.readExpandedSource(at: sceneSourceFile, sourceRoot: context.source)
+            try sceneSource.write(
+                to: Self.sceneSourceCacheURL(for: scene, outputRoot: context.output),
+                atomically: true,
+                encoding: .utf8
+            )
             let sceneCommands = try Self.sceneCommands(sceneName: scene.name, in: sceneSource)
 
             let metadataDirectory = try Self.metadataDirectory(
@@ -303,32 +313,45 @@ struct CollisionWaterBoxBinary: Equatable, Sendable {
 extension CollisionExtractor {
     public func extract(using context: OOTExtractionContext) throws {
         let fileManager = FileManager.default
-        let scenes = try SceneExtractor.loadScenes(
+        let scenes = try SceneExtractor.loadCachedScenes(
+            outputRoot: context.output,
+            sceneNames: context.sceneNames,
+            fileManager: fileManager
+        ) ?? SceneExtractor.loadScenes(
             in: context.source,
-            sceneName: context.sceneName,
+            sceneNames: context.sceneNames,
             fileManager: fileManager
         )
         var extractedScenes = 0
         var skippedScenes = 0
 
         for scene in scenes {
-            let sceneSourceFile: URL
-            do {
-                sceneSourceFile = try SceneExtractor.resolveSceneSource(
-                    for: scene,
-                    sourceRoot: context.source,
-                    fileManager: fileManager
-                )
-            } catch let error as SceneExtractorError where error.isMissingSource {
-                guard context.sceneName == nil else {
-                    throw error
+            let sceneSource: String
+            if let cachedSceneSource = try SceneExtractor.readCachedSceneSource(
+                for: scene,
+                outputRoot: context.output,
+                fileManager: fileManager
+            ) {
+                sceneSource = cachedSceneSource
+            } else {
+                let sceneSourceFile: URL
+                do {
+                    sceneSourceFile = try SceneExtractor.resolveSceneSource(
+                        for: scene,
+                        sourceRoot: context.source,
+                        fileManager: fileManager
+                    )
+                } catch let error as SceneExtractorError where error.isMissingSource {
+                    guard context.isSceneScoped == false else {
+                        throw error
+                    }
+                    print("[\(name)] skipped scene \(scene.name): \(error.localizedDescription)")
+                    skippedScenes += 1
+                    continue
                 }
-                print("[\(name)] skipped scene \(scene.name): \(error.localizedDescription)")
-                skippedScenes += 1
-                continue
-            }
 
-            let sceneSource = try SceneExtractor.readExpandedSource(at: sceneSourceFile, sourceRoot: context.source)
+                sceneSource = try SceneExtractor.readExpandedSource(at: sceneSourceFile, sourceRoot: context.source)
+            }
             guard let collision = try Self.parseCollision(
                 sceneName: scene.name,
                 source: sceneSource,
@@ -618,9 +641,13 @@ extension CollisionExtractor {
 extension SceneManifestExtractor {
     public func extract(using context: OOTExtractionContext) throws {
         let fileManager = FileManager.default
-        let scenes = try SceneExtractor.loadScenes(
+        let scenes = try SceneExtractor.loadCachedScenes(
+            outputRoot: context.output,
+            sceneNames: context.sceneNames,
+            fileManager: fileManager
+        ) ?? SceneExtractor.loadScenes(
             in: context.source,
-            sceneName: context.sceneName,
+            sceneNames: context.sceneNames,
             fileManager: fileManager
         )
         let sceneTableEntries = try Self.loadSceneTableEntries(from: context.output)
@@ -633,7 +660,7 @@ extension SceneManifestExtractor {
         sceneLoop: for scene in scenes {
             guard let sceneTableEntry = Self.resolveSceneTableEntry(for: scene, sceneTableBySegmentName: sceneTableBySegmentName)
             else {
-                guard context.sceneName == nil else {
+                guard context.isSceneScoped == false else {
                     throw SceneManifestExtractorError.missingSceneTableEntry(scene.name)
                 }
                 print("[\(name)] skipped scene manifest for \(scene.name): missing scene-table entry")
@@ -653,7 +680,7 @@ extension SceneManifestExtractor {
             for (index, room) in scene.rooms.enumerated() {
                 let roomDirectory = roomDirectoryRoot.appendingPathComponent(room.outputName, isDirectory: true)
                 guard fileManager.fileExists(atPath: roomDirectory.path) else {
-                    guard context.sceneName == nil else {
+                    guard context.isSceneScoped == false else {
                         throw SceneManifestExtractorError.missingReferencedPath(roomDirectory.path)
                     }
                     print("[\(name)] skipped scene manifest for \(scene.name): missing room directory \(roomDirectory.path)")
@@ -679,7 +706,7 @@ extension SceneManifestExtractor {
             for metadataName in metadataNames {
                 let metadataURL = metadataDirectory.appendingPathComponent(metadataName)
                 guard fileManager.fileExists(atPath: metadataURL.path) else {
-                    guard context.sceneName == nil else {
+                    guard context.isSceneScoped == false else {
                         throw SceneManifestExtractorError.missingReferencedPath(metadataURL.path)
                     }
                     print("[\(name)] skipped scene manifest for \(scene.name): missing metadata file \(metadataURL.path)")
@@ -1000,7 +1027,7 @@ private extension SceneExtractor {
         let params: Int16
     }
 
-    struct SceneDefinition: Equatable {
+    struct SceneDefinition: Equatable, Codable {
         let name: String
         let categoryPath: String
         let xmlURL: URL
@@ -1009,7 +1036,7 @@ private extension SceneExtractor {
         let rooms: [RoomDefinition]
     }
 
-    struct RoomDefinition: Equatable {
+    struct RoomDefinition: Equatable, Codable {
         let symbolName: String
         let sourceName: String
         let outputName: String
@@ -1186,7 +1213,7 @@ private extension SceneExtractor {
         })
     }
 
-    static func loadScenes(in sourceRoot: URL, sceneName: String?, fileManager: FileManager) throws -> [SceneDefinition] {
+    static func loadScenes(in sourceRoot: URL, sceneNames: Set<String>?, fileManager: FileManager) throws -> [SceneDefinition] {
         let xmlRoot = sourceRoot
             .appendingPathComponent("assets", isDirectory: true)
             .appendingPathComponent("xml", isDirectory: true)
@@ -1204,6 +1231,7 @@ private extension SceneExtractor {
         }
 
         var scenes: [SceneDefinition] = []
+        var matchedSceneNames: Set<String> = []
 
         for case let fileURL as URL in enumerator {
             let resourceValues = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
@@ -1215,7 +1243,7 @@ private extension SceneExtractor {
             guard name.contains("_pal_") == false else {
                 continue
             }
-            if let sceneName, name != sceneName {
+            if SceneSelection.includes(name, in: sceneNames) == false {
                 continue
             }
 
@@ -1241,13 +1269,81 @@ private extension SceneExtractor {
                     rooms: sceneXML.rooms
                 )
             )
+            matchedSceneNames.insert(name)
         }
 
-        if let sceneName, scenes.isEmpty {
-            throw SceneExtractorError.sceneNotFound(sceneName)
+        if let sceneNames {
+            let missingSceneNames = sceneNames.subtracting(matchedSceneNames)
+            if let missingSceneName = missingSceneNames.sorted().first {
+                throw SceneExtractorError.sceneNotFound(missingSceneName)
+            }
         }
 
         return scenes.sorted { $0.name < $1.name }
+    }
+
+    static func loadCachedScenes(
+        outputRoot: URL,
+        sceneNames: Set<String>?,
+        fileManager: FileManager
+    ) throws -> [SceneDefinition]? {
+        let cacheURL = sceneSelectionCacheURL(for: outputRoot)
+        guard fileManager.fileExists(atPath: cacheURL.path) else {
+            return nil
+        }
+
+        let cachedScenes = try readJSON(from: cacheURL) as [SceneDefinition]
+        guard let sceneNames else {
+            return cachedScenes
+        }
+
+        let filteredScenes = cachedScenes.filter { sceneNames.contains($0.name) }
+        let matchedSceneNames = Set(filteredScenes.map(\.name))
+        let missingSceneNames = sceneNames.subtracting(matchedSceneNames)
+        if let missingSceneName = missingSceneNames.sorted().first {
+            throw SceneExtractorError.sceneNotFound(missingSceneName)
+        }
+
+        return filteredScenes.sorted { $0.name < $1.name }
+    }
+
+    static func writeSceneSelectionCache(
+        _ scenes: [SceneDefinition],
+        outputRoot: URL,
+        fileManager: FileManager
+    ) throws {
+        let cacheURL = sceneSelectionCacheURL(for: outputRoot)
+        try fileManager.createDirectory(
+            at: cacheURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try writeJSON(scenes, to: cacheURL)
+    }
+
+    static func sceneSelectionCacheURL(for outputRoot: URL) -> URL {
+        outputRoot
+            .appendingPathComponent("Manifests", isDirectory: true)
+            .appendingPathComponent("scenes", isDirectory: true)
+            .appendingPathComponent("_scene-selection-cache.json")
+    }
+
+    static func sceneSourceCacheURL(for scene: SceneDefinition, outputRoot: URL) -> URL {
+        outputRoot
+            .appendingPathComponent("Scenes", isDirectory: true)
+            .appendingPathComponent(scene.name, isDirectory: true)
+            .appendingPathComponent("scene-source.c")
+    }
+
+    static func readCachedSceneSource(
+        for scene: SceneDefinition,
+        outputRoot: URL,
+        fileManager: FileManager
+    ) throws -> String? {
+        let cacheURL = sceneSourceCacheURL(for: scene, outputRoot: outputRoot)
+        guard fileManager.fileExists(atPath: cacheURL.path) else {
+            return nil
+        }
+        return try String(contentsOf: cacheURL, encoding: .utf8)
     }
 
     static func parseSceneXML(from xmlURL: URL, sceneName: String) throws -> (scene: RawSceneDefinition, rooms: [RoomDefinition]) {

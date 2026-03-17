@@ -26,8 +26,8 @@ public struct TableExtractor: OOTExtractionPipelineComponent {
 
     public func extract(using context: OOTExtractionContext) throws {
         let sceneEntries = try loadSceneEntries(from: context.source)
-        let actorEntries = try loadActorEntries(from: context.source)
         let objectEntries = try loadObjectEntries(from: context.source)
+        let actorEntries = try loadActorEntries(from: context.source, objectEntries: objectEntries)
         let entranceEntries = try loadEntranceEntries(from: context.source, sceneEntries: sceneEntries)
 
         try validateCounts(
@@ -110,11 +110,15 @@ public struct TableExtractor: OOTExtractionPipelineComponent {
         }
     }
 
-    private func loadActorEntries(from sourceRoot: URL) throws -> [ActorTableEntry] {
+    private func loadActorEntries(from sourceRoot: URL, objectEntries: [ObjectTableEntry]) throws -> [ActorTableEntry] {
         let actorTableURL = sourceRoot
             .appendingPathComponent("include")
             .appendingPathComponent("tables")
             .appendingPathComponent("actor_table.h")
+        let profilesByOverlayName = try loadActorProfiles(
+            from: sourceRoot,
+            objectEntries: objectEntries
+        )
         let macros = try parser.parseMacros(
             at: actorTableURL,
             matching: ["DEFINE_ACTOR", "DEFINE_ACTOR_INTERNAL", "DEFINE_ACTOR_UNSET"]
@@ -125,11 +129,19 @@ public struct TableExtractor: OOTExtractionPipelineComponent {
             switch macro.name {
             case "DEFINE_ACTOR", "DEFINE_ACTOR_INTERNAL":
                 try expectArgumentCount(for: macro, expected: 4, path: actorTableURL.path)
+                let overlayName = macro.arguments[0]
                 return ActorTableEntry(
                     id: id,
                     enumName: macro.arguments[1],
-                    profile: placeholderProfile(for: id),
-                    overlayName: macro.arguments[0]
+                    profile: profilesByOverlayName[overlayName].map { profile in
+                        ActorProfile(
+                            id: id,
+                            category: profile.category,
+                            flags: profile.flags,
+                            objectID: profile.objectID
+                        )
+                    } ?? placeholderProfile(for: id),
+                    overlayName: overlayName
                 )
             case "DEFINE_ACTOR_UNSET":
                 try expectArgumentCount(for: macro, expected: 1, path: actorTableURL.path)
@@ -143,6 +155,163 @@ public struct TableExtractor: OOTExtractionPipelineComponent {
                 throw TableExtractorError.unsupportedMacro(macro.name)
             }
         }
+    }
+
+    private func loadActorProfiles(
+        from sourceRoot: URL,
+        objectEntries: [ObjectTableEntry]
+    ) throws -> [String: ParsedActorProfile] {
+        let fileManager = FileManager.default
+        let objectIDByEnumName = Dictionary(uniqueKeysWithValues: objectEntries.map { ($0.enumName, $0.id) })
+        var profilesByOverlayName: [String: ParsedActorProfile] = [:]
+
+        for sourceFile in try actorProfileSourceFiles(from: sourceRoot, fileManager: fileManager) {
+            let text: String
+            do {
+                text = try String(contentsOf: sourceFile, encoding: .utf8)
+            } catch {
+                throw TableExtractorError.unreadableFile(sourceFile.path, error)
+            }
+
+            for (overlayName, profile) in parseActorProfiles(
+                in: text,
+                objectIDByEnumName: objectIDByEnumName
+            ) {
+                profilesByOverlayName[overlayName] = profile
+            }
+        }
+
+        return profilesByOverlayName
+    }
+
+    private func actorProfileSourceFiles(
+        from sourceRoot: URL,
+        fileManager: FileManager
+    ) throws -> [URL] {
+        let candidateRoots = [
+            sourceRoot.appendingPathComponent("src").appendingPathComponent("overlays").appendingPathComponent("actors"),
+            sourceRoot.appendingPathComponent("src").appendingPathComponent("code"),
+        ]
+
+        var sourceFiles: [URL] = []
+        for root in candidateRoots where fileManager.fileExists(atPath: root.path) {
+            guard let enumerator = fileManager.enumerator(
+                at: root,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                continue
+            }
+
+            for case let candidate as URL in enumerator {
+                let values = try candidate.resourceValues(forKeys: [.isRegularFileKey])
+                guard values.isRegularFile == true, candidate.pathExtension == "c" else {
+                    continue
+                }
+                sourceFiles.append(candidate)
+            }
+        }
+
+        return sourceFiles.sorted { $0.path < $1.path }
+    }
+
+    private func parseActorProfiles(
+        in text: String,
+        objectIDByEnumName: [String: Int]
+    ) -> [String: ParsedActorProfile] {
+        let sanitized = stripComments(from: text)
+        let nsRange = NSRange(sanitized.startIndex..<sanitized.endIndex, in: sanitized)
+        var profiles: [String: ParsedActorProfile] = [:]
+
+        for match in actorProfileRegex.matches(in: sanitized, options: [], range: nsRange) {
+            let overlayName = substring(in: sanitized, range: match.range(at: 1))
+            let body = substring(in: sanitized, range: match.range(at: 2))
+            guard let profile = parseActorProfileBody(body, objectIDByEnumName: objectIDByEnumName) else {
+                continue
+            }
+            profiles[overlayName] = profile
+        }
+
+        return profiles
+    }
+
+    private func parseActorProfileBody(
+        _ body: String,
+        objectIDByEnumName: [String: Int]
+    ) -> ParsedActorProfile? {
+        let fields = splitInitializerFields(in: body)
+        guard fields.count >= 4 else {
+            return nil
+        }
+
+        let category = actorCategoryBySymbol[normalizeInitializerField(fields[1])] ?? 0
+        let flags = parseUnsignedIntegerLiteral(normalizeInitializerField(fields[2])) ?? 0
+        let objectExpression = normalizeInitializerField(fields[3])
+        let objectID =
+            objectIDByEnumName[objectExpression] ??
+            parseSignedIntegerLiteral(objectExpression) ??
+            0
+
+        return ParsedActorProfile(
+            category: category,
+            flags: flags,
+            objectID: objectID
+        )
+    }
+
+    private func splitInitializerFields(in text: String) -> [String] {
+        var fields: [String] = []
+        var current = ""
+        var depth = 0
+
+        for character in text {
+            switch character {
+            case "(", "[", "{":
+                depth += 1
+                current.append(character)
+            case ")", "]", "}":
+                depth = max(0, depth - 1)
+                current.append(character)
+            case "," where depth == 0:
+                let trimmed = normalizeInitializerField(current)
+                if trimmed.isEmpty == false {
+                    fields.append(trimmed)
+                }
+                current.removeAll(keepingCapacity: true)
+            default:
+                current.append(character)
+            }
+        }
+
+        let trailing = normalizeInitializerField(current)
+        if trailing.isEmpty == false {
+            fields.append(trailing)
+        }
+
+        return fields
+    }
+
+    private func normalizeInitializerField(_ rawValue: String) -> String {
+        var trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasPrefix("("), trimmed.hasSuffix(")"), trimmed.count >= 2 {
+            trimmed = String(trimmed.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return trimmed
+    }
+
+    private func stripComments(from text: String) -> String {
+        let withoutBlockComments = blockCommentRegex.stringByReplacingMatches(
+            in: text,
+            options: [],
+            range: NSRange(text.startIndex..<text.endIndex, in: text),
+            withTemplate: ""
+        )
+        return lineCommentRegex.stringByReplacingMatches(
+            in: withoutBlockComments,
+            options: [],
+            range: NSRange(withoutBlockComments.startIndex..<withoutBlockComments.endIndex, in: withoutBlockComments),
+            withTemplate: ""
+        )
     }
 
     private func loadObjectEntries(from sourceRoot: URL) throws -> [ObjectTableEntry] {
@@ -320,13 +489,11 @@ public struct TableExtractor: OOTExtractionPipelineComponent {
     }
 
     private func placeholderProfile(for id: Int) -> ActorProfile {
-        // Actor profile metadata is extracted from actor source later; table manifests
-        // only have enough data to preserve stable ids and names at this stage.
         ActorProfile(id: id, category: 0, flags: 0, objectID: 0)
     }
 
     private func parseIntegerLiteral(_ rawValue: String) throws -> Int {
-        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = normalizeInitializerField(rawValue)
         if trimmed.hasPrefix("0x") || trimmed.hasPrefix("0X") {
             guard let value = Int(trimmed.dropFirst(2), radix: 16) else {
                 throw TableExtractorError.invalidLiteral(trimmed)
@@ -338,6 +505,19 @@ public struct TableExtractor: OOTExtractionPipelineComponent {
             throw TableExtractorError.invalidLiteral(trimmed)
         }
         return value
+    }
+
+    private func parseSignedIntegerLiteral(_ rawValue: String) -> Int? {
+        try? parseIntegerLiteral(rawValue)
+    }
+
+    private func parseUnsignedIntegerLiteral(_ rawValue: String) -> UInt32? {
+        let trimmed = normalizeInitializerField(rawValue)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "uUlL"))
+        if trimmed.hasPrefix("0x") || trimmed.hasPrefix("0X") {
+            return UInt32(trimmed.dropFirst(2), radix: 16)
+        }
+        return UInt32(trimmed)
     }
 
     private func parseBooleanLiteral(_ rawValue: String) throws -> Bool {
@@ -371,6 +551,12 @@ public struct TableExtractor: OOTExtractionPipelineComponent {
         }
         return String(text[swiftRange])
     }
+}
+
+private struct ParsedActorProfile {
+    let category: UInt16
+    let flags: UInt32
+    let objectID: Int
 }
 
 enum TableExtractorError: LocalizedError {
@@ -412,3 +598,33 @@ private let sceneDrawConfigRegex = try! NSRegularExpression(
     pattern: #"^\s*/\*\s*(\d+)\s*\*/\s*(SDC_[A-Z0-9_]+),"#,
     options: [.anchorsMatchLines]
 )
+
+private let actorProfileRegex = try! NSRegularExpression(
+    pattern: #"ActorProfile\s+([A-Za-z0-9_]+)_Profile\s*=\s*\{(.*?)\};"#,
+    options: [.dotMatchesLineSeparators]
+)
+
+private let blockCommentRegex = try! NSRegularExpression(
+    pattern: #"/\*.*?\*/"#,
+    options: [.dotMatchesLineSeparators]
+)
+
+private let lineCommentRegex = try! NSRegularExpression(
+    pattern: #"//.*$"#,
+    options: [.anchorsMatchLines]
+)
+
+private let actorCategoryBySymbol: [String: UInt16] = [
+    "ACTORCAT_SWITCH": 0,
+    "ACTORCAT_BG": 1,
+    "ACTORCAT_PLAYER": 2,
+    "ACTORCAT_EXPLOSIVE": 3,
+    "ACTORCAT_NPC": 4,
+    "ACTORCAT_ENEMY": 5,
+    "ACTORCAT_PROP": 6,
+    "ACTORCAT_ITEMACTION": 7,
+    "ACTORCAT_MISC": 8,
+    "ACTORCAT_BOSS": 9,
+    "ACTORCAT_DOOR": 10,
+    "ACTORCAT_CHEST": 11,
+]

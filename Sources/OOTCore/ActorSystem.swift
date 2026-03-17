@@ -316,6 +316,18 @@ public final class KokiriChildActor: DamageableBaseActor, TalkRequestingActor {
 }
 
 @MainActor
+public final class GenericNPCActor: DamageableBaseActor, TalkRequestingActor {
+    public func talkRequested(playState: PlayState) -> Bool {
+        guard params != 0 else {
+            return false
+        }
+
+        playState.requestMessage(Int(params))
+        return true
+    }
+}
+
+@MainActor
 public final class DoorActor: BaseActor {}
 
 @MainActor
@@ -472,6 +484,12 @@ public struct ActorRegistry {
 
     public static func `default`(actorTable: [ActorTableEntry]) -> ActorRegistry {
         var registry = ActorRegistry()
+
+        registry.register(
+            actorIDs: actorTable
+                .filter { ActorCategory(rawValue: $0.profile.category) == .npc }
+                .map(\.id)
+        ) { GenericNPCActor(spawnRecord: $0) }
 
         registry.register(
             actorIDs: actorTable

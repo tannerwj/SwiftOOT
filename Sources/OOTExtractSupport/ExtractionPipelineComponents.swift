@@ -3,12 +3,31 @@ import Foundation
 public struct OOTExtractionContext: Sendable {
     public let source: URL
     public let output: URL
-    public let sceneName: String?
+    public let sceneNames: Set<String>?
 
     public init(source: URL, output: URL, sceneName: String? = nil) {
+        self.init(
+            source: source,
+            output: output,
+            sceneNames: sceneName.map { [$0] }
+        )
+    }
+
+    public init(source: URL, output: URL, sceneNames: [String]?) {
         self.source = source.resolvingSymlinksInPath().standardizedFileURL
         self.output = output
-        self.sceneName = sceneName
+        self.sceneNames = SceneSelection.normalizedSceneNames(sceneNames)
+    }
+
+    public var sceneName: String? {
+        guard let sceneNames, sceneNames.count == 1 else {
+            return nil
+        }
+        return sceneNames.first
+    }
+
+    public var isSceneScoped: Bool {
+        sceneNames != nil
     }
 }
 
