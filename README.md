@@ -15,9 +15,22 @@ A build-time CLI extracts game data from the OoT decompilation (C source + XML a
 The gameplay debugger sidebar now exposes a live render-mode toggle:
 
 - `N64 Aesthetic` renders through a 320x240 offscreen target with retro post-processing.
-- `Enhanced` renders at native window resolution with smoother filtering and post AA.
+- `Enhanced` renders at native window resolution with smoother filtering, post AA, and EDR output on supported displays.
 
 Switching modes updates the current scene immediately without reloading gameplay state.
+
+Enhanced mode only opts into the EDR presentation path when the active target
+screen reports `maximumPotentialExtendedDynamicRangeColorComponentValue > 1`.
+On those screens SwiftOOT switches the `MTKView` drawable to a floating-point
+EDR output path; on unsupported screens it keeps the existing SDR presentation
+configuration.
+
+Validate the output-mode selection with:
+
+```bash
+swift test --filter OOTRenderTests
+swift test --filter OOTUITests/testFixtureRuntimeCaptureSupportsBothPresentationModes
+```
 
 ## Prerequisites
 

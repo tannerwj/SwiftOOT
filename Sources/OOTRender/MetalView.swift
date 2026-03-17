@@ -82,6 +82,7 @@ public struct MetalView: NSViewRepresentable {
         context.coordinator.renderer?.updateScene(scene, textureBindings: textureBindings)
         context.coordinator.renderer?.updateGameplayCameraConfiguration(gameplayCameraConfiguration)
         context.coordinator.renderer?.updateRenderSettings(renderSettings)
+        context.coordinator.renderer?.refreshPresentationConfiguration(for: nsView)
         context.coordinator.renderer?.setTimeOfDay(timeOfDay)
         nsView.clearColor = context.coordinator.renderer?.clearColorForCurrentEnvironment() ?? nsView.clearColor
         if let nsView = nsView as? OrbitInputMTKView {
@@ -103,6 +104,10 @@ final class OrbitInputMTKView: MTKView {
     weak var gameplayInputHandler: (any GameplayInputHandling)?
     var toggleAllXRayLayers: (() -> Void)?
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
     override var acceptsFirstResponder: Bool {
         true
     }
@@ -110,6 +115,8 @@ final class OrbitInputMTKView: MTKView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         window?.makeFirstResponder(self)
+        updatePresentationObservers()
+        inputRenderer?.refreshPresentationConfiguration(for: self)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -130,6 +137,11 @@ final class OrbitInputMTKView: MTKView {
 
     override func scrollWheel(with event: NSEvent) {
         inputRenderer?.handleScroll(scrollDeltaY: event.scrollingDeltaY)
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        inputRenderer?.refreshPresentationConfiguration(for: self)
     }
 
     override func keyDown(with event: NSEvent) {
@@ -182,5 +194,30 @@ final class OrbitInputMTKView: MTKView {
         }
 
         return handled
+    }
+
+    private func updatePresentationObservers() {
+        NotificationCenter.default.removeObserver(self)
+
+        if let window {
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handlePresentationNotification(_:)),
+                name: NSWindow.didChangeScreenNotification,
+                object: window
+            )
+        }
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handlePresentationNotification(_:)),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
+    }
+
+    @objc
+    private func handlePresentationNotification(_ notification: Notification) {
+        inputRenderer?.refreshPresentationConfiguration(for: self)
     }
 }

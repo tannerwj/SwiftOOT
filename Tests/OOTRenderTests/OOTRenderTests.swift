@@ -1,5 +1,8 @@
 import XCTest
+import AppKit
 import Metal
+import MetalKit
+import QuartzCore
 import OOTDataModel
 import simd
 @testable import OOTRender
@@ -473,6 +476,78 @@ final class OOTRenderTests: XCTestCase {
             ),
             10_000
         )
+    }
+
+    @MainActor
+    func testEnhancedModeSelectsEDROutputWhenTargetSupportsEDR() throws {
+        guard MTLCreateSystemDefaultDevice() != nil else {
+            throw XCTSkip("Metal is unavailable on this host")
+        }
+
+        let renderer = try OOTRenderer(
+            renderSettings: RenderSettings(presentationMode: .enhanced)
+        )
+        let view = MTKView(frame: NSRect(x: 0, y: 0, width: 320, height: 240), device: renderer.device)
+
+        renderer.refreshPresentationConfiguration(
+            for: view,
+            targetCapabilities: RenderOutputTargetCapabilities(
+                maximumPotentialEDRComponentValue: 2.5
+            )
+        )
+
+        XCTAssertEqual(renderer.currentOutputMode, .extendedDynamicRange)
+        XCTAssertEqual(view.colorPixelFormat, .rgba16Float)
+        XCTAssertEqual(view.colorspace?.name as String?, CGColorSpace.extendedLinearSRGB as String)
+        XCTAssertEqual((view.layer as? CAMetalLayer)?.preferredDynamicRange, .high)
+        XCTAssertEqual((view.layer as? CAMetalLayer)?.toneMapMode, .never)
+    }
+
+    @MainActor
+    func testEnhancedModeFallsBackToSDROutputWhenTargetDoesNotSupportEDR() throws {
+        guard MTLCreateSystemDefaultDevice() != nil else {
+            throw XCTSkip("Metal is unavailable on this host")
+        }
+
+        let renderer = try OOTRenderer(
+            renderSettings: RenderSettings(presentationMode: .enhanced)
+        )
+        let view = MTKView(frame: NSRect(x: 0, y: 0, width: 320, height: 240), device: renderer.device)
+
+        renderer.refreshPresentationConfiguration(
+            for: view,
+            targetCapabilities: RenderOutputTargetCapabilities(
+                maximumPotentialEDRComponentValue: 1.0
+            )
+        )
+
+        XCTAssertEqual(renderer.currentOutputMode, .standardDynamicRange)
+        XCTAssertEqual(view.colorPixelFormat, .bgra8Unorm)
+        XCTAssertNil(view.colorspace)
+        XCTAssertEqual((view.layer as? CAMetalLayer)?.preferredDynamicRange, .standard)
+        XCTAssertEqual((view.layer as? CAMetalLayer)?.toneMapMode, .automatic)
+    }
+
+    @MainActor
+    func testN64PresentationAlwaysUsesSDROutput() throws {
+        guard MTLCreateSystemDefaultDevice() != nil else {
+            throw XCTSkip("Metal is unavailable on this host")
+        }
+
+        let renderer = try OOTRenderer(
+            renderSettings: RenderSettings(presentationMode: .n64Aesthetic)
+        )
+        let view = MTKView(frame: NSRect(x: 0, y: 0, width: 320, height: 240), device: renderer.device)
+
+        renderer.refreshPresentationConfiguration(
+            for: view,
+            targetCapabilities: RenderOutputTargetCapabilities(
+                maximumPotentialEDRComponentValue: 4.0
+            )
+        )
+
+        XCTAssertEqual(renderer.currentOutputMode, .standardDynamicRange)
+        XCTAssertEqual(view.colorPixelFormat, .bgra8Unorm)
     }
 
     func testRendererCompositesXRayOverlayInSeparatePass() throws {
