@@ -115,12 +115,53 @@ final class OOTContentBootstrapModel {
             sceneLoader: sceneLoader
         )
         errorMessage = nil
+        startRuntimeIfNeeded()
 
         if persistSelection {
             userDefaults.set(resolvedContentRoot.path, forKey: Self.storedContentRootDefaultsKey)
         }
 
         return true
+    }
+
+    func startRuntimeIfNeeded() {
+        guard startupTask == nil, let runtime else {
+            return
+        }
+
+        let harness = developerHarnessConfiguration
+        startupTask = Task { @MainActor [weak self] in
+            defer {
+                self?.startupTask = nil
+            }
+
+            do {
+                if let harness, harness.isEnabled {
+                    try await DeveloperHarnessRunner.run(
+                        configuration: harness,
+                        runtime: runtime,
+                        log: { [weak self] message in
+                            self?.writeHarnessNoteToStderr(message, harness: harness)
+                        }
+                    )
+                    if harness.captureRequested {
+                        NSApplication.shared.terminate(nil)
+                    }
+                } else {
+                    await runtime.start()
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                runtime.errorMessage = error.localizedDescription
+                if let harness {
+                    self?.writeHarnessFailureToStderr(error.localizedDescription, harness: harness)
+                    if harness.captureRequested {
+                        NSApplication.shared.terminate(nil)
+                    }
+                }
+            }
+        }
     }
 
     func clearConfiguration() {

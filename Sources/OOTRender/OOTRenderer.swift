@@ -18,17 +18,26 @@ public struct SceneFrameStats: Sendable, Equatable {
     public var vertexCount: Int
     public var triangleCount: Int
     public var drawCallCount: Int
+    public var pipelineStateCount: Int
+    public var textureMemoryBytes: Int
+    public var cpuRenderTimeMilliseconds: Double
 
     public init(
         roomCount: Int = 0,
         vertexCount: Int = 0,
         triangleCount: Int = 0,
-        drawCallCount: Int = 0
+        drawCallCount: Int = 0,
+        pipelineStateCount: Int = 0,
+        textureMemoryBytes: Int = 0,
+        cpuRenderTimeMilliseconds: Double = 0
     ) {
         self.roomCount = roomCount
         self.vertexCount = vertexCount
         self.triangleCount = triangleCount
         self.drawCallCount = drawCallCount
+        self.pipelineStateCount = pipelineStateCount
+        self.textureMemoryBytes = textureMemoryBytes
+        self.cpuRenderTimeMilliseconds = cpuRenderTimeMilliseconds
     }
 }
 
@@ -313,6 +322,7 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
         MainActor.assumeIsolated {
             frameTickHandler()
         }
+        let renderStartUptime = DispatchTime.now().uptimeNanoseconds
         let cameraMatrices = activeCameraMatrices()
         let frameUniforms = FrameUniforms(mvp: cameraMatrices.viewProjectionMatrix)
             .withEnvironment(environmentRenderer.currentState(timeOfDay: timeOfDay))
@@ -326,7 +336,8 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
                 renderPassDescriptor: renderPassDescriptor,
                 viewportSize: view.drawableSize,
                 frameUniforms: frameUniforms,
-                skyboxViewProjection: makeSkyboxViewProjection(from: cameraMatrices)
+                skyboxViewProjection: makeSkyboxViewProjection(from: cameraMatrices),
+                renderStartUptime: renderStartUptime
             )
             commandBuffer.present(drawable)
             commandBuffer.commit()
@@ -491,7 +502,8 @@ public final class OOTRenderer: NSObject, MTKViewDelegate {
             renderPassDescriptor: renderPassDescriptor,
             viewportSize: CGSize(width: texture.width, height: texture.height),
             frameUniforms: frameUniforms,
-            skyboxViewProjection: skyboxViewProjection
+            skyboxViewProjection: skyboxViewProjection,
+            renderStartUptime: DispatchTime.now().uptimeNanoseconds
         )
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
@@ -622,7 +634,8 @@ private extension OOTRenderer {
         renderPassDescriptor: MTLRenderPassDescriptor,
         viewportSize: CGSize,
         frameUniforms: FrameUniforms,
-        skyboxViewProjection: simd_float4x4? = nil
+        skyboxViewProjection: simd_float4x4? = nil,
+        renderStartUptime: UInt64
     ) throws {
         guard let renderCommandEncoder = commandBuffer.makeRenderCommandEncoder(
             descriptor: renderPassDescriptor
@@ -662,7 +675,11 @@ private extension OOTRenderer {
         let drawBatchResources = makeDrawBatchResources()
         let environmentState = environmentRenderer.currentState(timeOfDay: timeOfDay)
 
-        var frameStats = SceneFrameStats(roomCount: renderScene.visibleRooms.count)
+        var frameStats = SceneFrameStats(
+            roomCount: renderScene.visibleRooms.count,
+            pipelineStateCount: cachedRenderPipelineStateCount + 1,
+            textureMemoryBytes: estimatedTextureMemoryBytes()
+        )
 
         for room in renderScene.visibleRooms {
             let interpreter = F3DEX2Interpreter(
@@ -691,7 +708,54 @@ private extension OOTRenderer {
             )
         }
 
+        let renderEndUptime = DispatchTime.now().uptimeNanoseconds
+        frameStats.cpuRenderTimeMilliseconds = Double(renderEndUptime - renderStartUptime) / 1_000_000
         frameStatsHandler(frameStats)
+    }
+
+    func estimatedTextureMemoryBytes() -> Int {
+        textureBindings.values.reduce(0) { partialResult, texture in
+            partialResult + estimatedTextureMemoryBytes(for: texture)
+        }
+    }
+
+    func estimatedTextureMemoryBytes(for texture: MTLTexture) -> Int {
+        let bytesPerPixel: Int
+
+        switch texture.pixelFormat {
+        case .a8Unorm,
+             .r8Unorm,
+             .r8Uint,
+             .r8Sint:
+            bytesPerPixel = 1
+        case .rg8Unorm,
+             .rg8Uint,
+             .rg8Sint:
+            bytesPerPixel = 2
+        case .rgba16Unorm,
+             .rgba16Uint,
+             .rgba16Sint,
+             .rgba16Float,
+             .depth32Float:
+            bytesPerPixel = 8
+        case .rgba32Float:
+            bytesPerPixel = 16
+        default:
+            bytesPerPixel = 4
+        }
+
+        var totalBytes = 0
+        let arrayLength = max(texture.arrayLength, 1)
+        let sampleCount = max(texture.sampleCount, 1)
+
+        for level in 0..<max(texture.mipmapLevelCount, 1) {
+            let width = max(texture.width >> level, 1)
+            let height = max(texture.height >> level, 1)
+            let depth = max(texture.depth >> level, 1)
+            totalBytes += width * height * depth * bytesPerPixel * arrayLength * sampleCount
+        }
+
+        return totalBytes
     }
 
     func encodeRawVertexFrame(
