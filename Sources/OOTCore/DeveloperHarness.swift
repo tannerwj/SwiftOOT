@@ -136,6 +136,31 @@ public struct DeveloperRuntimeStateSnapshot: Codable, Sendable, Equatable {
         }
     }
 
+    public struct DirectorCommentarySnapshot: Codable, Sendable, Equatable {
+        public var isEnabled: Bool
+        public var showsWorldMarkers: Bool
+        public var selectedAnnotationID: String?
+        public var activeAnnotationID: String?
+        public var activeAnnotationIDs: [String]
+        public var visibleWorldMarkerCount: Int
+
+        public init(
+            isEnabled: Bool,
+            showsWorldMarkers: Bool,
+            selectedAnnotationID: String?,
+            activeAnnotationID: String?,
+            activeAnnotationIDs: [String],
+            visibleWorldMarkerCount: Int
+        ) {
+            self.isEnabled = isEnabled
+            self.showsWorldMarkers = showsWorldMarkers
+            self.selectedAnnotationID = selectedAnnotationID
+            self.activeAnnotationID = activeAnnotationID
+            self.activeAnnotationIDs = activeAnnotationIDs
+            self.visibleWorldMarkerCount = visibleWorldMarkerCount
+        }
+    }
+
     public var gameState: GameState
     public var frameCount: Int
     public var timeOfDay: Double
@@ -153,6 +178,7 @@ public struct DeveloperRuntimeStateSnapshot: Codable, Sendable, Equatable {
     public var actionLabel: String?
     public var statusMessage: String?
     public var errorMessage: String?
+    public var directorCommentary: DirectorCommentarySnapshot?
     public var inventoryContext: InventoryContext
     public var hudState: GameplayHUDState
 
@@ -174,6 +200,7 @@ public struct DeveloperRuntimeStateSnapshot: Codable, Sendable, Equatable {
         actionLabel: String?,
         statusMessage: String?,
         errorMessage: String?,
+        directorCommentary: DirectorCommentarySnapshot?,
         inventoryContext: InventoryContext,
         hudState: GameplayHUDState
     ) {
@@ -194,6 +221,7 @@ public struct DeveloperRuntimeStateSnapshot: Codable, Sendable, Equatable {
         self.actionLabel = actionLabel
         self.statusMessage = statusMessage
         self.errorMessage = errorMessage
+        self.directorCommentary = directorCommentary
         self.inventoryContext = inventoryContext
         self.hudState = hudState
     }

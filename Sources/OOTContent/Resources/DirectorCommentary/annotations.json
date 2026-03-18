@@ -1,0 +1,299 @@
+{
+  "annotations": [
+    {
+      "id": "scene_kokiri_forest",
+      "kind": "scene",
+      "title": "Kokiri Forest streams village logic room by room",
+      "summary": "The scene leans on room-sized chunks and shared object banks to keep the village loaded on N64-era memory budgets.",
+      "priority": 40,
+      "sceneIDs": [85],
+      "actorIDs": [],
+      "eventIDs": [],
+      "tags": ["kokiri forest", "scene setup", "room loading", "memory"],
+      "markdownPath": "markdown/scene_kokiri_forest.md",
+      "sourceLinks": [
+        {
+          "id": "kokiri-scene",
+          "title": "zeldaret/oot spot04 scene source",
+          "url": "https://github.com/zeldaret/oot/blob/main/assets/xml/scenes/overworld/spot04.xml"
+        },
+        {
+          "id": "kokiri-header",
+          "title": "zeldaret/oot scene table entry",
+          "url": "https://github.com/zeldaret/oot/blob/main/include/tables/scene_table.h"
+        }
+      ],
+      "worldMarkers": []
+    },
+    {
+      "id": "scene_deku_tree",
+      "kind": "scene",
+      "title": "Deku Tree stacks puzzles on top of scene headers",
+      "summary": "The dungeon leans heavily on entrances, triggers, and object swaps encoded in scene data instead of bespoke per-room code.",
+      "priority": 45,
+      "sceneIDs": [0],
+      "actorIDs": [],
+      "eventIDs": [],
+      "tags": ["deku tree", "scene header", "dungeon", "triggers"],
+      "markdownPath": "markdown/scene_deku_tree.md",
+      "sourceLinks": [
+        {
+          "id": "ydan-scene",
+          "title": "zeldaret/oot ydan scene source",
+          "url": "https://github.com/zeldaret/oot/blob/main/assets/xml/scenes/dungeons/ydan.xml"
+        },
+        {
+          "id": "ydan-table",
+          "title": "zeldaret/oot scene table entry",
+          "url": "https://github.com/zeldaret/oot/blob/main/include/tables/scene_table.h"
+        }
+      ],
+      "worldMarkers": []
+    },
+    {
+      "id": "scene_deku_tree_boss",
+      "kind": "scene",
+      "title": "The boss arena is its own scene transition",
+      "summary": "Queen Gohma does not stay inside the main dungeon scene. The fight jumps to a separate boss scene with its own room data and camera rules.",
+      "priority": 55,
+      "sceneIDs": [17],
+      "actorIDs": [],
+      "eventIDs": [],
+      "tags": ["deku tree boss", "scene transition", "boss room"],
+      "markdownPath": "markdown/scene_deku_tree_boss.md",
+      "sourceLinks": [
+        {
+          "id": "ydan-boss-scene",
+          "title": "zeldaret/oot ydan boss scene source",
+          "url": "https://github.com/zeldaret/oot/blob/main/assets/xml/scenes/dungeons/ydan_boss.xml"
+        },
+        {
+          "id": "ydan-boss-table",
+          "title": "zeldaret/oot scene table entry",
+          "url": "https://github.com/zeldaret/oot/blob/main/include/tables/scene_table.h"
+        }
+      ],
+      "worldMarkers": []
+    },
+    {
+      "id": "actor_kokiri_child",
+      "kind": "actor",
+      "title": "Kokiri children are parameterized NPC scripts",
+      "summary": "Most village children reuse the same actor and branch on params to choose text, posture, and schedule.",
+      "priority": 70,
+      "sceneIDs": [],
+      "actorIDs": [355],
+      "eventIDs": [],
+      "tags": ["kokiri", "npc", "params", "dialogue"],
+      "markdownPath": "markdown/actor_kokiri_child.md",
+      "sourceLinks": [
+        {
+          "id": "en-ko-source",
+          "title": "zeldaret/oot En_Ko source",
+          "url": "https://github.com/zeldaret/oot/blob/main/src/overlays/actors/ovl_En_Ko/z_en_ko.c"
+        },
+        {
+          "id": "en-ko-table",
+          "title": "zeldaret/oot actor table entry",
+          "url": "https://github.com/zeldaret/oot/blob/main/include/tables/actor_table.h"
+        }
+      ],
+      "worldMarkers": []
+    },
+    {
+      "id": "actor_deku_baba",
+      "kind": "actor",
+      "title": "Deku Baba flips between dormant, lunge, and stun states",
+      "summary": "The plant enemy is basically a tight state machine whose hurtbox and reward behavior change with each phase.",
+      "priority": 90,
+      "sceneIDs": [],
+      "actorIDs": [85],
+      "eventIDs": [],
+      "tags": ["deku baba", "enemy ai", "state machine", "combat"],
+      "markdownPath": "markdown/actor_deku_baba.md",
+      "sourceLinks": [
+        {
+          "id": "dekubaba-source",
+          "title": "zeldaret/oot En_Dekubaba source",
+          "url": "https://github.com/zeldaret/oot/blob/main/src/overlays/actors/ovl_En_Dekubaba/z_en_dekubaba.c"
+        },
+        {
+          "id": "dekubaba-table",
+          "title": "zeldaret/oot actor table entry",
+          "url": "https://github.com/zeldaret/oot/blob/main/include/tables/actor_table.h"
+        }
+      ],
+      "worldMarkers": []
+    },
+    {
+      "id": "actor_skulltula",
+      "kind": "actor",
+      "title": "Skulltula front-shielding is all about angle checks",
+      "summary": "The spider decides whether to block a hit by comparing the attacker direction against its facing, then swaps behavior once it drops to the floor.",
+      "priority": 95,
+      "sceneIDs": [],
+      "actorIDs": [55],
+      "eventIDs": [],
+      "tags": ["skulltula", "enemy ai", "combat", "angle checks"],
+      "markdownPath": "markdown/actor_skulltula.md",
+      "sourceLinks": [
+        {
+          "id": "skulltula-source",
+          "title": "zeldaret/oot En_St source",
+          "url": "https://github.com/zeldaret/oot/blob/main/src/overlays/actors/ovl_En_St/z_en_st.c"
+        },
+        {
+          "id": "skulltula-table",
+          "title": "zeldaret/oot actor table entry",
+          "url": "https://github.com/zeldaret/oot/blob/main/include/tables/actor_table.h"
+        }
+      ],
+      "worldMarkers": []
+    },
+    {
+      "id": "actor_queen_gohma",
+      "kind": "actor",
+      "title": "Queen Gohma is a staged boss script with larva spawns",
+      "summary": "The fight reads like a boss-state storyboard: emerge, stalk, lunge, retreat, then spawn helpers when the cycle changes.",
+      "priority": 110,
+      "sceneIDs": [],
+      "actorIDs": [40],
+      "eventIDs": [],
+      "tags": ["queen gohma", "boss", "state machine", "larva"],
+      "markdownPath": "markdown/actor_queen_gohma.md",
+      "sourceLinks": [
+        {
+          "id": "gohma-source",
+          "title": "zeldaret/oot Boss_Goma source",
+          "url": "https://github.com/zeldaret/oot/blob/main/src/overlays/actors/ovl_Boss_Goma/z_boss_goma.c"
+        },
+        {
+          "id": "gohma-table",
+          "title": "zeldaret/oot actor table entry",
+          "url": "https://github.com/zeldaret/oot/blob/main/include/tables/actor_table.h"
+        }
+      ],
+      "worldMarkers": []
+    },
+    {
+      "id": "actor_deku_scrub",
+      "kind": "actor",
+      "title": "Deku Scrubs are pop-up shooters with explicit exposure windows",
+      "summary": "The scrub alternates between hidden, aiming, firing, and vulnerable states, which is why timing the stun matters more than raw DPS.",
+      "priority": 92,
+      "sceneIDs": [],
+      "actorIDs": [405],
+      "eventIDs": [],
+      "tags": ["deku scrub", "enemy ai", "projectiles", "timing"],
+      "markdownPath": "markdown/actor_deku_scrub.md",
+      "sourceLinks": [
+        {
+          "id": "shopnuts-source",
+          "title": "zeldaret/oot En_Shopnuts source",
+          "url": "https://github.com/zeldaret/oot/blob/main/src/overlays/actors/ovl_En_Shopnuts/z_en_shopnuts.c"
+        },
+        {
+          "id": "shopnuts-table",
+          "title": "zeldaret/oot actor table entry",
+          "url": "https://github.com/zeldaret/oot/blob/main/include/tables/actor_table.h"
+        }
+      ],
+      "worldMarkers": []
+    },
+    {
+      "id": "actor_burnable_web",
+      "kind": "actor",
+      "title": "Burnable webs are gameplay gates, not static scenery",
+      "summary": "The dungeon uses an actor for fragile web barriers so collision, fire checks, and progression flags can all live in one place.",
+      "priority": 88,
+      "sceneIDs": [],
+      "actorIDs": [15],
+      "eventIDs": [],
+      "tags": ["web", "burnable", "collision", "progression"],
+      "markdownPath": "markdown/actor_burnable_web.md",
+      "sourceLinks": [
+        {
+          "id": "bg-ydan-sp-source",
+          "title": "zeldaret/oot Bg_Ydan_Sp source",
+          "url": "https://github.com/zeldaret/oot/blob/main/src/overlays/actors/ovl_Bg_Ydan_Sp/z_bg_ydan_sp.c"
+        },
+        {
+          "id": "bg-ydan-sp-table",
+          "title": "zeldaret/oot actor table entry",
+          "url": "https://github.com/zeldaret/oot/blob/main/include/tables/actor_table.h"
+        }
+      ],
+      "worldMarkers": []
+    },
+    {
+      "id": "mechanic_z_targeting",
+      "kind": "mechanic",
+      "title": "Z-targeting rewrites both combat selection and camera framing",
+      "summary": "Once lock-on engages, the game stops treating movement and camera as independent systems and starts steering both around a shared target snapshot.",
+      "priority": 80,
+      "sceneIDs": [],
+      "actorIDs": [],
+      "eventIDs": ["z-targeting"],
+      "tags": ["mechanic", "z-targeting", "camera", "combat"],
+      "markdownPath": "markdown/mechanic_z_targeting.md",
+      "sourceLinks": [
+        {
+          "id": "oot-combat-system",
+          "title": "SwiftOOT combat state",
+          "url": "https://github.com/tannerwj/SwiftOOT/blob/master/Sources/OOTCore/CombatSystem.swift"
+        },
+        {
+          "id": "oot-camera",
+          "title": "SwiftOOT gameplay camera",
+          "url": "https://github.com/tannerwj/SwiftOOT/blob/master/Sources/OOTRender/GameplayCamera.swift"
+        }
+      ],
+      "worldMarkers": []
+    },
+    {
+      "id": "mechanic_follow_camera",
+      "kind": "mechanic",
+      "title": "The follow camera constantly solves a compromise",
+      "summary": "Normal exploration camera tries to keep Link readable, avoid walls, and preserve scene scale, so it is always smoothing between competing goals.",
+      "priority": 25,
+      "sceneIDs": [],
+      "actorIDs": [],
+      "eventIDs": ["follow-camera"],
+      "tags": ["mechanic", "camera", "follow"],
+      "markdownPath": "markdown/mechanic_follow_camera.md",
+      "sourceLinks": [
+        {
+          "id": "oot-camera-controller",
+          "title": "SwiftOOT gameplay camera controller",
+          "url": "https://github.com/tannerwj/SwiftOOT/blob/master/Sources/OOTRender/GameplayCamera.swift"
+        }
+      ],
+      "worldMarkers": []
+    },
+    {
+      "id": "mechanic_collision_floor_snap",
+      "kind": "mechanic",
+      "title": "Link stays grounded by probing collision every frame",
+      "summary": "Movement is not free-flying through the room mesh. The player controller asks collision for floors, walls, and corrections on every update.",
+      "priority": 20,
+      "sceneIDs": [],
+      "actorIDs": [],
+      "eventIDs": ["collision-floor-snap"],
+      "tags": ["mechanic", "collision", "movement"],
+      "markdownPath": "markdown/mechanic_collision_floor_snap.md",
+      "sourceLinks": [
+        {
+          "id": "oot-player-state",
+          "title": "SwiftOOT player controller",
+          "url": "https://github.com/tannerwj/SwiftOOT/blob/master/Sources/OOTCore/PlayerState.swift"
+        },
+        {
+          "id": "oot-collision-system",
+          "title": "SwiftOOT collision system",
+          "url": "https://github.com/tannerwj/SwiftOOT/blob/master/Sources/OOTCore/CollisionSystem.swift"
+        }
+      ],
+      "worldMarkers": []
+    }
+  ]
+}

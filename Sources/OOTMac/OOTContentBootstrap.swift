@@ -10,6 +10,7 @@ import SwiftUI
 @Observable
 final class OOTContentBootstrapModel {
     private static let storedContentRootDefaultsKey = "OOTMac.StoredContentRootPath"
+    private static let directorCommentaryEnvironmentVariable = "SWIFTOOT_DIRECTOR_COMMENTARY"
 
     private let userDefaults: UserDefaults
     private let environment: [String: String]
@@ -127,6 +128,12 @@ final class OOTContentBootstrapModel {
             sceneLoader: sceneLoader,
             saveRepository: saveRepository
         )
+        if Self.boolEnvironmentValue(
+            named: Self.directorCommentaryEnvironmentVariable,
+            in: environment
+        ) == true {
+            runtime?.setDirectorCommentaryEnabled(true)
+        }
         errorMessage = nil
         startRuntimeIfNeeded()
 
@@ -135,6 +142,22 @@ final class OOTContentBootstrapModel {
         }
 
         return true
+    }
+
+    private static func boolEnvironmentValue(
+        named key: String,
+        in environment: [String: String]
+    ) -> Bool {
+        guard let rawValue = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            return false
+        }
+
+        switch rawValue.localizedLowercase {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
     }
 
     func startRuntimeIfNeeded() {

@@ -629,6 +629,11 @@ public final class GameRuntime {
     public var sceneEventFlags: [SceneIdentity: Set<Int>]
     public var deathCount: Int
     public var goldSkulltulaFlags: Set<TreasureFlagKey>
+    public var directorCommentaryCatalog: DirectorCommentaryCatalog
+    public var isDirectorCommentaryEnabled: Bool
+    public var directorCommentaryShowsWorldMarkers: Bool
+    public var selectedDirectorCommentaryAnnotationID: String?
+    public var activeDirectorCommentaryAnnotationID: String?
 
     @ObservationIgnored
     public let contentLoader: any ContentLoading
@@ -705,6 +710,9 @@ public final class GameRuntime {
     @ObservationIgnored
     var activeDekuStickState: EquippedDekuStickState?
 
+    @ObservationIgnored
+    var previousDirectorCommentaryAnnotationIDs: Set<String> = []
+
     public var inventoryState: GameplayInventoryState {
         get { inventoryContext.gameplay }
         set { inventoryContext.gameplay = newValue }
@@ -754,6 +762,11 @@ public final class GameRuntime {
         sceneEventFlags: [SceneIdentity: Set<Int>] = [:],
         deathCount: Int = 0,
         goldSkulltulaFlags: Set<TreasureFlagKey> = [],
+        directorCommentaryCatalog: DirectorCommentaryCatalog = DirectorCommentaryLibrary.bundledCatalog(),
+        isDirectorCommentaryEnabled: Bool = false,
+        directorCommentaryShowsWorldMarkers: Bool = false,
+        selectedDirectorCommentaryAnnotationID: String? = nil,
+        activeDirectorCommentaryAnnotationID: String? = nil,
         activePlayTimeFrames: Int = 0,
         contentLoader: (any ContentLoading)? = nil,
         sceneLoader: (any SceneLoading)? = nil,
@@ -797,6 +810,11 @@ public final class GameRuntime {
         self.sceneEventFlags = sceneEventFlags
         self.deathCount = max(0, deathCount)
         self.goldSkulltulaFlags = goldSkulltulaFlags
+        self.directorCommentaryCatalog = directorCommentaryCatalog
+        self.isDirectorCommentaryEnabled = isDirectorCommentaryEnabled
+        self.directorCommentaryShowsWorldMarkers = directorCommentaryShowsWorldMarkers
+        self.selectedDirectorCommentaryAnnotationID = selectedDirectorCommentaryAnnotationID
+        self.activeDirectorCommentaryAnnotationID = activeDirectorCommentaryAnnotationID
         self.activePlayTimeFrames = max(0, activePlayTimeFrames)
         let resolvedSceneLoader = sceneLoader ?? SceneLoader()
         self.sceneLoader = resolvedSceneLoader
@@ -924,6 +942,14 @@ public final class GameRuntime {
             actionLabel: gameplayActionLabel,
             statusMessage: statusMessage,
             errorMessage: errorMessage,
+            directorCommentary: DeveloperRuntimeStateSnapshot.DirectorCommentarySnapshot(
+                isEnabled: isDirectorCommentaryEnabled,
+                showsWorldMarkers: directorCommentaryShowsWorldMarkers,
+                selectedAnnotationID: selectedDirectorCommentaryAnnotationID,
+                activeAnnotationID: activeDirectorCommentaryAnnotationID,
+                activeAnnotationIDs: activeDirectorCommentaryAnnotations.map(\.id),
+                visibleWorldMarkerCount: directorCommentaryVisibleWorldMarkers.count
+            ),
             inventoryContext: inventoryContext,
             hudState: hudState
         )
@@ -1324,6 +1350,7 @@ public final class GameRuntime {
         errorMessage = nil
         synchronizeGameTime(with: loadedScene)
         synchronizeHUDStateWithInventory()
+        refreshDirectorCommentary(forcePresentation: true)
         persistActiveSaveSlotState(sceneName: playState.currentSceneName)
         if currentState == .gameplay, previousSceneID != sceneID {
             flushSaveContextToDisk(telemetryEvent: "gameRuntime.autoSave.sceneTransition")
@@ -1355,6 +1382,7 @@ public final class GameRuntime {
         )
         self.playState = playState
         syncXRayTelemetry()
+        refreshDirectorCommentary(forcePresentation: true)
     }
 
     public func activateDoorTransition(id triggerID: Int) throws {
@@ -1383,10 +1411,12 @@ public final class GameRuntime {
             self.playState = playState
             self.sceneManager = sceneManager
             syncXRayTelemetry()
+            refreshDirectorCommentary()
         case .sceneTransition(let request):
             self.sceneManager = sceneManager
             try loadScene(id: request.sceneID, entranceIndex: request.entranceIndex)
             self.playState?.transitionEffect = request.effect
+            refreshDirectorCommentary(forcePresentation: true)
         }
     }
 
@@ -1416,10 +1446,12 @@ public final class GameRuntime {
             self.playState = playState
             self.sceneManager = sceneManager
             syncXRayTelemetry()
+            refreshDirectorCommentary()
         case .sceneTransition(let request):
             self.sceneManager = sceneManager
             try loadScene(id: request.sceneID, entranceIndex: request.entranceIndex)
             self.playState?.transitionEffect = request.effect
+            refreshDirectorCommentary(forcePresentation: true)
         }
     }
 
@@ -1432,6 +1464,7 @@ public final class GameRuntime {
         let previousInput = previousControllerInputState
         defer {
             previousControllerInputState = currentInput
+            refreshDirectorCommentary()
         }
 
         if handlePauseMenuInput(currentInput: currentInput, previousInput: previousInput) {
@@ -1838,6 +1871,7 @@ public final class GameRuntime {
         loadedScene = snapshot.loadedScene
         textureAssetURLs = snapshot.textureAssetURLs
         synchronizeGameTime(with: snapshot.loadedScene)
+        refreshDirectorCommentary(forcePresentation: true)
     }
 
     private func loadSceneViewerSnapshot(defaultSceneID: Int?) async throws -> SceneViewerSnapshot {

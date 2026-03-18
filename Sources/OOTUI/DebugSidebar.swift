@@ -6,6 +6,7 @@ import OOTDataModel
 import OOTRender
 
 public enum DebugSidebarTab: String, CaseIterable, Identifiable {
+    case commentary
     case actorInspector
     case sceneInfo
     case inventory
@@ -16,6 +17,8 @@ public enum DebugSidebarTab: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .commentary:
+            return "Commentary"
         case .actorInspector:
             return "Actor"
         case .sceneInfo:
@@ -31,6 +34,8 @@ public enum DebugSidebarTab: String, CaseIterable, Identifiable {
 
     var iconName: String {
         switch self {
+        case .commentary:
+            return "text.quote"
         case .actorInspector:
             return "person.text.rectangle"
         case .sceneInfo:
@@ -176,6 +181,8 @@ public struct DebugSidebar: View {
                     }
 
                     switch selectedTab {
+                    case .commentary:
+                        commentaryContent
                     case .actorInspector:
                         actorInspectorContent
                     case .sceneInfo:
@@ -205,6 +212,10 @@ public struct DebugSidebar: View {
 }
 
 private extension DebugSidebar {
+    var commentaryContent: some View {
+        DirectorCommentarySidebarView(runtime: runtime)
+    }
+
     var actorInspectorContent: some View {
         VStack(alignment: .leading, spacing: 16) {
             ActorListSectionView(
@@ -1233,7 +1244,7 @@ private struct LegendValueRow: View {
     }
 }
 
-private struct InspectorSection<Content: View>: View {
+struct InspectorSection<Content: View>: View {
     let title: String
     @ViewBuilder let content: Content
 
