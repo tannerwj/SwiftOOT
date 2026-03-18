@@ -211,6 +211,20 @@ public struct SceneHeaderDefinition: Codable, Sendable, Equatable {
     public var specialFiles: SceneSpecialFiles?
     public var cutsceneIDs: [Int]
 
+    private enum CodingKeys: String, CodingKey {
+        case sceneName
+        case sceneObjectIDs
+        case spawns
+        case entrances
+        case rooms
+        case transitionTriggers
+        case cutsceneTriggers
+        case eventRegionTriggers
+        case soundSettings
+        case specialFiles
+        case cutsceneIDs
+    }
+
     public init(
         sceneName: String,
         sceneObjectIDs: [Int] = [],
@@ -235,6 +249,23 @@ public struct SceneHeaderDefinition: Codable, Sendable, Equatable {
         self.soundSettings = soundSettings
         self.specialFiles = specialFiles
         self.cutsceneIDs = cutsceneIDs
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            sceneName: try container.decode(String.self, forKey: .sceneName),
+            sceneObjectIDs: try container.decodeIfPresent([Int].self, forKey: .sceneObjectIDs) ?? [],
+            spawns: try container.decodeIfPresent([SceneSpawnPoint].self, forKey: .spawns) ?? [],
+            entrances: try container.decodeIfPresent([SceneEntranceDefinition].self, forKey: .entrances) ?? [],
+            rooms: try container.decodeIfPresent([SceneRoomDefinition].self, forKey: .rooms) ?? [],
+            transitionTriggers: try container.decodeIfPresent([SceneTransitionTrigger].self, forKey: .transitionTriggers) ?? [],
+            cutsceneTriggers: try container.decodeIfPresent([SceneCutsceneTrigger].self, forKey: .cutsceneTriggers) ?? [],
+            eventRegionTriggers: try container.decodeIfPresent([SceneEventRegionTrigger].self, forKey: .eventRegionTriggers) ?? [],
+            soundSettings: try container.decodeIfPresent(SceneSoundSettings.self, forKey: .soundSettings),
+            specialFiles: try container.decodeIfPresent(SceneSpecialFiles.self, forKey: .specialFiles),
+            cutsceneIDs: try container.decodeIfPresent([Int].self, forKey: .cutsceneIDs) ?? []
+        )
     }
 }
 

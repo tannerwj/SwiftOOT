@@ -126,6 +126,38 @@ final class OOTDataModelTests: XCTestCase {
         XCTAssertEqual(decoded, manifest)
     }
 
+    func testSceneHeaderDefinitionDecodesLegacyHeadersWithoutCommentaryTriggerArrays() throws {
+        let legacyHeaderJSON = """
+        {
+          "sceneName": "spot04",
+          "sceneObjectIDs": [2],
+          "spawns": [],
+          "entrances": [],
+          "rooms": [],
+          "transitionTriggers": [],
+          "soundSettings": {
+            "specID": 1,
+            "natureAmbienceID": 4,
+            "sequenceID": 60
+          },
+          "specialFiles": {
+            "naviHintName": "None",
+            "keepObjectName": "gameplay_field_keep"
+          },
+          "cutsceneIDs": []
+        }
+        """
+
+        let decoded = try JSONDecoder().decode(
+            SceneHeaderDefinition.self,
+            from: Data(legacyHeaderJSON.utf8)
+        )
+
+        XCTAssertEqual(decoded.sceneName, "spot04")
+        XCTAssertTrue(decoded.cutsceneTriggers.isEmpty)
+        XCTAssertTrue(decoded.eventRegionTriggers.isEmpty)
+    }
+
     private func assertCodableAndSendable<T: Codable & Sendable>(_: T.Type) {
         XCTAssertTrue(true)
     }
