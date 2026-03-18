@@ -1204,6 +1204,58 @@ final class OOTUITests: XCTestCase {
         )
     }
 
+    func testHyruleWorldMapBuildToleratesSharedInteriorSceneIDsAcrossAreas() throws {
+        let marketScene = makeWorldMapScene(
+            sceneID: 0x20,
+            sceneName: "market_day",
+            sceneTitle: "Castle Town",
+            exits: [],
+            collisionWidth: 180,
+            collisionHeight: 120
+        )
+        let kakarikoScene = makeWorldMapScene(
+            sceneID: 0x21,
+            sceneName: "spot01",
+            sceneTitle: "Kakariko Village",
+            exits: [],
+            collisionWidth: 190,
+            collisionHeight: 130
+        )
+        let sharedShopScene = makeWorldMapScene(
+            sceneID: 44,
+            sceneName: "shop1",
+            sceneTitle: "Bazaar",
+            exits: [],
+            collisionWidth: 90,
+            collisionHeight: 70
+        )
+        let loader = WorldMapTestSceneLoader(
+            sceneEntries: [
+                SceneTableEntry(index: 0x20, segmentName: "market_day_scene", enumName: "SCENE_MARKET_DAY"),
+                SceneTableEntry(index: 0x21, segmentName: "spot01_scene", enumName: "SCENE_KAKARIKO_VILLAGE"),
+                SceneTableEntry(index: 44, segmentName: "shop1_scene", enumName: "SCENE_BAZAAR"),
+            ],
+            scenesByID: [
+                0x20: marketScene,
+                0x21: kakarikoScene,
+                44: sharedShopScene,
+            ],
+            entranceTable: []
+        )
+
+        let model = try HyruleWorldMapModelBuilder.build(
+            sceneLoader: loader,
+            availableScenes: loader.sceneEntries,
+            currentScene: marketScene,
+            currentSceneID: marketScene.manifest.id,
+            playerState: PlayerState(position: Vec3f(x: 0, y: 0, z: 0)),
+            visitedSceneIDs: [marketScene.manifest.id, kakarikoScene.manifest.id]
+        )
+
+        XCTAssertNotNil(model.areas.first { $0.id == "market" })
+        XCTAssertNotNil(model.areas.first { $0.id == "kakariko" })
+    }
+
     func testDeveloperLaunchesTAN52SceneSetWhenConfigured() async throws {
         guard let contentRootPath = ProcessInfo.processInfo.environment["SWIFTOOT_REAL_CONTENT_ROOT"] else {
             throw XCTSkip("Set SWIFTOOT_REAL_CONTENT_ROOT to run the TAN-52 gameplay launch validation.")

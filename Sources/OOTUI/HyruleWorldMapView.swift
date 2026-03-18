@@ -184,11 +184,14 @@ enum HyruleWorldMapModelBuilder {
             )
         }
 
-        let areaBySceneID = Dictionary(
-            uniqueKeysWithValues: resolvedAreas.flatMap { resolved in
-                resolved.area.memberSceneIDs.map { ($0, resolved.area.id) }
+        // Some shared interiors (for example `shop1`) are intentionally grouped under
+        // multiple overworld regions. Keep the first stable owning area instead of
+        // trapping on duplicate scene IDs when building the atlas.
+        let areaBySceneID = resolvedAreas.reduce(into: [Int: String]()) { partialResult, resolved in
+            for sceneID in resolved.area.memberSceneIDs where partialResult[sceneID] == nil {
+                partialResult[sceneID] = resolved.area.id
             }
-        )
+        }
         var connectionPairs: Set<String> = []
         var connections: [HyruleWorldMapModel.Connection] = []
         var connectedAreaTitlesByAreaID: [String: Set<String>] = [:]
