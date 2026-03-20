@@ -111,7 +111,7 @@ final class RuntimeSoundEffectPlayer {
         return outputBuffer
     }
 
-    private func loadSampleBuffer(url: URL) -> AVAudioPCMBuffer? {
+    func loadSampleBuffer(url: URL) -> AVAudioPCMBuffer? {
         if let cached = sampleCache[url] {
             return cached
         }
@@ -119,16 +119,84 @@ final class RuntimeSoundEffectPlayer {
         guard let file = try? AVAudioFile(forReading: url) else {
             return nil
         }
-        let format = file.processingFormat
-        guard let buffer = AVAudioPCMBuffer(
-            pcmFormat: format,
+
+        let sourceFormat = file.processingFormat
+        guard let sourceBuffer = AVAudioPCMBuffer(
+            pcmFormat: sourceFormat,
             frameCapacity: AVAudioFrameCount(file.length)
         ) else {
             return nil
         }
-        try? file.read(into: buffer)
-        sampleCache[url] = buffer
-        return buffer
+
+        do {
+            try file.read(into: sourceBuffer)
+        } catch {
+            return nil
+        }
+
+        guard let playbackBuffer = makePlaybackSampleBuffer(from: sourceBuffer) else {
+            return nil
+        }
+
+        sampleCache[url] = playbackBuffer
+        return playbackBuffer
+    }
+
+    private func makePlaybackSampleBuffer(from sourceBuffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        let sourceFormat = sourceBuffer.format
+        if sourceFormat.commonFormat == .pcmFormatFloat32,
+           sourceFormat.isInterleaved == false,
+           sourceBuffer.floatChannelData != nil {
+            return sourceBuffer
+        }
+
+        guard let playbackFormat = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: sourceFormat.sampleRate,
+            channels: sourceFormat.channelCount,
+            interleaved: false
+        ) else {
+            return nil
+        }
+
+        let frameCapacity = max(
+            AVAudioFrameCount(1),
+            AVAudioFrameCount(
+                ceil(Double(sourceBuffer.frameLength) * playbackFormat.sampleRate / sourceFormat.sampleRate)
+            )
+        )
+        guard
+            let playbackBuffer = AVAudioPCMBuffer(pcmFormat: playbackFormat, frameCapacity: frameCapacity),
+            let converter = AVAudioConverter(from: sourceFormat, to: playbackFormat)
+        else {
+            return nil
+        }
+
+        let conversionState = AudioConversionState()
+        var conversionError: NSError?
+        let status = converter.convert(to: playbackBuffer, error: &conversionError) { _, outStatus in
+            if conversionState.didProvideInput {
+                outStatus.pointee = .endOfStream
+                return nil
+            }
+
+            conversionState.didProvideInput = true
+            outStatus.pointee = .haveData
+            return sourceBuffer
+        }
+
+        guard conversionError == nil else {
+            return nil
+        }
+
+        switch status {
+        case .haveData, .inputRanDry, .endOfStream:
+            return playbackBuffer
+        case .error:
+            return nil
+        @unknown default:
+            return nil
+        }
     }
 
     private func makeSynthBuffer(
@@ -165,6 +233,10 @@ final class RuntimeSoundEffectPlayer {
 
         return buffer
     }
+}
+
+private final class AudioConversionState: @unchecked Sendable {
+    var didProvideInput = false
 }
 
 private extension SoundEffectWaveform {

@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 import Metal
 import OOTContent
@@ -162,6 +163,19 @@ final class OOTUITests: XCTestCase {
         XCTAssertEqual(OOTAppView.rootViewState(for: .titleScreen), .titleScreen)
         XCTAssertEqual(OOTAppView.rootViewState(for: .fileSelect), .fileSelect)
         XCTAssertEqual(OOTAppView.rootViewState(for: .gameplay), .gameplay)
+    }
+
+    func testRuntimeSoundEffectPlayerConvertsInt16SamplesToFloatPlaybackBuffer() throws {
+        let sampleURL = try makePCM16WaveFile()
+        let player = RuntimeSoundEffectPlayer()
+
+        let buffer = player.loadSampleBuffer(url: sampleURL)
+
+        XCTAssertNotNil(buffer)
+        XCTAssertEqual(buffer?.format.commonFormat, .pcmFormatFloat32)
+        XCTAssertFalse(buffer?.format.isInterleaved ?? true)
+        XCTAssertNotNil(buffer?.floatChannelData)
+        XCTAssertEqual(buffer?.frameLength, 64)
     }
 
     func testInputManagerMapsKeyboardEventsIntoControllerState() throws {
@@ -1506,6 +1520,39 @@ final class OOTUITests: XCTestCase {
 }
 
 private extension OOTUITests {
+    func makePCM16WaveFile(frameCount: AVAudioFrameCount = 64) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let fileURL = directory.appendingPathComponent("sample.wav")
+        guard
+            let format = AVAudioFormat(
+                commonFormat: .pcmFormatInt16,
+                sampleRate: 22_050,
+                channels: 1,
+                interleaved: false
+            ),
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount),
+            let channelData = buffer.int16ChannelData?[0]
+        else {
+            throw NSError(domain: "OOTUITests", code: 1)
+        }
+
+        buffer.frameLength = frameCount
+        for sampleIndex in 0..<Int(frameCount) {
+            channelData[sampleIndex] = sampleIndex.isMultiple(of: 2) ? Int16.max / 2 : -Int16.max / 2
+        }
+
+        let file = try AVAudioFile(
+            forWriting: fileURL,
+            settings: format.settings,
+            commonFormat: format.commonFormat,
+            interleaved: format.isInterleaved
+        )
+        try file.write(from: buffer)
+        return fileURL
+    }
+
     func makeLoadedScene() -> LoadedScene {
         LoadedScene(
             manifest: SceneManifest(
