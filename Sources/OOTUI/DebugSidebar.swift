@@ -263,6 +263,67 @@ private extension DebugSidebar {
                 LabeledValueRow(label: "Spawn", value: runtime.playState?.currentSpawnIndex.map(String.init) ?? "Unavailable")
             }
 
+            InspectorSection("Music") {
+                LabeledValueRow(label: "Phase", value: musicPlaybackPhaseLabel)
+                LabeledValueRow(label: "Current", value: runtime.musicPlaybackState.currentTrack?.title ?? "Stopped")
+                if let pendingTrack = runtime.musicPlaybackState.pendingTrack {
+                    LabeledValueRow(label: "Pending", value: pendingTrack.title)
+                }
+
+                if runtime.availableAudioTracks.isEmpty {
+                    Text("No extracted BGM manifest was found under the configured content root.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    HStack(spacing: 8) {
+                        Button("Pause") {
+                            runtime.pauseMusicTrack()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(runtime.musicPlaybackState.currentTrack == nil || runtime.musicPlaybackState.phase == .paused)
+
+                        Button("Resume") {
+                            runtime.resumeMusicTrack()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(runtime.musicPlaybackState.phase != .paused)
+
+                        Button("Stop") {
+                            runtime.stopMusicTrack()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(runtime.musicPlaybackState.currentTrack == nil)
+                    }
+
+                    Text("Selecting a new track while one is active crossfades automatically.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    ForEach(runtime.availableAudioTracks, id: \.id) { track in
+                        HStack(alignment: .top, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(track.title)
+                                    .font(.caption.weight(.semibold))
+                                Text("\(track.kind.rawValue.uppercased()) • \(track.sequenceEnumName)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 8)
+                            Button(
+                                runtime.musicPlaybackState.currentTrack?.id == track.id ? "Replay" : "Play"
+                            ) {
+                                runtime.playMusicTrack(id: track.id)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                    }
+                }
+            }
+
             InspectorSection("Rooms + Objects") {
                 LabeledValueRow(label: "Active Rooms", value: joinedValues(runtime.playState?.activeRoomIDs.sorted().map(String.init) ?? []))
                 LabeledValueRow(label: "Loaded Objects", value: "\(runtime.playState?.loadedObjectIDs.count ?? 0)")
@@ -784,6 +845,19 @@ private extension DebugSidebar {
             shortName = scene.segmentName
         }
         return "\(shortName) • \(scene.enumName)"
+    }
+
+    var musicPlaybackPhaseLabel: String {
+        switch runtime.musicPlaybackState.phase {
+        case .stopped:
+            return "Stopped"
+        case .playing:
+            return "Playing"
+        case .paused:
+            return "Paused"
+        case .crossfading:
+            return "Crossfading"
+        }
     }
 
     func describe(cylinder: ColliderCylinder, label: String) -> String {

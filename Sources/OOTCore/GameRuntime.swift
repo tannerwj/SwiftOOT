@@ -635,6 +635,8 @@ public final class GameRuntime {
     public var directorCommentaryShowsWorldMarkers: Bool
     public var selectedDirectorCommentaryAnnotationID: String?
     public var activeDirectorCommentaryAnnotationID: String?
+    public var audioTrackCatalog: AudioTrackCatalog?
+    public var musicPlaybackState: MusicPlaybackState
 
     @ObservationIgnored
     public let contentLoader: any ContentLoading
@@ -677,6 +679,12 @@ public final class GameRuntime {
 
     @ObservationIgnored
     private let saveRepository: SaveRepository?
+
+    @ObservationIgnored
+    private let musicPlaybackController: (any MusicPlaybackControlling)?
+
+    @ObservationIgnored
+    private var musicTransitionTask: Task<Void, Never>?
 
     @ObservationIgnored
     private var activePlayTimeFrames: Int
@@ -763,6 +771,8 @@ public final class GameRuntime {
         selectedSceneID: Int? = nil,
         loadedScene: LoadedScene? = nil,
         textureAssetURLs: [UInt32: URL] = [:],
+        audioTrackCatalog: AudioTrackCatalog? = nil,
+        musicPlaybackState: MusicPlaybackState = MusicPlaybackState(),
         errorMessage: String? = nil,
         messageContext: MessageContext = MessageContext(),
         itemGetSequence: ItemGetSequenceState? = nil,
@@ -784,6 +794,7 @@ public final class GameRuntime {
         activePlayTimeFrames: Int = 0,
         contentLoader: (any ContentLoading)? = nil,
         sceneLoader: (any SceneLoading)? = nil,
+        musicPlaybackController: (any MusicPlaybackControlling)? = nil,
         telemetryPublisher: (any TelemetryPublishing)? = nil,
         saveRepository: SaveRepository? = nil,
         timeSystem: TimeSystem = TimeSystem(gameMinutesPerRealSecond: 0.1),
@@ -812,6 +823,8 @@ public final class GameRuntime {
         self.selectedSceneID = selectedSceneID
         self.loadedScene = loadedScene
         self.textureAssetURLs = textureAssetURLs
+        self.audioTrackCatalog = audioTrackCatalog
+        self.musicPlaybackState = musicPlaybackState
         self.errorMessage = errorMessage
         self.messageContext = messageContext
         self.itemGetSequence = itemGetSequence
@@ -834,6 +847,7 @@ public final class GameRuntime {
         let resolvedSceneLoader = sceneLoader ?? SceneLoader()
         self.sceneLoader = resolvedSceneLoader
         self.contentLoader = contentLoader ?? ContentLoader(sceneLoader: resolvedSceneLoader)
+        self.musicPlaybackController = musicPlaybackController
         self.telemetryPublisher = telemetryPublisher ?? TelemetryPublisher()
         self.saveRepository = saveRepository
         self.timeSystem = timeSystem
@@ -845,6 +859,7 @@ public final class GameRuntime {
     }
 
     deinit {
+        musicTransitionTask?.cancel()
         timeTask?.cancel()
     }
 
@@ -907,6 +922,83 @@ public final class GameRuntime {
         )
     }
 
+    public var availableAudioTracks: [AudioTrackManifest] {
+        audioTrackCatalog?.tracks ?? []
+    }
+
+    public func playMusicTrack(
+        id trackID: String,
+        crossfadeDuration: TimeInterval = 1.0
+    ) {
+        guard let track = resolveAudioTrack(id: trackID) else {
+            statusMessage = "Audio track \(trackID) is unavailable."
+            return
+        }
+
+        let currentTrack = musicPlaybackState.currentTrack
+        let shouldCrossfade = currentTrack != nil && currentTrack?.id != track.id && crossfadeDuration > 0
+
+        do {
+            try musicPlaybackController?.play(
+                track: track,
+                crossfadeDuration: shouldCrossfade ? crossfadeDuration : 0
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+
+        errorMessage = nil
+        statusMessage = "Playing \(track.title)."
+        if shouldCrossfade, let currentTrack {
+            beginCrossfade(
+                from: currentTrack,
+                to: MusicTrackReference(track: track),
+                duration: crossfadeDuration
+            )
+        } else {
+            completeMusicTransition(to: MusicTrackReference(track: track), phase: .playing)
+        }
+    }
+
+    public func crossfadeMusicTrack(
+        to trackID: String,
+        duration: TimeInterval = 1.0
+    ) {
+        playMusicTrack(id: trackID, crossfadeDuration: duration)
+    }
+
+    public func pauseMusicTrack() {
+        guard musicPlaybackState.currentTrack != nil else {
+            return
+        }
+
+        musicTransitionTask?.cancel()
+        musicTransitionTask = nil
+        musicPlaybackController?.pause()
+        musicPlaybackState.phase = .paused
+        musicPlaybackState.pendingTrack = nil
+        statusMessage = "Music paused."
+    }
+
+    public func resumeMusicTrack() {
+        guard musicPlaybackState.currentTrack != nil else {
+            return
+        }
+
+        musicPlaybackController?.resume()
+        musicPlaybackState.phase = .playing
+        statusMessage = "Music resumed."
+    }
+
+    public func stopMusicTrack() {
+        musicTransitionTask?.cancel()
+        musicTransitionTask = nil
+        musicPlaybackController?.stop()
+        musicPlaybackState = MusicPlaybackState()
+        statusMessage = "Music stopped."
+    }
+
     public func developerRuntimeStateSnapshot() -> DeveloperRuntimeStateSnapshot {
         let talkTarget = resolveActiveTalkActor()
         let message = activeMessagePresentation.map { presentation in
@@ -957,6 +1049,11 @@ public final class GameRuntime {
             actionLabel: gameplayActionLabel,
             statusMessage: statusMessage,
             errorMessage: errorMessage,
+            musicPlayback: DeveloperRuntimeStateSnapshot.MusicPlaybackSnapshot(
+                phase: musicPlaybackState.phase,
+                currentTrack: musicPlaybackState.currentTrack,
+                pendingTrack: musicPlaybackState.pendingTrack
+            ),
             directorCommentary: DeveloperRuntimeStateSnapshot.DirectorCommentarySnapshot(
                 isEnabled: isDirectorCommentaryEnabled,
                 showsWorldMarkers: directorCommentaryShowsWorldMarkers,
@@ -985,6 +1082,7 @@ public final class GameRuntime {
             telemetryPublisher.publish("gameRuntime.contentLoadFailed")
         }
 
+        loadAudioTrackCatalogIfAvailable()
         loadMessageCatalogIfAvailable()
         loadSoundEffectCatalogIfAvailable()
 
@@ -1022,6 +1120,7 @@ public final class GameRuntime {
             telemetryPublisher.publish("gameRuntime.contentLoadFailed")
         }
 
+        loadAudioTrackCatalogIfAvailable()
         loadMessageCatalogIfAvailable()
         loadSoundEffectCatalogIfAvailable()
 
@@ -2280,6 +2379,60 @@ public final class GameRuntime {
         if let messageCatalog = try? contentLoader.loadMessageCatalog() {
             messageContext.setCatalog(messageCatalog)
         }
+    }
+
+    private func loadAudioTrackCatalogIfAvailable() {
+        guard audioTrackCatalog == nil else {
+            return
+        }
+
+        if let audioTrackCatalog = try? contentLoader.loadAudioTrackCatalog() {
+            self.audioTrackCatalog = audioTrackCatalog
+        }
+    }
+
+    private func resolveAudioTrack(id trackID: String) -> AudioTrackManifest? {
+        loadAudioTrackCatalogIfAvailable()
+        return audioTrackCatalog?.tracks.first(where: { $0.id == trackID })
+    }
+
+    private func beginCrossfade(
+        from currentTrack: MusicTrackReference,
+        to targetTrack: MusicTrackReference,
+        duration: TimeInterval
+    ) {
+        musicTransitionTask?.cancel()
+        musicPlaybackState = MusicPlaybackState(
+            phase: .crossfading,
+            currentTrack: currentTrack,
+            pendingTrack: targetTrack
+        )
+
+        musicTransitionTask = Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            await self.suspender(.seconds(duration))
+            guard Task.isCancelled == false else {
+                return
+            }
+
+            self.completeMusicTransition(to: targetTrack, phase: .playing)
+        }
+    }
+
+    private func completeMusicTransition(
+        to track: MusicTrackReference,
+        phase: MusicPlaybackPhase
+    ) {
+        musicTransitionTask?.cancel()
+        musicTransitionTask = nil
+        musicPlaybackState = MusicPlaybackState(
+            phase: phase,
+            currentTrack: track,
+            pendingTrack: nil
+        )
     }
 
     private func synchronizeGameTime(with scene: LoadedScene?) {
