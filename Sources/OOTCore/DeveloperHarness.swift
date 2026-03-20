@@ -136,6 +136,22 @@ public struct DeveloperRuntimeStateSnapshot: Codable, Sendable, Equatable {
         }
     }
 
+    public struct MusicPlaybackSnapshot: Codable, Sendable, Equatable {
+        public var phase: MusicPlaybackPhase
+        public var currentTrack: MusicTrackReference?
+        public var pendingTrack: MusicTrackReference?
+
+        public init(
+            phase: MusicPlaybackPhase,
+            currentTrack: MusicTrackReference?,
+            pendingTrack: MusicTrackReference?
+        ) {
+            self.phase = phase
+            self.currentTrack = currentTrack
+            self.pendingTrack = pendingTrack
+        }
+    }
+
     public struct DirectorCommentarySnapshot: Codable, Sendable, Equatable {
         public var isEnabled: Bool
         public var showsWorldMarkers: Bool
@@ -178,6 +194,7 @@ public struct DeveloperRuntimeStateSnapshot: Codable, Sendable, Equatable {
     public var actionLabel: String?
     public var statusMessage: String?
     public var errorMessage: String?
+    public var musicPlayback: MusicPlaybackSnapshot?
     public var directorCommentary: DirectorCommentarySnapshot?
     public var inventoryContext: InventoryContext
     public var hudState: GameplayHUDState
@@ -200,6 +217,7 @@ public struct DeveloperRuntimeStateSnapshot: Codable, Sendable, Equatable {
         actionLabel: String?,
         statusMessage: String?,
         errorMessage: String?,
+        musicPlayback: MusicPlaybackSnapshot?,
         directorCommentary: DirectorCommentarySnapshot?,
         inventoryContext: InventoryContext,
         hudState: GameplayHUDState
@@ -221,6 +239,7 @@ public struct DeveloperRuntimeStateSnapshot: Codable, Sendable, Equatable {
         self.actionLabel = actionLabel
         self.statusMessage = statusMessage
         self.errorMessage = errorMessage
+        self.musicPlayback = musicPlayback
         self.directorCommentary = directorCommentary
         self.inventoryContext = inventoryContext
         self.hudState = hudState
