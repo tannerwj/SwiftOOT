@@ -194,8 +194,9 @@ swift run OOTExtractCLI verify --content /tmp/swiftoot-spot04
 ```
 
 The extractor now also emits scoped music bundles under `Content/OOT/Audio/BGM`
-and writes the corresponding manifest to
-`Content/OOT/Manifests/audio/bgm-tracks.json`.
+with a catalog at `Content/OOT/Manifests/audio/bgm-tracks.json`, plus bounded
+sound effect bundles under `Content/OOT/Audio/SFX` with a catalog at
+`Content/OOT/Manifests/audio/sfx.json`.
 
 For project-specific contributor workflow, review rules, and automation
 guidance, see [AGENTS.md](AGENTS.md).

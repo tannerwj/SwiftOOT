@@ -429,6 +429,7 @@ private extension GameRuntime {
                 movementFrames: 0..<0,
                 movementDistancePerFrame: 0
             )
+            queueSoundEffect(.swordSlash, sourcePosition: playerState?.position)
         case .jump:
             activePlayerAttackState = ActivePlayerAttackState(
                 kind: .jump,

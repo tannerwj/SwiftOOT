@@ -621,6 +621,7 @@ public final class GameRuntime {
     public var messageContext: MessageContext
     public var itemGetSequence: ItemGetSequenceState?
     public var combatState: GameplayCombatState
+    public var soundEffectVolumeSettings: SoundEffectVolumeSettings
     public var isCButtonItemEditorPresented: Bool
     public var ocarinaSession: OcarinaSessionState?
     public var ocarinaRecognition: OcarinaRecognitionState?
@@ -713,6 +714,18 @@ public final class GameRuntime {
     @ObservationIgnored
     var previousDirectorCommentaryAnnotationIDs: Set<String> = []
 
+    @ObservationIgnored
+    var soundEffectsByEvent: [NamedSoundEffect: ResolvedSoundEffect] = [:]
+
+    @ObservationIgnored
+    var pendingSoundEffectPlaybackRequests: [SoundEffectPlaybackRequest] = []
+
+    @ObservationIgnored
+    var activeSoundEffects: [ActiveSoundEffectState] = []
+
+    @ObservationIgnored
+    var nextSoundEffectRequestID = 1
+
     public var inventoryState: GameplayInventoryState {
         get { inventoryContext.gameplay }
         set { inventoryContext.gameplay = newValue }
@@ -754,6 +767,7 @@ public final class GameRuntime {
         messageContext: MessageContext = MessageContext(),
         itemGetSequence: ItemGetSequenceState? = nil,
         combatState: GameplayCombatState = GameplayCombatState(),
+        soundEffectVolumeSettings: SoundEffectVolumeSettings = SoundEffectVolumeSettings(),
         isCButtonItemEditorPresented: Bool = false,
         ocarinaSession: OcarinaSessionState? = nil,
         ocarinaRecognition: OcarinaRecognitionState? = nil,
@@ -802,6 +816,7 @@ public final class GameRuntime {
         self.messageContext = messageContext
         self.itemGetSequence = itemGetSequence
         self.combatState = combatState
+        self.soundEffectVolumeSettings = soundEffectVolumeSettings
         self.isCButtonItemEditorPresented = isCButtonItemEditorPresented
         self.ocarinaSession = ocarinaSession
         self.ocarinaRecognition = ocarinaRecognition
@@ -971,6 +986,7 @@ public final class GameRuntime {
         }
 
         loadMessageCatalogIfAvailable()
+        loadSoundEffectCatalogIfAvailable()
 
         await suspender(bootDuration)
         transition(to: .consoleLogo)
@@ -1007,6 +1023,7 @@ public final class GameRuntime {
         }
 
         loadMessageCatalogIfAvailable()
+        loadSoundEffectCatalogIfAvailable()
 
         let availableScenes = try loadAvailableScenes()
         self.availableScenes = availableScenes
@@ -1105,6 +1122,7 @@ public final class GameRuntime {
     public func chooseTitleOption(_ option: TitleMenuOption) {
         selectedTitleOption = option
         inputState.record(.confirm, selectionIndex: option == .newGame ? 0 : 1)
+        queueSoundEffect(.uiConfirm)
 
         switch option {
         case .newGame:
@@ -1138,6 +1156,7 @@ public final class GameRuntime {
         }
 
         inputState.record(.confirm, selectionIndex: saveContext.selectedSlotIndex)
+        queueSoundEffect(.uiConfirm)
 
         switch fileSelectMode {
         case .newGame:
@@ -1152,6 +1171,7 @@ public final class GameRuntime {
         fileSelectMode = nil
         statusMessage = nil
         inputState.record(.cancel, selectionIndex: saveContext.selectedSlotIndex)
+        queueSoundEffect(.uiCancel)
         transition(to: .titleScreen)
     }
 
@@ -1258,6 +1278,7 @@ public final class GameRuntime {
     ) throws {
         let previousSceneID = playState?.currentSceneID ?? loadedScene?.manifest.id
         loadMessageCatalogIfAvailable()
+        loadSoundEffectCatalogIfAvailable()
         let loadedScene = try contentLoader.loadScene(id: sceneID)
         let actorTableEntries = try contentLoader.loadActorTable()
         let entranceTableEntries = (try? contentLoader.loadEntranceTable()) ?? []
@@ -1356,6 +1377,7 @@ public final class GameRuntime {
             flushSaveContextToDisk(telemetryEvent: "gameRuntime.autoSave.sceneTransition")
         }
         currentState = .gameplay
+        queueAmbientSoundIfNeeded(for: loadedScene)
         syncXRayTelemetry()
         startTimeLoop()
     }
@@ -1475,6 +1497,7 @@ public final class GameRuntime {
 
         gameTime.advance()
         activePlayTimeFrames += 1
+        cleanupExpiredSoundEffects()
         if let fixedTimeOfDayOverride {
             gameTime.timeOfDay = fixedTimeOfDayOverride
         }
@@ -1543,6 +1566,7 @@ public final class GameRuntime {
 
         if handleItemGetPrimaryInput() {
             inputState.record(.confirm, selectionIndex: 0)
+            queueSoundEffect(.uiConfirm)
             return
         }
 
@@ -1552,6 +1576,7 @@ public final class GameRuntime {
                 .confirm,
                 selectionIndex: messageContext.activePresentation?.choiceState?.selectedIndex ?? 0
             )
+            queueSoundEffect(.uiConfirm)
             return
         }
 
@@ -1562,6 +1587,11 @@ public final class GameRuntime {
         if talkActor.talkRequested(playState: playState) {
             inputState.record(.confirm, selectionIndex: 0)
             messageContext.tick(playerName: playerName)
+            if talkActor is TreasureChestActor {
+                queueSoundEffect(.chestOpen, sourcePosition: talkActor.position)
+            } else {
+                queueSoundEffect(.talkConfirm, sourcePosition: talkActor.position)
+            }
         }
     }
 
@@ -1731,6 +1761,7 @@ public final class GameRuntime {
                 }
                 itemGetSequence.phase = .displayingText
                 itemGetSequence.phaseFrameCount = 0
+                queueSoundEffect(.itemGet)
             }
         case .displayingText:
             itemGetSequence.itemWorldPosition = itemGetWorldPosition()

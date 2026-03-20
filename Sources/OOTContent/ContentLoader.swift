@@ -6,14 +6,18 @@ public protocol ContentLoading: Sendable {
     func loadScene(id: Int) throws -> LoadedScene
     func loadActorTable() throws -> [ActorTableEntry]
     func loadMessageCatalog() throws -> MessageCatalog
+    func loadSoundEffectCatalog() throws -> SoundEffectCatalog
     func loadObjectTable() throws -> [ObjectTableEntry]
     func loadObject(named name: String) throws -> LoadedObject
     func loadEntranceTable() throws -> [EntranceTableEntry]
+    func resolveContentURL(relativePath: String) throws -> URL
 }
 
 public enum ContentLoaderError: Error, LocalizedError, Sendable, Equatable {
     case sceneLoadingUnavailable
     case messageLoadingUnavailable
+    case audioLoadingUnavailable
+    case invalidReferencedPath(String)
 
     public var errorDescription: String? {
         switch self {
@@ -21,6 +25,10 @@ public enum ContentLoaderError: Error, LocalizedError, Sendable, Equatable {
             "Scene-backed gameplay content is unavailable in the current content loader."
         case .messageLoadingUnavailable:
             "Message-backed gameplay content is unavailable in the current content loader."
+        case .audioLoadingUnavailable:
+            "Audio-backed gameplay content is unavailable in the current content loader."
+        case .invalidReferencedPath(let path):
+            "Content path escapes the configured content root: \(path)."
         }
     }
 }
@@ -38,6 +46,10 @@ public extension ContentLoading {
         throw ContentLoaderError.messageLoadingUnavailable
     }
 
+    func loadSoundEffectCatalog() throws -> SoundEffectCatalog {
+        throw ContentLoaderError.audioLoadingUnavailable
+    }
+
     func loadObjectTable() throws -> [ObjectTableEntry] {
         throw ContentLoaderError.sceneLoadingUnavailable
     }
@@ -49,19 +61,35 @@ public extension ContentLoading {
     func loadEntranceTable() throws -> [EntranceTableEntry] {
         throw ContentLoaderError.sceneLoadingUnavailable
     }
+
+    func resolveContentURL(relativePath: String) throws -> URL {
+        throw ContentLoaderError.audioLoadingUnavailable
+    }
 }
 
 public struct ContentLoader: ContentLoading {
     private let sceneLoader: any SceneLoading
     private let messageLoader: any MessageLoading
+    private let soundEffectLoader: any SoundEffectLoading
+    private let contentRoot: URL?
 
     public init(
         contentRoot: URL? = nil,
         sceneLoader: (any SceneLoading)? = nil,
-        messageLoader: (any MessageLoading)? = nil
+        messageLoader: (any MessageLoading)? = nil,
+        soundEffectLoader: (any SoundEffectLoading)? = nil
     ) {
-        self.sceneLoader = sceneLoader ?? SceneLoader(contentRoot: contentRoot)
-        self.messageLoader = messageLoader ?? MessageLoader(contentRoot: contentRoot)
+        let resolvedSceneLoader = sceneLoader ?? SceneLoader(contentRoot: contentRoot)
+        let resolvedMessageLoader = messageLoader ?? MessageLoader(contentRoot: contentRoot)
+        let resolvedSoundEffectLoader = soundEffectLoader ?? SoundEffectLoader(contentRoot: contentRoot)
+
+        self.sceneLoader = resolvedSceneLoader
+        self.messageLoader = resolvedMessageLoader
+        self.soundEffectLoader = resolvedSoundEffectLoader
+        self.contentRoot = contentRoot?.standardizedFileURL ??
+            (resolvedSceneLoader as? SceneLoader)?.contentRoot ??
+            (resolvedMessageLoader as? MessageLoader)?.contentRoot ??
+            (resolvedSoundEffectLoader as? SoundEffectLoader)?.contentRoot
     }
 
     public func loadInitialContent() async throws {}
@@ -78,6 +106,10 @@ public struct ContentLoader: ContentLoading {
         try messageLoader.loadMessageCatalog()
     }
 
+    public func loadSoundEffectCatalog() throws -> SoundEffectCatalog {
+        try soundEffectLoader.loadSoundEffectCatalog()
+    }
+
     public func loadObjectTable() throws -> [ObjectTableEntry] {
         try sceneLoader.loadObjectTable()
     }
@@ -88,5 +120,22 @@ public struct ContentLoader: ContentLoading {
 
     public func loadEntranceTable() throws -> [EntranceTableEntry] {
         try sceneLoader.loadEntranceTable()
+    }
+
+    public func resolveContentURL(relativePath: String) throws -> URL {
+        guard let contentRoot else {
+            throw ContentLoaderError.audioLoadingUnavailable
+        }
+
+        let resolvedURL = contentRoot
+            .appendingPathComponent(relativePath)
+            .standardizedFileURL
+        let contentRootPath = contentRoot.standardizedFileURL.path
+
+        guard resolvedURL.path == contentRootPath || resolvedURL.path.hasPrefix(contentRootPath + "/") else {
+            throw ContentLoaderError.invalidReferencedPath(relativePath)
+        }
+
+        return resolvedURL
     }
 }

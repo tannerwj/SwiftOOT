@@ -86,6 +86,12 @@ public struct AudioExtractor: OOTExtractionPipelineComponent {
     public init() {}
 }
 
+public struct SoundEffectExtractor: OOTExtractionPipelineComponent {
+    public let name = "SoundEffectExtractor"
+
+    public init() {}
+}
+
 public struct TextExtractor: OOTExtractionPipelineComponent {
     public let name = "TextExtractor"
 
