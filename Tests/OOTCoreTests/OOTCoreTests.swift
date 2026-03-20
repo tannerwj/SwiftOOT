@@ -298,8 +298,34 @@ final class OOTCoreTests: XCTestCase {
 
     @MainActor
     func testPauseMenuTogglesFromStartInputAndCyclesSubscreens() async {
+        let kokiriScene = makeScene(
+            sceneID: 0x55,
+            sceneName: "spot04",
+            roomSpawns: [0: []],
+            spawns: [
+                SceneSpawnPoint(
+                    index: 0,
+                    roomID: 0,
+                    position: Vector3s(x: 0, y: 0, z: 0),
+                    rotation: Vector3s(x: 0, y: 0, z: 0)
+                ),
+            ],
+            collision: fixtureCollisionMesh()
+        )
+        let controller = MockMusicPlaybackController()
         let runtime = GameRuntime(
-            sceneLoader: MockSceneLoader(),
+            contentLoader: MockContentLoader(
+                scenesByID: [0x55: kokiriScene],
+                actorTable: [],
+                audioTrackCatalog: makeAudioTrackCatalog()
+            ),
+            sceneLoader: ConfigurableSceneLoader(
+                sceneEntries: [
+                    SceneTableEntry(index: 0x55, segmentName: "spot04_scene", enumName: "SCENE_KOKIRI_FOREST", title: "Kokiri Forest"),
+                ],
+                scenesByID: [0x55: kokiriScene]
+            ),
+            musicPlaybackController: controller,
             suspender: { _ in }
         )
         await runtime.start()
@@ -311,6 +337,7 @@ final class OOTCoreTests: XCTestCase {
 
         XCTAssertTrue(runtime.isPauseMenuPresented)
         XCTAssertEqual(runtime.pauseMenuState.activeSubscreen, .items)
+        XCTAssertEqual(runtime.musicPlaybackState.phase, .paused)
 
         runtime.setControllerInput(ControllerInputState())
         runtime.updateFrame()
@@ -332,6 +359,11 @@ final class OOTCoreTests: XCTestCase {
         runtime.setControllerInput(ControllerInputState(bPressed: true))
         runtime.updateFrame()
         XCTAssertFalse(runtime.isPauseMenuPresented)
+        try? await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(runtime.musicPlaybackState.phase, .playing)
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "kokiri-forest")
+        XCTAssertTrue(controller.events.contains("pause"))
+        XCTAssertTrue(controller.events.contains("play:kokiri-forest:0.35"))
     }
 
     @MainActor
@@ -448,8 +480,19 @@ final class OOTCoreTests: XCTestCase {
 
         await runtime.start()
 
-        XCTAssertEqual(runtime.availableAudioTracks.map(\.id), ["kokiri-forest", "title-theme"])
-        XCTAssertEqual(runtime.audioTrackCatalog?.sceneBindings.map(\.trackID), ["kokiri-forest"])
+        XCTAssertEqual(
+            runtime.availableAudioTracks.map(\.id),
+            [
+                "heart-get",
+                "inside-deku-tree",
+                "item-get",
+                "kokiri-forest",
+                "title-theme",
+                "open-treasure-chest",
+            ]
+        )
+        XCTAssertEqual(runtime.audioTrackCatalog?.sceneBindings.map(\.trackID), ["inside-deku-tree", "kokiri-forest"])
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "title-theme")
     }
 
     @MainActor
@@ -472,7 +515,13 @@ final class OOTCoreTests: XCTestCase {
 
         XCTAssertEqual(runtime.musicPlaybackState.phase, .playing)
         XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "kokiri-forest")
-        XCTAssertEqual(controller.events, ["play:kokiri-forest:0.00"])
+        XCTAssertEqual(
+            controller.events,
+            [
+                "play:title-theme:0.00",
+                "play:kokiri-forest:0.00",
+            ]
+        )
 
         runtime.pauseMusicTrack()
         XCTAssertEqual(runtime.musicPlaybackState.phase, .paused)
@@ -493,6 +542,7 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual(
             controller.events,
             [
+                "play:title-theme:0.00",
                 "play:kokiri-forest:0.00",
                 "pause",
                 "resume",
@@ -510,6 +560,7 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual(
             controller.events,
             [
+                "play:title-theme:0.00",
                 "play:kokiri-forest:0.00",
                 "pause",
                 "resume",
@@ -517,6 +568,298 @@ final class OOTCoreTests: XCTestCase {
                 "stop",
             ]
         )
+    }
+
+    @MainActor
+    func testTitleFlowStartsTitleAndKokiriMusicWithoutReplayingFileSelectMusic() async {
+        let kokiriScene = makeScene(
+            sceneID: 0x55,
+            sceneName: "spot04",
+            roomSpawns: [0: []],
+            spawns: [
+                SceneSpawnPoint(
+                    index: 0,
+                    roomID: 0,
+                    position: Vector3s(x: 0, y: 0, z: 0),
+                    rotation: Vector3s(x: 0, y: 0, z: 0)
+                ),
+            ],
+            collision: fixtureCollisionMesh()
+        )
+        let sceneLoader = ConfigurableSceneLoader(
+            sceneEntries: [
+                SceneTableEntry(
+                    index: 0x55,
+                    segmentName: "spot04_scene",
+                    enumName: "SCENE_KOKIRI_FOREST",
+                    title: "Kokiri Forest"
+                ),
+            ],
+            scenesByID: [0x55: kokiriScene]
+        )
+        let controller = MockMusicPlaybackController()
+        let runtime = GameRuntime(
+            contentLoader: MockContentLoader(
+                scenesByID: [0x55: kokiriScene],
+                actorTable: [],
+                audioTrackCatalog: makeAudioTrackCatalog()
+            ),
+            sceneLoader: sceneLoader,
+            musicPlaybackController: controller,
+            suspender: { _ in }
+        )
+
+        await runtime.start()
+        XCTAssertEqual(runtime.currentState, .titleScreen)
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "title-theme")
+
+        runtime.chooseTitleOption(.newGame)
+        XCTAssertEqual(runtime.currentState, .fileSelect)
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "title-theme")
+
+        runtime.confirmSelectedSaveSlot()
+        try? await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(runtime.currentState, .gameplay)
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "kokiri-forest")
+        XCTAssertEqual(
+            controller.events,
+            [
+                "play:title-theme:0.00",
+                "play:kokiri-forest:1.00",
+            ]
+        )
+    }
+
+    @MainActor
+    func testPauseMenuResynchronizesInterruptedSceneCrossfade() async throws {
+        let catalog = makeAudioTrackCatalog()
+        let controller = MockMusicPlaybackController()
+        let runtime = GameRuntime(
+            currentState: .gameplay,
+            playState: PlayState(
+                activeSaveSlot: 0,
+                entryMode: .newGame,
+                currentSceneName: "Inside the Deku Tree",
+                currentSceneID: 0x00,
+                playerName: "Link"
+            ),
+            contentLoader: MockContentLoader(
+                scenesByID: [:],
+                actorTable: [],
+                audioTrackCatalog: catalog
+            ),
+            sceneLoader: MockSceneLoader(),
+            musicPlaybackController: controller,
+            suspender: { _ in }
+        )
+        let kokiriTrack = try XCTUnwrap(catalog.tracks.first(where: { $0.id == "kokiri-forest" }))
+        let dekuTreeTrack = try XCTUnwrap(catalog.tracks.first(where: { $0.id == "inside-deku-tree" }))
+        runtime.musicPlaybackState = MusicPlaybackState(
+            phase: .crossfading,
+            currentTrack: MusicTrackReference(track: kokiriTrack),
+            pendingTrack: MusicTrackReference(track: dekuTreeTrack)
+        )
+
+        runtime.togglePauseMenu()
+        XCTAssertTrue(runtime.isPauseMenuPresented)
+        XCTAssertEqual(runtime.musicPlaybackState.phase, .paused)
+        XCTAssertNil(runtime.musicPlaybackState.pendingTrack)
+
+        runtime.togglePauseMenu()
+        try? await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertFalse(runtime.isPauseMenuPresented)
+        XCTAssertEqual(runtime.musicPlaybackState.phase, .playing)
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "inside-deku-tree")
+        XCTAssertEqual(
+            controller.events,
+            [
+                "pause",
+                "play:inside-deku-tree:0.35",
+            ]
+        )
+    }
+
+    @MainActor
+    func testPauseMenuResynchronizesInterruptedTransientMusic() async throws {
+        let catalog = makeAudioTrackCatalog()
+        let controller = MockMusicPlaybackController()
+        let runtime = GameRuntime(
+            currentState: .gameplay,
+            playState: PlayState(
+                activeSaveSlot: 0,
+                entryMode: .newGame,
+                currentSceneName: "Kokiri Forest",
+                currentSceneID: 0x55,
+                playerName: "Link"
+            ),
+            contentLoader: MockContentLoader(
+                scenesByID: [:],
+                actorTable: [],
+                audioTrackCatalog: catalog
+            ),
+            sceneLoader: MockSceneLoader(),
+            musicPlaybackController: controller,
+            suspender: { _ in }
+        )
+        let transientTrack = try XCTUnwrap(catalog.tracks.first(where: { $0.id == "item-get" }))
+        runtime.musicPlaybackState = MusicPlaybackState(
+            phase: .playing,
+            currentTrack: MusicTrackReference(track: transientTrack)
+        )
+
+        runtime.togglePauseMenu()
+        XCTAssertTrue(runtime.isPauseMenuPresented)
+        XCTAssertEqual(runtime.musicPlaybackState.phase, .paused)
+
+        runtime.togglePauseMenu()
+        try? await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertFalse(runtime.isPauseMenuPresented)
+        XCTAssertEqual(runtime.musicPlaybackState.phase, .playing)
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "kokiri-forest")
+        XCTAssertEqual(
+            controller.events,
+            [
+                "pause",
+                "play:kokiri-forest:0.35",
+            ]
+        )
+    }
+
+    @MainActor
+    func testSceneTransitionCrossfadesBetweenBoundGameplayTracks() async throws {
+        let kokiriScene = makeScene(
+            sceneID: 0x55,
+            sceneName: "spot04",
+            roomSpawns: [0: []],
+            spawns: [
+                SceneSpawnPoint(
+                    index: 0,
+                    roomID: 0,
+                    position: Vector3s(x: 0, y: 0, z: 0),
+                    rotation: Vector3s(x: 0, y: 0, z: 0)
+                ),
+            ],
+            collision: fixtureCollisionMesh()
+        )
+        let dekuTreeScene = makeScene(
+            sceneID: 0x00,
+            sceneName: "ydan",
+            roomSpawns: [0: []],
+            spawns: [
+                SceneSpawnPoint(
+                    index: 0,
+                    roomID: 0,
+                    position: Vector3s(x: 0, y: 0, z: 0),
+                    rotation: Vector3s(x: 0, y: 0, z: 0)
+                ),
+            ],
+            collision: fixtureCollisionMesh()
+        )
+        let sceneLoader = ConfigurableSceneLoader(
+            sceneEntries: [
+                SceneTableEntry(index: 0x00, segmentName: "ydan_scene", enumName: "SCENE_DEKU_TREE", title: "Inside the Deku Tree"),
+                SceneTableEntry(index: 0x55, segmentName: "spot04_scene", enumName: "SCENE_KOKIRI_FOREST", title: "Kokiri Forest"),
+            ],
+            scenesByID: [
+                0x00: dekuTreeScene,
+                0x55: kokiriScene,
+            ]
+        )
+        let controller = MockMusicPlaybackController()
+        let runtime = GameRuntime(
+            contentLoader: MockContentLoader(
+                scenesByID: [
+                    0x00: dekuTreeScene,
+                    0x55: kokiriScene,
+                ],
+                actorTable: [],
+                audioTrackCatalog: makeAudioTrackCatalog()
+            ),
+            sceneLoader: sceneLoader,
+            musicPlaybackController: controller,
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "kokiri-forest")
+
+        try runtime.loadScene(id: 0x00)
+        try? await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "inside-deku-tree")
+        XCTAssertEqual(
+            controller.events,
+            [
+                "play:kokiri-forest:0.00",
+                "play:inside-deku-tree:1.00",
+            ]
+        )
+    }
+
+    @MainActor
+    func testChestAndBossRewardFanfaresReturnToSceneMusic() async throws {
+        let kokiriScene = makeScene(
+            sceneID: 0x55,
+            sceneName: "spot04",
+            roomSpawns: [0: []],
+            spawns: [
+                SceneSpawnPoint(
+                    index: 0,
+                    roomID: 0,
+                    position: Vector3s(x: 0, y: 0, z: 0),
+                    rotation: Vector3s(x: 0, y: 0, z: 0)
+                ),
+            ],
+            collision: fixtureCollisionMesh()
+        )
+        let controller = MockMusicPlaybackController()
+        let runtime = GameRuntime(
+            contentLoader: MockContentLoader(
+                scenesByID: [0x55: kokiriScene],
+                actorTable: [],
+                audioTrackCatalog: makeAudioTrackCatalog()
+            ),
+            sceneLoader: ConfigurableSceneLoader(
+                sceneEntries: [
+                    SceneTableEntry(index: 0x55, segmentName: "spot04_scene", enumName: "SCENE_KOKIRI_FOREST", title: "Kokiri Forest"),
+                ],
+                scenesByID: [0x55: kokiriScene]
+            ),
+            musicPlaybackController: controller,
+            suspender: { _ in }
+        )
+
+        try runtime.loadScene(id: 0x55)
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "kokiri-forest")
+
+        let chestOpened = runtime.playState?.requestChestOpen(
+            TreasureChestOpenRequest(
+                chestSize: .large,
+                reward: .compass,
+                treasureFlag: TreasureFlagKey(
+                    scene: SceneIdentity(id: 0x55, name: "spot04"),
+                    flag: 1
+                ),
+                sourcePosition: Vec3f(x: 0, y: 0, z: -36)
+            )
+        )
+        XCTAssertEqual(chestOpened, true)
+
+        for _ in 0..<24 {
+            runtime.updateFrame()
+        }
+        try? await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "kokiri-forest")
+        XCTAssertTrue(controller.events.contains("play:open-treasure-chest:0.00"))
+        XCTAssertTrue(controller.events.contains("play:item-get:0.00"))
+
+        runtime.playState?.requestReward(.chest(.heartContainer))
+        try? await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "kokiri-forest")
+        XCTAssertTrue(controller.events.contains("play:heart-get:0.00"))
     }
 
     @MainActor
@@ -4399,8 +4742,9 @@ private final class MockMusicPlaybackController: MusicPlaybackControlling {
     func play(
         track: AudioTrackManifest,
         crossfadeDuration: TimeInterval
-    ) throws {
+    ) throws -> TimeInterval? {
         events.append("play:\(track.id):\(String(format: "%.2f", crossfadeDuration))")
+        return track.kind == .fanfare ? 0.01 : nil
     }
 
     func stop() {
@@ -4419,6 +4763,45 @@ private final class MockMusicPlaybackController: MusicPlaybackControlling {
 private func makeAudioTrackCatalog() -> AudioTrackCatalog {
     AudioTrackCatalog(
         tracks: [
+            AudioTrackManifest(
+                id: "heart-get",
+                title: "Heart Get",
+                kind: .fanfare,
+                sequenceID: 36,
+                sequenceEnumName: "NA_BGM_HEART_GET",
+                assetDirectory: "Audio/BGM/heart-get",
+                sequencePath: "Audio/BGM/heart-get/sequence.seq",
+                sequenceMetadataPath: "Audio/BGM/heart-get/sequence.xml",
+                soundfontPaths: ["Audio/BGM/heart-get/soundfonts/Soundfont_0.xml"],
+                sampleBankPaths: ["Audio/BGM/heart-get/samplebanks/SampleBank_0.xml"],
+                samplePaths: ["Audio/BGM/heart-get/samples/Sample000.wav"]
+            ),
+            AudioTrackManifest(
+                id: "inside-deku-tree",
+                title: "Inside the Deku Tree",
+                kind: .bgm,
+                sequenceID: 28,
+                sequenceEnumName: "NA_BGM_INSIDE_DEKU_TREE",
+                assetDirectory: "Audio/BGM/inside-deku-tree",
+                sequencePath: "Audio/BGM/inside-deku-tree/sequence.seq",
+                sequenceMetadataPath: "Audio/BGM/inside-deku-tree/sequence.xml",
+                soundfontPaths: ["Audio/BGM/inside-deku-tree/soundfonts/Soundfont_15.xml"],
+                sampleBankPaths: ["Audio/BGM/inside-deku-tree/samplebanks/SampleBank_0.xml"],
+                samplePaths: ["Audio/BGM/inside-deku-tree/samples/Sample119.wav"]
+            ),
+            AudioTrackManifest(
+                id: "item-get",
+                title: "Item Get",
+                kind: .fanfare,
+                sequenceID: 34,
+                sequenceEnumName: "NA_BGM_ITEM_GET",
+                assetDirectory: "Audio/BGM/item-get",
+                sequencePath: "Audio/BGM/item-get/sequence.seq",
+                sequenceMetadataPath: "Audio/BGM/item-get/sequence.xml",
+                soundfontPaths: ["Audio/BGM/item-get/soundfonts/Soundfont_0.xml"],
+                sampleBankPaths: ["Audio/BGM/item-get/samplebanks/SampleBank_0.xml"],
+                samplePaths: ["Audio/BGM/item-get/samples/Sample000.wav"]
+            ),
             AudioTrackManifest(
                 id: "kokiri-forest",
                 title: "Kokiri Forest",
@@ -4445,8 +4828,28 @@ private func makeAudioTrackCatalog() -> AudioTrackCatalog {
                 sampleBankPaths: ["Audio/BGM/title-theme/samplebanks/SampleBank_0.xml"],
                 samplePaths: ["Audio/BGM/title-theme/samples/Sample119.wav"]
             ),
+            AudioTrackManifest(
+                id: "open-treasure-chest",
+                title: "Open Treasure Chest",
+                kind: .fanfare,
+                sequenceID: 43,
+                sequenceEnumName: "NA_BGM_OPEN_TRE_BOX",
+                assetDirectory: "Audio/BGM/open-treasure-chest",
+                sequencePath: "Audio/BGM/open-treasure-chest/sequence.seq",
+                sequenceMetadataPath: "Audio/BGM/open-treasure-chest/sequence.xml",
+                soundfontPaths: ["Audio/BGM/open-treasure-chest/soundfonts/Soundfont_0.xml"],
+                sampleBankPaths: ["Audio/BGM/open-treasure-chest/samplebanks/SampleBank_0.xml"],
+                samplePaths: ["Audio/BGM/open-treasure-chest/samples/Sample000.wav"]
+            ),
         ],
         sceneBindings: [
+            AudioSceneBinding(
+                sceneName: "ydan",
+                sceneID: 0x00,
+                sequenceID: 28,
+                sequenceEnumName: "NA_BGM_INSIDE_DEKU_TREE",
+                trackID: "inside-deku-tree"
+            ),
             AudioSceneBinding(
                 sceneName: "spot04",
                 sceneID: 0x55,

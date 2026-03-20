@@ -630,6 +630,70 @@ final class OOTUITests: XCTestCase {
         XCTAssertEqual((runtime.actors.first as? TreasureChestActor)?.isOpened, true)
     }
 
+    func testHarnessStyleRuntimeAudioFlowCoversTitleKokiriAndDekuMusic() async throws {
+        let kokiriScene = makeWorldMapScene(
+            sceneID: 0x55,
+            sceneName: "spot04",
+            sceneTitle: "Kokiri Forest",
+            exits: [],
+            collisionWidth: 200,
+            collisionHeight: 200
+        )
+        let dekuTreeScene = makeWorldMapScene(
+            sceneID: 0x00,
+            sceneName: "ydan",
+            sceneTitle: "Inside the Deku Tree",
+            exits: [],
+            collisionWidth: 180,
+            collisionHeight: 180
+        )
+        let controller = UITestMusicPlaybackController()
+        let runtime = GameRuntime(
+            contentLoader: UITestAudioContentLoader(
+                scenesByID: [
+                    0x00: dekuTreeScene,
+                    0x55: kokiriScene,
+                ],
+                audioTrackCatalog: makeUITestAudioTrackCatalog()
+            ),
+            sceneLoader: WorldMapTestSceneLoader(
+                sceneEntries: [
+                    SceneTableEntry(index: 0x00, segmentName: "ydan_scene", enumName: "SCENE_DEKU_TREE", title: "Inside the Deku Tree"),
+                    SceneTableEntry(index: 0x55, segmentName: "spot04_scene", enumName: "SCENE_KOKIRI_FOREST", title: "Kokiri Forest"),
+                ],
+                scenesByID: [
+                    0x00: dekuTreeScene,
+                    0x55: kokiriScene,
+                ],
+                entranceTable: []
+            ),
+            musicPlaybackController: controller,
+            suspender: { _ in }
+        )
+
+        await runtime.start()
+        XCTAssertEqual(runtime.currentState, .titleScreen)
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "title-theme")
+
+        runtime.chooseTitleOption(.newGame)
+        runtime.confirmSelectedSaveSlot()
+        try? await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(runtime.currentState, .gameplay)
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "kokiri-forest")
+
+        try runtime.loadScene(id: 0x00)
+        try? await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "inside-deku-tree")
+        XCTAssertEqual(
+            controller.events,
+            [
+                "play:title-theme:0.00",
+                "play:kokiri-forest:1.00",
+                "play:inside-deku-tree:1.00",
+            ]
+        )
+    }
+
     func testGameplaySceneRendersXRayOverlayFromRuntimeTelemetry() async throws {
         guard MTLCreateSystemDefaultDevice() != nil else {
             throw XCTSkip("Metal is unavailable on this host")
@@ -1833,6 +1897,47 @@ private struct StubContentLoader: ContentLoading {
     func loadInitialContent() async throws {}
 }
 
+private struct UITestAudioContentLoader: ContentLoading {
+    let scenesByID: [Int: LoadedScene]
+    let audioTrackCatalog: AudioTrackCatalog
+
+    func loadInitialContent() async throws {}
+
+    func loadScene(id: Int) throws -> LoadedScene {
+        guard let scene = scenesByID[id] else {
+            throw ContentLoaderError.sceneLoadingUnavailable
+        }
+        return scene
+    }
+
+    func loadActorTable() throws -> [ActorTableEntry] {
+        []
+    }
+
+    func loadAudioTrackCatalog() throws -> AudioTrackCatalog {
+        audioTrackCatalog
+    }
+}
+
+@MainActor
+private final class UITestMusicPlaybackController: MusicPlaybackControlling {
+    private(set) var events: [String] = []
+
+    func play(
+        track: AudioTrackManifest,
+        crossfadeDuration: TimeInterval
+    ) throws -> TimeInterval? {
+        events.append("play:\(track.id):\(String(format: "%.2f", crossfadeDuration))")
+        return nil
+    }
+
+    func stop() {}
+
+    func pause() {}
+
+    func resume() {}
+}
+
 private struct HUDArtContentLoader: ContentLoading {
     let object: LoadedObject
 
@@ -1925,6 +2030,68 @@ private func makePlayerRenderTestObject() -> LoadedObject {
             rightHandPath: [],
             "meshes/gLinkAdultRightHandHoldingHylianShieldNearDL.dl.json": [],
             "meshes/gLinkAdultRightHandHoldingMirrorShieldNearDL.dl.json": [],
+        ]
+    )
+}
+
+private func makeUITestAudioTrackCatalog() -> AudioTrackCatalog {
+    AudioTrackCatalog(
+        tracks: [
+            AudioTrackManifest(
+                id: "inside-deku-tree",
+                title: "Inside the Deku Tree",
+                kind: .bgm,
+                sequenceID: 28,
+                sequenceEnumName: "NA_BGM_INSIDE_DEKU_TREE",
+                assetDirectory: "Audio/BGM/inside-deku-tree",
+                sequencePath: "Audio/BGM/inside-deku-tree/sequence.seq",
+                sequenceMetadataPath: "Audio/BGM/inside-deku-tree/sequence.xml",
+                soundfontPaths: [],
+                sampleBankPaths: [],
+                samplePaths: ["Audio/BGM/inside-deku-tree/samples/Sample000.wav"]
+            ),
+            AudioTrackManifest(
+                id: "kokiri-forest",
+                title: "Kokiri Forest",
+                kind: .bgm,
+                sequenceID: 60,
+                sequenceEnumName: "NA_BGM_KOKIRI",
+                assetDirectory: "Audio/BGM/kokiri-forest",
+                sequencePath: "Audio/BGM/kokiri-forest/sequence.seq",
+                sequenceMetadataPath: "Audio/BGM/kokiri-forest/sequence.xml",
+                soundfontPaths: [],
+                sampleBankPaths: [],
+                samplePaths: ["Audio/BGM/kokiri-forest/samples/Sample000.wav"]
+            ),
+            AudioTrackManifest(
+                id: "title-theme",
+                title: "Title Theme",
+                kind: .bgm,
+                sequenceID: 30,
+                sequenceEnumName: "NA_BGM_TITLE",
+                assetDirectory: "Audio/BGM/title-theme",
+                sequencePath: "Audio/BGM/title-theme/sequence.seq",
+                sequenceMetadataPath: "Audio/BGM/title-theme/sequence.xml",
+                soundfontPaths: [],
+                sampleBankPaths: [],
+                samplePaths: ["Audio/BGM/title-theme/samples/Sample000.wav"]
+            ),
+        ],
+        sceneBindings: [
+            AudioSceneBinding(
+                sceneName: "ydan",
+                sceneID: 0x00,
+                sequenceID: 28,
+                sequenceEnumName: "NA_BGM_INSIDE_DEKU_TREE",
+                trackID: "inside-deku-tree"
+            ),
+            AudioSceneBinding(
+                sceneName: "spot04",
+                sceneID: 0x55,
+                sequenceID: 60,
+                sequenceEnumName: "NA_BGM_KOKIRI",
+                trackID: "kokiri-forest"
+            ),
         ]
     )
 }

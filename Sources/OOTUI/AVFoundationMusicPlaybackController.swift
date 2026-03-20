@@ -20,11 +20,13 @@ public final class AVFoundationMusicPlaybackController: MusicPlaybackControlling
     public func play(
         track: AudioTrackManifest,
         crossfadeDuration: TimeInterval
-    ) throws {
+    ) throws -> TimeInterval? {
         try configureIfNeeded()
 
         let sampleURL = try resolvePlayableSampleURL(for: track)
         let buffer = try loadBuffer(from: sampleURL)
+        let shouldLoop = track.kind == .bgm
+        let duration = shouldLoop ? nil : Double(buffer.frameLength) / buffer.format.sampleRate
 
         crossfadeTask?.cancel()
         let targetPlayerIndex = nextPlayerIndex(for: currentPlayerIndex, crossfadeDuration: crossfadeDuration)
@@ -33,7 +35,12 @@ public final class AVFoundationMusicPlaybackController: MusicPlaybackControlling
         targetPlayer.stop()
         buffersByPlayerIndex[targetPlayerIndex] = buffer
         targetPlayer.volume = currentPlayerIndex == nil || crossfadeDuration <= 0 ? 1 : 0
-        targetPlayer.scheduleBuffer(buffer, at: nil, options: [.loops], completionHandler: nil)
+        targetPlayer.scheduleBuffer(
+            buffer,
+            at: nil,
+            options: shouldLoop ? [.loops] : [],
+            completionHandler: nil
+        )
         targetPlayer.play()
 
         guard
@@ -43,7 +50,7 @@ public final class AVFoundationMusicPlaybackController: MusicPlaybackControlling
         else {
             stopInactivePlayers(except: targetPlayerIndex)
             self.currentPlayerIndex = targetPlayerIndex
-            return
+            return duration
         }
 
         let outgoingPlayer = players[currentPlayerIndex]
@@ -55,6 +62,7 @@ public final class AVFoundationMusicPlaybackController: MusicPlaybackControlling
             incomingIndex: targetPlayerIndex,
             duration: crossfadeDuration
         )
+        return duration
     }
 
     public func stop() {

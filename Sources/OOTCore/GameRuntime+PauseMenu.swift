@@ -24,6 +24,11 @@ extension GameRuntime {
 
         pauseState.isPresented.toggle()
         pauseMenuState = pauseState
+        if pauseState.isPresented {
+            pauseMusicForPauseMenu()
+        } else {
+            resumeMusicForPauseMenu()
+        }
     }
 
     public func cyclePauseMenuSubscreen(direction: Int) {

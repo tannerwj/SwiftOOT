@@ -72,7 +72,7 @@ public protocol MusicPlaybackControlling: AnyObject {
     func play(
         track: AudioTrackManifest,
         crossfadeDuration: TimeInterval
-    ) throws
+    ) throws -> TimeInterval?
     func stop()
     func pause()
     func resume()
