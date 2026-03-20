@@ -930,35 +930,11 @@ public final class GameRuntime {
         id trackID: String,
         crossfadeDuration: TimeInterval = 1.0
     ) {
-        guard let track = resolveAudioTrack(id: trackID) else {
-            statusMessage = "Audio track \(trackID) is unavailable."
-            return
-        }
-
-        let currentTrack = musicPlaybackState.currentTrack
-        let shouldCrossfade = currentTrack != nil && currentTrack?.id != track.id && crossfadeDuration > 0
-
-        do {
-            try musicPlaybackController?.play(
-                track: track,
-                crossfadeDuration: shouldCrossfade ? crossfadeDuration : 0
-            )
-        } catch {
-            errorMessage = error.localizedDescription
-            return
-        }
-
-        errorMessage = nil
-        statusMessage = "Playing \(track.title)."
-        if shouldCrossfade, let currentTrack {
-            beginCrossfade(
-                from: currentTrack,
-                to: MusicTrackReference(track: track),
-                duration: crossfadeDuration
-            )
-        } else {
-            completeMusicTransition(to: MusicTrackReference(track: track), phase: .playing)
-        }
+        _ = playMusicTrack(
+            id: trackID,
+            crossfadeDuration: crossfadeDuration,
+            announcesStatus: true
+        )
     }
 
     public func crossfadeMusicTrack(
@@ -969,6 +945,18 @@ public final class GameRuntime {
     }
 
     public func pauseMusicTrack() {
+        pauseMusicTrack(announcesStatus: true)
+    }
+
+    public func resumeMusicTrack() {
+        resumeMusicTrack(announcesStatus: true)
+    }
+
+    public func stopMusicTrack() {
+        stopMusicTrack(announcesStatus: true)
+    }
+
+    func pauseMusicTrack(announcesStatus: Bool) {
         guard musicPlaybackState.currentTrack != nil else {
             return
         }
@@ -978,25 +966,31 @@ public final class GameRuntime {
         musicPlaybackController?.pause()
         musicPlaybackState.phase = .paused
         musicPlaybackState.pendingTrack = nil
-        statusMessage = "Music paused."
+        if announcesStatus {
+            statusMessage = "Music paused."
+        }
     }
 
-    public func resumeMusicTrack() {
+    func resumeMusicTrack(announcesStatus: Bool) {
         guard musicPlaybackState.currentTrack != nil else {
             return
         }
 
         musicPlaybackController?.resume()
         musicPlaybackState.phase = .playing
-        statusMessage = "Music resumed."
+        if announcesStatus {
+            statusMessage = "Music resumed."
+        }
     }
 
-    public func stopMusicTrack() {
+    func stopMusicTrack(announcesStatus: Bool) {
         musicTransitionTask?.cancel()
         musicTransitionTask = nil
         musicPlaybackController?.stop()
         musicPlaybackState = MusicPlaybackState()
-        statusMessage = "Music stopped."
+        if announcesStatus {
+            statusMessage = "Music stopped."
+        }
     }
 
     public func developerRuntimeStateSnapshot() -> DeveloperRuntimeStateSnapshot {
@@ -1477,6 +1471,9 @@ public final class GameRuntime {
         }
         currentState = .gameplay
         queueAmbientSoundIfNeeded(for: loadedScene)
+        synchronizeMusicForCurrentContext(
+            crossfadeDuration: musicPlaybackState.currentTrack == nil || previousSceneID == sceneID ? 0 : 1.0
+        )
         syncXRayTelemetry()
         startTimeLoop()
     }
@@ -1739,6 +1736,7 @@ public final class GameRuntime {
             stopTimeLoop()
             clearXRayTelemetry()
         }
+        synchronizeMusicForCurrentContext()
         telemetryPublisher.publish("gameRuntime.state.\(nextState.rawValue)")
     }
 
@@ -1819,6 +1817,7 @@ public final class GameRuntime {
             itemWorldPosition: itemGetWorldPosition()
         )
         playerState?.presentationMode = request.reward.playerPresentationMode
+        playTransientMusicTrack(id: "open-treasure-chest")
         return true
     }
 
@@ -1830,6 +1829,9 @@ public final class GameRuntime {
         inventoryState.apply(reward, in: scene)
         persistActiveSaveSlotState()
         synchronizeHUDStateWithInventory()
+        if case .chest(.heartContainer) = reward {
+            playTransientMusicTrack(id: "heart-get")
+        }
     }
     private func markDungeonEventTriggered(_ key: DungeonEventFlagKey) {
         guard inventoryState.hasTriggeredDungeonEvent(key) == false else {
@@ -1861,6 +1863,7 @@ public final class GameRuntime {
                 itemGetSequence.phase = .displayingText
                 itemGetSequence.phaseFrameCount = 0
                 queueSoundEffect(.itemGet)
+                playTransientMusicTrack(id: musicTrackID(for: itemGetSequence.reward))
             }
         case .displayingText:
             itemGetSequence.itemWorldPosition = itemGetWorldPosition()
@@ -2394,6 +2397,193 @@ public final class GameRuntime {
     private func resolveAudioTrack(id trackID: String) -> AudioTrackManifest? {
         loadAudioTrackCatalogIfAvailable()
         return audioTrackCatalog?.tracks.first(where: { $0.id == trackID })
+    }
+
+    private func resolveAudioTrack(preferredIDs: [String]) -> AudioTrackManifest? {
+        for trackID in preferredIDs {
+            if let track = resolveAudioTrack(id: trackID) {
+                return track
+            }
+        }
+        return nil
+    }
+
+    @discardableResult
+    private func playMusicTrack(
+        id trackID: String,
+        crossfadeDuration: TimeInterval,
+        announcesStatus: Bool
+    ) -> TimeInterval? {
+        guard let track = resolveAudioTrack(id: trackID) else {
+            if announcesStatus {
+                statusMessage = "Audio track \(trackID) is unavailable."
+            }
+            return nil
+        }
+
+        let currentTrack = musicPlaybackState.currentTrack
+        let shouldCrossfade = currentTrack != nil && currentTrack?.id != track.id && crossfadeDuration > 0
+
+        let transientDuration: TimeInterval?
+        do {
+            transientDuration = try musicPlaybackController?.play(
+                track: track,
+                crossfadeDuration: shouldCrossfade ? crossfadeDuration : 0
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+
+        errorMessage = nil
+        if announcesStatus {
+            statusMessage = "Playing \(track.title)."
+        }
+
+        if shouldCrossfade, let currentTrack {
+            beginCrossfade(
+                from: currentTrack,
+                to: MusicTrackReference(track: track),
+                duration: crossfadeDuration
+            )
+        } else {
+            completeMusicTransition(to: MusicTrackReference(track: track), phase: .playing)
+        }
+
+        return transientDuration
+    }
+
+    private func synchronizeMusicForCurrentContext(
+        crossfadeDuration: TimeInterval = 0
+    ) {
+        switch currentState {
+        case .boot, .consoleLogo:
+            if musicPlaybackState.currentTrack != nil {
+                stopMusicTrack(announcesStatus: false)
+            }
+        case .titleScreen:
+            ensurePersistentMusic(
+                preferredTrackIDs: ["title-theme"],
+                crossfadeDuration: crossfadeDuration
+            )
+        case .fileSelect:
+            ensurePersistentMusic(
+                preferredTrackIDs: ["file-select", "file-select-theme", "title-theme"],
+                crossfadeDuration: crossfadeDuration
+            )
+        case .gameplay:
+            guard let track = preferredGameplayMusicTrack() else {
+                if musicPlaybackState.currentTrack?.kind == .bgm {
+                    stopMusicTrack(announcesStatus: false)
+                }
+                return
+            }
+
+            ensurePersistentMusic(
+                preferredTrackIDs: [track.id],
+                crossfadeDuration: crossfadeDuration
+            )
+        }
+    }
+
+    private func preferredGameplayMusicTrack() -> AudioTrackManifest? {
+        loadAudioTrackCatalogIfAvailable()
+
+        let sceneID = loadedScene?.manifest.id ?? playState?.currentSceneID
+        let sceneName = loadedScene?.manifest.name ?? playState?.scene?.manifest.name ?? playState?.currentSceneName
+        guard let audioTrackCatalog else {
+            return nil
+        }
+
+        if let sceneID,
+           let binding = audioTrackCatalog.sceneBindings.first(where: { $0.sceneID == sceneID }),
+           let track = resolveAudioTrack(id: binding.trackID) {
+            return track
+        }
+
+        if let sceneName {
+            let normalizedSceneName = sceneName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let binding = audioTrackCatalog.sceneBindings.first(where: {
+                $0.sceneName.localizedCaseInsensitiveCompare(normalizedSceneName) == .orderedSame
+            }) {
+                return resolveAudioTrack(id: binding.trackID)
+            }
+        }
+
+        return nil
+    }
+
+    private func ensurePersistentMusic(
+        preferredTrackIDs: [String],
+        crossfadeDuration: TimeInterval
+    ) {
+        guard let track = resolveAudioTrack(preferredIDs: preferredTrackIDs) else {
+            return
+        }
+
+        if musicPlaybackState.pendingTrack?.id == track.id {
+            return
+        }
+
+        if musicPlaybackState.currentTrack?.id == track.id {
+            if musicPlaybackState.phase == .paused {
+                resumeMusicTrack(announcesStatus: false)
+            }
+            return
+        }
+
+        _ = playMusicTrack(
+            id: track.id,
+            crossfadeDuration: crossfadeDuration,
+            announcesStatus: false
+        )
+    }
+
+    private func playTransientMusicTrack(id trackID: String) {
+        let duration = playMusicTrack(
+            id: trackID,
+            crossfadeDuration: 0,
+            announcesStatus: false
+        ) ?? fallbackTransientMusicDuration(for: trackID)
+        guard let duration else {
+            return
+        }
+
+        musicTransitionTask?.cancel()
+        musicTransitionTask = Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+
+            await self.suspender(.seconds(duration))
+            guard Task.isCancelled == false else {
+                return
+            }
+
+            self.synchronizeMusicForCurrentContext(crossfadeDuration: 0.35)
+        }
+    }
+
+    private func musicTrackID(for reward: TreasureChestReward) -> String {
+        switch reward {
+        case .heartContainer:
+            return "heart-get"
+        default:
+            return "item-get"
+        }
+    }
+
+    private func fallbackTransientMusicDuration(for trackID: String) -> TimeInterval? {
+        switch trackID {
+        case "open-treasure-chest":
+            return 1.2
+        case "item-get":
+            return 2.2
+        case "heart-get":
+            return 3.0
+        default:
+            return nil
+        }
     }
 
     private func beginCrossfade(
