@@ -5,6 +5,7 @@ public protocol ContentLoading: Sendable {
     func loadInitialContent() async throws
     func loadScene(id: Int) throws -> LoadedScene
     func loadActorTable() throws -> [ActorTableEntry]
+    func loadAudioTrackCatalog() throws -> AudioTrackCatalog
     func loadMessageCatalog() throws -> MessageCatalog
     func loadObjectTable() throws -> [ObjectTableEntry]
     func loadObject(named name: String) throws -> LoadedObject
@@ -13,12 +14,15 @@ public protocol ContentLoading: Sendable {
 
 public enum ContentLoaderError: Error, LocalizedError, Sendable, Equatable {
     case sceneLoadingUnavailable
+    case audioLoadingUnavailable
     case messageLoadingUnavailable
 
     public var errorDescription: String? {
         switch self {
         case .sceneLoadingUnavailable:
             "Scene-backed gameplay content is unavailable in the current content loader."
+        case .audioLoadingUnavailable:
+            "Audio-backed gameplay content is unavailable in the current content loader."
         case .messageLoadingUnavailable:
             "Message-backed gameplay content is unavailable in the current content loader."
         }
@@ -32,6 +36,10 @@ public extension ContentLoading {
 
     func loadActorTable() throws -> [ActorTableEntry] {
         throw ContentLoaderError.sceneLoadingUnavailable
+    }
+
+    func loadAudioTrackCatalog() throws -> AudioTrackCatalog {
+        throw ContentLoaderError.audioLoadingUnavailable
     }
 
     func loadMessageCatalog() throws -> MessageCatalog {
@@ -53,14 +61,17 @@ public extension ContentLoading {
 
 public struct ContentLoader: ContentLoading {
     private let sceneLoader: any SceneLoading
+    private let audioTrackCatalogLoader: any AudioTrackCatalogLoading
     private let messageLoader: any MessageLoading
 
     public init(
         contentRoot: URL? = nil,
         sceneLoader: (any SceneLoading)? = nil,
+        audioTrackCatalogLoader: (any AudioTrackCatalogLoading)? = nil,
         messageLoader: (any MessageLoading)? = nil
     ) {
         self.sceneLoader = sceneLoader ?? SceneLoader(contentRoot: contentRoot)
+        self.audioTrackCatalogLoader = audioTrackCatalogLoader ?? AudioTrackCatalogLoader(contentRoot: contentRoot)
         self.messageLoader = messageLoader ?? MessageLoader(contentRoot: contentRoot)
     }
 
@@ -72,6 +83,10 @@ public struct ContentLoader: ContentLoading {
 
     public func loadActorTable() throws -> [ActorTableEntry] {
         try sceneLoader.loadActorTable()
+    }
+
+    public func loadAudioTrackCatalog() throws -> AudioTrackCatalog {
+        try audioTrackCatalogLoader.loadAudioTrackCatalog()
     }
 
     public func loadMessageCatalog() throws -> MessageCatalog {

@@ -126,6 +126,7 @@ final class OOTContentBootstrapModel {
             statusMessage: saveStatusMessage,
             contentLoader: ContentLoader(sceneLoader: sceneLoader),
             sceneLoader: sceneLoader,
+            musicPlaybackController: AVFoundationMusicPlaybackController(contentRoot: resolvedContentRoot),
             saveRepository: saveRepository
         )
         if Self.boolEnvironmentValue(

@@ -350,6 +350,92 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testGameRuntimeStartLoadsAudioTrackCatalog() async {
+        let catalog = makeAudioTrackCatalog()
+        let runtime = GameRuntime(
+            contentLoader: MockContentLoader(
+                scenesByID: [:],
+                actorTable: [],
+                audioTrackCatalog: catalog
+            ),
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        await runtime.start()
+
+        XCTAssertEqual(runtime.availableAudioTracks.map(\.id), ["kokiri-forest", "title-theme"])
+        XCTAssertEqual(runtime.audioTrackCatalog?.sceneBindings.map(\.trackID), ["kokiri-forest"])
+    }
+
+    @MainActor
+    func testMusicPlaybackCommandsUpdateRuntimeStateAndCrossfade() async {
+        let catalog = makeAudioTrackCatalog()
+        let controller = MockMusicPlaybackController()
+        let runtime = GameRuntime(
+            contentLoader: MockContentLoader(
+                scenesByID: [:],
+                actorTable: [],
+                audioTrackCatalog: catalog
+            ),
+            sceneLoader: MockSceneLoader(),
+            musicPlaybackController: controller,
+            suspender: { _ in }
+        )
+
+        await runtime.start()
+        runtime.playMusicTrack(id: "kokiri-forest", crossfadeDuration: 0)
+
+        XCTAssertEqual(runtime.musicPlaybackState.phase, .playing)
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "kokiri-forest")
+        XCTAssertEqual(controller.events, ["play:kokiri-forest:0.00"])
+
+        runtime.pauseMusicTrack()
+        XCTAssertEqual(runtime.musicPlaybackState.phase, .paused)
+
+        runtime.resumeMusicTrack()
+        XCTAssertEqual(runtime.musicPlaybackState.phase, .playing)
+
+        runtime.crossfadeMusicTrack(to: "title-theme", duration: 0.25)
+        XCTAssertEqual(runtime.musicPlaybackState.phase, .crossfading)
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "kokiri-forest")
+        XCTAssertEqual(runtime.musicPlaybackState.pendingTrack?.id, "title-theme")
+
+        try? await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertEqual(runtime.musicPlaybackState.phase, .playing)
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "title-theme")
+        XCTAssertNil(runtime.musicPlaybackState.pendingTrack)
+        XCTAssertEqual(
+            controller.events,
+            [
+                "play:kokiri-forest:0.00",
+                "pause",
+                "resume",
+                "play:title-theme:0.25",
+            ]
+        )
+
+        let snapshot = runtime.developerRuntimeStateSnapshot()
+        XCTAssertEqual(snapshot.musicPlayback?.currentTrack?.id, "title-theme")
+        XCTAssertEqual(snapshot.musicPlayback?.phase, .playing)
+
+        runtime.stopMusicTrack()
+        XCTAssertEqual(runtime.musicPlaybackState.phase, .stopped)
+        XCTAssertNil(runtime.musicPlaybackState.currentTrack)
+        XCTAssertEqual(
+            controller.events,
+            [
+                "play:kokiri-forest:0.00",
+                "pause",
+                "resume",
+                "play:title-theme:0.25",
+                "stop",
+            ]
+        )
+    }
+
+    @MainActor
     func testContinueWithoutSaveStaysOnTitleScreen() async {
         let runtime = GameRuntime(
             sceneLoader: MockSceneLoader(),
@@ -4005,17 +4091,20 @@ private func applyPlayerHit(
 private struct MockContentLoader: ContentLoading {
     let scenesByID: [Int: LoadedScene]
     let actorTable: [ActorTableEntry]
+    let audioTrackCatalog: AudioTrackCatalog?
     let messageCatalog: MessageCatalog
     let entranceTable: [EntranceTableEntry]
 
     init(
         scenesByID: [Int: LoadedScene],
         actorTable: [ActorTableEntry],
+        audioTrackCatalog: AudioTrackCatalog? = nil,
         messageCatalog: MessageCatalog = MessageCatalog(),
         entranceTable: [EntranceTableEntry] = []
     ) {
         self.scenesByID = scenesByID
         self.actorTable = actorTable
+        self.audioTrackCatalog = audioTrackCatalog
         self.messageCatalog = messageCatalog
         self.entranceTable = entranceTable
     }
@@ -4033,6 +4122,13 @@ private struct MockContentLoader: ContentLoading {
         actorTable
     }
 
+    func loadAudioTrackCatalog() throws -> AudioTrackCatalog {
+        guard let audioTrackCatalog else {
+            throw ContentLoaderError.audioLoadingUnavailable
+        }
+        return audioTrackCatalog
+    }
+
     func loadMessageCatalog() throws -> MessageCatalog {
         messageCatalog
     }
@@ -4044,6 +4140,72 @@ private struct MockContentLoader: ContentLoading {
     func loadEntranceTable() throws -> [EntranceTableEntry] {
         entranceTable
     }
+}
+
+@MainActor
+private final class MockMusicPlaybackController: MusicPlaybackControlling {
+    private(set) var events: [String] = []
+
+    func play(
+        track: AudioTrackManifest,
+        crossfadeDuration: TimeInterval
+    ) throws {
+        events.append("play:\(track.id):\(String(format: "%.2f", crossfadeDuration))")
+    }
+
+    func stop() {
+        events.append("stop")
+    }
+
+    func pause() {
+        events.append("pause")
+    }
+
+    func resume() {
+        events.append("resume")
+    }
+}
+
+private func makeAudioTrackCatalog() -> AudioTrackCatalog {
+    AudioTrackCatalog(
+        tracks: [
+            AudioTrackManifest(
+                id: "kokiri-forest",
+                title: "Kokiri Forest",
+                kind: .bgm,
+                sequenceID: 60,
+                sequenceEnumName: "NA_BGM_KOKIRI",
+                assetDirectory: "Audio/BGM/kokiri-forest",
+                sequencePath: "Audio/BGM/kokiri-forest/sequence.seq",
+                sequenceMetadataPath: "Audio/BGM/kokiri-forest/sequence.xml",
+                soundfontPaths: ["Audio/BGM/kokiri-forest/soundfonts/Soundfont_15.xml"],
+                sampleBankPaths: ["Audio/BGM/kokiri-forest/samplebanks/SampleBank_0.xml"],
+                samplePaths: ["Audio/BGM/kokiri-forest/samples/Sample119.wav"]
+            ),
+            AudioTrackManifest(
+                id: "title-theme",
+                title: "Title Theme",
+                kind: .bgm,
+                sequenceID: 30,
+                sequenceEnumName: "NA_BGM_TITLE",
+                assetDirectory: "Audio/BGM/title-theme",
+                sequencePath: "Audio/BGM/title-theme/sequence.seq",
+                sequenceMetadataPath: "Audio/BGM/title-theme/sequence.xml",
+                soundfontPaths: ["Audio/BGM/title-theme/soundfonts/Soundfont_15.xml"],
+                sampleBankPaths: ["Audio/BGM/title-theme/samplebanks/SampleBank_0.xml"],
+                samplePaths: ["Audio/BGM/title-theme/samples/Sample119.wav"]
+            ),
+        ],
+        sceneBindings: [
+            AudioSceneBinding(
+                sceneName: "spot04",
+                sceneID: 0x55,
+                sequenceID: 60,
+                sequenceEnumName: "NA_BGM_KOKIRI",
+                trackID: "kokiri-forest"
+            ),
+        ]
+    )
 }
 
 @MainActor
