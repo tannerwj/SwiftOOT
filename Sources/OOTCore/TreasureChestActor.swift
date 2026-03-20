@@ -72,7 +72,8 @@ public final class TreasureChestActor: BaseActor, TalkRequestingActor {
         let request = TreasureChestOpenRequest(
             chestSize: chestSize,
             reward: reward,
-            treasureFlag: treasureFlagKey
+            treasureFlag: treasureFlagKey,
+            sourcePosition: position
         )
         guard playState.requestChestOpen(request) else {
             return false

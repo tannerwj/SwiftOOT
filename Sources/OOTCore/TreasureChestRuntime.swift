@@ -633,15 +633,18 @@ public struct TreasureChestOpenRequest: Sendable, Equatable {
     public var chestSize: TreasureChestSize
     public var reward: TreasureChestReward
     public var treasureFlag: TreasureFlagKey
+    public var sourcePosition: Vec3f
 
     public init(
         chestSize: TreasureChestSize,
         reward: TreasureChestReward,
-        treasureFlag: TreasureFlagKey
+        treasureFlag: TreasureFlagKey,
+        sourcePosition: Vec3f
     ) {
         self.chestSize = chestSize
         self.reward = reward
         self.treasureFlag = treasureFlag
+        self.sourcePosition = sourcePosition
     }
 }
 

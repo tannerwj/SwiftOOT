@@ -60,6 +60,7 @@ public final class OOTContentExtractor {
             ObjectExtractor(),
             ActorExtractor(),
             AudioExtractor(),
+            SoundEffectExtractor(),
             TextExtractor(),
             CollisionExtractor(),
             SceneManifestExtractor(),

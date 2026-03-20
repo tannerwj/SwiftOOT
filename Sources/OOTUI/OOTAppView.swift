@@ -18,6 +18,9 @@ public struct OOTAppView: View {
     let developerHarness: DeveloperHarnessConfiguration?
     let startupManagedExternally: Bool
 
+    @State
+    private var soundEffectPlayer = RuntimeSoundEffectPlayer()
+
     public init(
         runtime: GameRuntime,
         developerHarness: DeveloperHarnessConfiguration? = nil,
@@ -88,6 +91,12 @@ public struct OOTAppView: View {
                 if developerHarness?.captureRequested == true {
                     NSApplication.shared.terminate(nil)
                 }
+            }
+        }
+        .task {
+            while !Task.isCancelled {
+                soundEffectPlayer.drainAndPlay(from: runtime)
+                try? await Task.sleep(for: .milliseconds(16))
             }
         }
     }

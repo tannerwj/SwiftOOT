@@ -85,6 +85,90 @@ final class OOTCoreTests: XCTestCase {
     }
 
     @MainActor
+    func testNamedSoundEffectsResolveExtractedAssetsAndApplyMixAndConcurrency() throws {
+        let fixtureRoot = makeSoundEffectFixtureRoot()
+        let catalog = try makeSoundEffectCatalogFixture(at: fixtureRoot)
+        let runtime = makeRuntime(
+            contentLoader: MockContentLoader(
+                scenesByID: [:],
+                actorTable: [],
+                soundEffectCatalog: catalog,
+                contentRoot: fixtureRoot
+            ),
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+        runtime.playerState = PlayerState(position: Vec3f(x: 0, y: 0, z: 0))
+        runtime.soundEffectVolumeSettings = SoundEffectVolumeSettings(
+            ui: 0.4,
+            player: 0.7,
+            environment: 0.6
+        )
+
+        runtime.queueSoundEffect(.uiConfirm)
+        runtime.queueSoundEffect(.uiConfirm)
+        runtime.queueSoundEffect(.uiConfirm)
+        runtime.queueSoundEffect(.uiCancel)
+        runtime.queueSoundEffect(.chestOpen, sourcePosition: Vec3f(x: 120, y: 0, z: 0))
+        let requests = runtime.drainPendingSoundEffectPlaybackRequests()
+
+        XCTAssertEqual(requests.map(\.event), [.uiConfirm, .uiConfirm, .uiCancel, .chestOpen])
+        XCTAssertEqual(requests[0].gain, 0.4, accuracy: 0.000_1)
+        XCTAssertEqual(requests[1].gain, 0.4, accuracy: 0.000_1)
+        XCTAssertEqual(requests[2].gain, 0.4, accuracy: 0.000_1)
+        XCTAssertEqual(requests[3].gain, 0.6, accuracy: 0.000_1)
+        XCTAssertEqual(requests[3].pan, 0.5, accuracy: 0.000_1)
+
+        switch try XCTUnwrap(requests[0].layers.first).source {
+        case .sample(let url):
+            XCTAssertTrue(url.path.contains("Audio/SFX/ui-confirm/samples/SampleBank_0/Sample110.wav"))
+        case .synth:
+            XCTFail("uiConfirm should resolve to an extracted sample")
+        }
+
+        switch try XCTUnwrap(requests[2].layers.first).source {
+        case .sample:
+            XCTFail("uiCancel should resolve to a synth layer")
+        case .synth(let waveform, let frequencyHz):
+            XCTAssertEqual(waveform, .triangle)
+            XCTAssertEqual(frequencyHz, 440.0, accuracy: 0.000_1)
+        }
+    }
+
+    @MainActor
+    func testGameplayAndMenuActionsEmitSoundEffectRequests() async throws {
+        let fixtureRoot = makeSoundEffectFixtureRoot()
+        let catalog = try makeSoundEffectCatalogFixture(at: fixtureRoot)
+        let runtime = makeRuntime(
+            contentLoader: MockContentLoader(
+                scenesByID: [:],
+                actorTable: [],
+                soundEffectCatalog: catalog,
+                contentRoot: fixtureRoot
+            ),
+            sceneLoader: MockSceneLoader(),
+            suspender: { _ in }
+        )
+
+        await runtime.start()
+        runtime.chooseTitleOption(.newGame)
+        XCTAssertTrue(runtime.drainPendingSoundEffectPlaybackRequests().contains(where: { $0.event == .uiConfirm }))
+
+        runtime.currentState = .gameplay
+        runtime.playerState = PlayerState(position: Vec3f(x: 0, y: 0, z: 0))
+        runtime.inventoryContext.equipment.ownedSwords = [.masterSword]
+        runtime.inventoryContext.equipment.equippedSword = .masterSword
+
+        runtime.setControllerInput(ControllerInputState(bPressed: true))
+        runtime.updateFrame()
+        runtime.setControllerInput(ControllerInputState())
+        runtime.updateFrame()
+
+        let requests = runtime.drainPendingSoundEffectPlaybackRequests()
+        XCTAssertTrue(requests.contains(where: { $0.event == .swordSlash }))
+    }
+
+    @MainActor
     func testDirectorCommentaryResolvesSceneActorAndMechanicTriggers() throws {
         let kokiriScene = makeScene(
             sceneID: 0x55,
@@ -3980,6 +4064,158 @@ private func uniqueSaveFileURL() -> URL {
         .appendingPathComponent("save-context.json", isDirectory: false)
 }
 
+private func makeSoundEffectFixtureRoot() -> URL {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("swiftoot-sfx-tests-\(UUID().uuidString)", isDirectory: true)
+    try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    return root
+}
+
+private func makeSoundEffectCatalogFixture(at root: URL) throws -> SoundEffectCatalog {
+    let samplePaths = [
+        "Audio/SFX/ui-confirm/samples/SampleBank_0/Sample110.wav",
+        "Audio/SFX/sword-slash/samples/SampleBank_0/Sample047.wav",
+        "Audio/SFX/chest-open/samples/SampleBank_0/Sample088.wav",
+        "Audio/SFX/ambient-river/samples/SampleBank_0/Sample075.wav",
+    ]
+
+    for path in samplePaths {
+        let url = root.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: url.path, contents: Data(), attributes: nil)
+    }
+
+    return SoundEffectCatalog(
+        effects: [
+            SoundEffectManifest(
+                id: "ui-confirm",
+                event: .uiConfirm,
+                title: "UI Confirm",
+                category: .ui,
+                assetDirectory: "Audio/SFX/ui-confirm",
+                sourceSfxEnumName: "NA_SE_SY_DECIDE",
+                sourceChannelName: "CHAN_58E9",
+                concurrencyLimit: 2,
+                playbackDurationFrames: 24,
+                layers: [
+                    SoundEffectLayerManifest(
+                        samplePath: "Audio/SFX/ui-confirm/samples/SampleBank_0/Sample110.wav",
+                        durationFrames: 24
+                    ),
+                ]
+            ),
+            SoundEffectManifest(
+                id: "ui-cancel",
+                event: .uiCancel,
+                title: "UI Cancel",
+                category: .ui,
+                assetDirectory: "Audio/SFX/ui-cancel",
+                sourceSfxEnumName: "NA_SE_SY_CANCEL",
+                sourceChannelName: "CHAN_5948",
+                concurrencyLimit: 1,
+                playbackDurationFrames: 48,
+                layers: [
+                    SoundEffectLayerManifest(
+                        waveform: .triangle,
+                        frequencyHz: 440.0,
+                        durationFrames: 6,
+                        gain: 0.75
+                    ),
+                ]
+            ),
+            SoundEffectManifest(
+                id: "talk-confirm",
+                event: .talkConfirm,
+                title: "Talk Confirm",
+                category: .ui,
+                assetDirectory: "Audio/SFX/talk-confirm",
+                sourceSfxEnumName: "NA_SE_SY_MESSAGE_WOMAN",
+                sourceChannelName: "CHAN_5880",
+                concurrencyLimit: 1,
+                playbackDurationFrames: 6,
+                layers: [
+                    SoundEffectLayerManifest(
+                        waveform: .triangle,
+                        frequencyHz: 440.0,
+                        durationFrames: 6,
+                        gain: 0.6
+                    ),
+                ]
+            ),
+            SoundEffectManifest(
+                id: "sword-slash",
+                event: .swordSlash,
+                title: "Sword Slash",
+                category: .player,
+                assetDirectory: "Audio/SFX/sword-slash",
+                sourceSfxEnumName: "NA_SE_IT_SWORD_SWING",
+                sourceChannelName: "CHAN_0F8D",
+                concurrencyLimit: 1,
+                playbackDurationFrames: 42,
+                layers: [
+                    SoundEffectLayerManifest(
+                        samplePath: "Audio/SFX/sword-slash/samples/SampleBank_0/Sample047.wav",
+                        durationFrames: 42
+                    ),
+                ]
+            ),
+            SoundEffectManifest(
+                id: "chest-open",
+                event: .chestOpen,
+                title: "Chest Open",
+                category: .environment,
+                assetDirectory: "Audio/SFX/chest-open",
+                sourceSfxEnumName: "NA_SE_EV_TBOX_OPEN",
+                sourceChannelName: "CHAN_1B7D",
+                concurrencyLimit: 1,
+                playbackDurationFrames: 96,
+                layers: [
+                    SoundEffectLayerManifest(
+                        samplePath: "Audio/SFX/chest-open/samples/SampleBank_0/Sample088.wav",
+                        durationFrames: 96
+                    ),
+                ]
+            ),
+            SoundEffectManifest(
+                id: "item-get",
+                event: .itemGet,
+                title: "Item Get",
+                category: .ui,
+                assetDirectory: "Audio/SFX/item-get",
+                sourceSfxEnumName: "NA_SE_SY_GET_ITEM",
+                sourceChannelName: "CHAN_5B9C",
+                concurrencyLimit: 1,
+                playbackDurationFrames: 80,
+                layers: [
+                    SoundEffectLayerManifest(
+                        waveform: .triangle,
+                        frequencyHz: 415.3047,
+                        durationFrames: 10,
+                        gain: 0.75
+                    ),
+                ]
+            ),
+            SoundEffectManifest(
+                id: "ambient-river",
+                event: .ambientRiver,
+                title: "Ambient River",
+                category: .environment,
+                assetDirectory: "Audio/SFX/ambient-river",
+                sourceSfxEnumName: "NA_SE_EV_RIVER_STREAM",
+                sourceChannelName: "CHAN_1915",
+                concurrencyLimit: 1,
+                playbackDurationFrames: 180,
+                layers: [
+                    SoundEffectLayerManifest(
+                        samplePath: "Audio/SFX/ambient-river/samples/SampleBank_0/Sample075.wav",
+                        durationFrames: 180
+                    ),
+                ]
+            ),
+        ]
+    )
+}
+
 private struct RuntimeFixture {
     let contentLoader: MockContentLoader
 
@@ -4094,19 +4330,25 @@ private struct MockContentLoader: ContentLoading {
     let audioTrackCatalog: AudioTrackCatalog?
     let messageCatalog: MessageCatalog
     let entranceTable: [EntranceTableEntry]
+    let soundEffectCatalog: SoundEffectCatalog
+    let contentRoot: URL
 
     init(
         scenesByID: [Int: LoadedScene],
         actorTable: [ActorTableEntry],
         audioTrackCatalog: AudioTrackCatalog? = nil,
         messageCatalog: MessageCatalog = MessageCatalog(),
-        entranceTable: [EntranceTableEntry] = []
+        entranceTable: [EntranceTableEntry] = [],
+        soundEffectCatalog: SoundEffectCatalog = SoundEffectCatalog(effects: []),
+        contentRoot: URL = FileManager.default.temporaryDirectory
     ) {
         self.scenesByID = scenesByID
         self.actorTable = actorTable
         self.audioTrackCatalog = audioTrackCatalog
         self.messageCatalog = messageCatalog
         self.entranceTable = entranceTable
+        self.soundEffectCatalog = soundEffectCatalog
+        self.contentRoot = contentRoot
     }
 
     func loadInitialContent() async throws {}
@@ -4133,12 +4375,20 @@ private struct MockContentLoader: ContentLoading {
         messageCatalog
     }
 
+    func loadSoundEffectCatalog() throws -> SoundEffectCatalog {
+        soundEffectCatalog
+    }
+
     func loadObjectTable() throws -> [ObjectTableEntry] {
         []
     }
 
     func loadEntranceTable() throws -> [EntranceTableEntry] {
         entranceTable
+    }
+
+    func resolveContentURL(relativePath: String) throws -> URL {
+        contentRoot.appendingPathComponent(relativePath)
     }
 }
 
