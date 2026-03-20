@@ -687,6 +687,9 @@ public final class GameRuntime {
     private var musicTransitionTask: Task<Void, Never>?
 
     @ObservationIgnored
+    private var requiresMusicResynchronizationAfterPause = false
+
+    @ObservationIgnored
     private var activePlayTimeFrames: Int
 
     @ObservationIgnored
@@ -961,6 +964,7 @@ public final class GameRuntime {
             return
         }
 
+        requiresMusicResynchronizationAfterPause = false
         musicTransitionTask?.cancel()
         musicTransitionTask = nil
         musicPlaybackController?.pause()
@@ -976,6 +980,7 @@ public final class GameRuntime {
             return
         }
 
+        requiresMusicResynchronizationAfterPause = false
         musicPlaybackController?.resume()
         musicPlaybackState.phase = .playing
         if announcesStatus {
@@ -984,6 +989,7 @@ public final class GameRuntime {
     }
 
     func stopMusicTrack(announcesStatus: Bool) {
+        requiresMusicResynchronizationAfterPause = false
         musicTransitionTask?.cancel()
         musicTransitionTask = nil
         musicPlaybackController?.stop()
@@ -991,6 +997,29 @@ public final class GameRuntime {
         if announcesStatus {
             statusMessage = "Music stopped."
         }
+    }
+
+    func pauseMusicForPauseMenu() {
+        let requiresResynchronization =
+            musicPlaybackState.pendingTrack != nil ||
+            musicPlaybackState.currentTrack?.kind != .bgm
+        pauseMusicTrack(announcesStatus: false)
+        requiresMusicResynchronizationAfterPause = requiresResynchronization
+    }
+
+    func resumeMusicForPauseMenu() {
+        guard musicPlaybackState.currentTrack != nil else {
+            requiresMusicResynchronizationAfterPause = false
+            return
+        }
+
+        if requiresMusicResynchronizationAfterPause {
+            requiresMusicResynchronizationAfterPause = false
+            synchronizeMusicForCurrentContext(crossfadeDuration: 0.35)
+            return
+        }
+
+        resumeMusicTrack(announcesStatus: false)
     }
 
     public func developerRuntimeStateSnapshot() -> DeveloperRuntimeStateSnapshot {

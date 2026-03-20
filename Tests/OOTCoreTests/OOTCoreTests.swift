@@ -359,9 +359,11 @@ final class OOTCoreTests: XCTestCase {
         runtime.setControllerInput(ControllerInputState(bPressed: true))
         runtime.updateFrame()
         XCTAssertFalse(runtime.isPauseMenuPresented)
+        try? await Task.sleep(for: .milliseconds(20))
         XCTAssertEqual(runtime.musicPlaybackState.phase, .playing)
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "kokiri-forest")
         XCTAssertTrue(controller.events.contains("pause"))
-        XCTAssertTrue(controller.events.contains("resume"))
+        XCTAssertTrue(controller.events.contains("play:kokiri-forest:0.35"))
     }
 
     @MainActor
@@ -624,6 +626,103 @@ final class OOTCoreTests: XCTestCase {
             [
                 "play:title-theme:0.00",
                 "play:kokiri-forest:1.00",
+            ]
+        )
+    }
+
+    @MainActor
+    func testPauseMenuResynchronizesInterruptedSceneCrossfade() async throws {
+        let catalog = makeAudioTrackCatalog()
+        let controller = MockMusicPlaybackController()
+        let runtime = GameRuntime(
+            currentState: .gameplay,
+            playState: PlayState(
+                activeSaveSlot: 0,
+                entryMode: .newGame,
+                currentSceneName: "Inside the Deku Tree",
+                currentSceneID: 0x00,
+                playerName: "Link"
+            ),
+            contentLoader: MockContentLoader(
+                scenesByID: [:],
+                actorTable: [],
+                audioTrackCatalog: catalog
+            ),
+            sceneLoader: MockSceneLoader(),
+            musicPlaybackController: controller,
+            suspender: { _ in }
+        )
+        let kokiriTrack = try XCTUnwrap(catalog.tracks.first(where: { $0.id == "kokiri-forest" }))
+        let dekuTreeTrack = try XCTUnwrap(catalog.tracks.first(where: { $0.id == "inside-deku-tree" }))
+        runtime.musicPlaybackState = MusicPlaybackState(
+            phase: .crossfading,
+            currentTrack: MusicTrackReference(track: kokiriTrack),
+            pendingTrack: MusicTrackReference(track: dekuTreeTrack)
+        )
+
+        runtime.togglePauseMenu()
+        XCTAssertTrue(runtime.isPauseMenuPresented)
+        XCTAssertEqual(runtime.musicPlaybackState.phase, .paused)
+        XCTAssertNil(runtime.musicPlaybackState.pendingTrack)
+
+        runtime.togglePauseMenu()
+        try? await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertFalse(runtime.isPauseMenuPresented)
+        XCTAssertEqual(runtime.musicPlaybackState.phase, .playing)
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "inside-deku-tree")
+        XCTAssertEqual(
+            controller.events,
+            [
+                "pause",
+                "play:inside-deku-tree:0.35",
+            ]
+        )
+    }
+
+    @MainActor
+    func testPauseMenuResynchronizesInterruptedTransientMusic() async throws {
+        let catalog = makeAudioTrackCatalog()
+        let controller = MockMusicPlaybackController()
+        let runtime = GameRuntime(
+            currentState: .gameplay,
+            playState: PlayState(
+                activeSaveSlot: 0,
+                entryMode: .newGame,
+                currentSceneName: "Kokiri Forest",
+                currentSceneID: 0x55,
+                playerName: "Link"
+            ),
+            contentLoader: MockContentLoader(
+                scenesByID: [:],
+                actorTable: [],
+                audioTrackCatalog: catalog
+            ),
+            sceneLoader: MockSceneLoader(),
+            musicPlaybackController: controller,
+            suspender: { _ in }
+        )
+        let transientTrack = try XCTUnwrap(catalog.tracks.first(where: { $0.id == "item-get" }))
+        runtime.musicPlaybackState = MusicPlaybackState(
+            phase: .playing,
+            currentTrack: MusicTrackReference(track: transientTrack)
+        )
+
+        runtime.togglePauseMenu()
+        XCTAssertTrue(runtime.isPauseMenuPresented)
+        XCTAssertEqual(runtime.musicPlaybackState.phase, .paused)
+
+        runtime.togglePauseMenu()
+        try? await Task.sleep(for: .milliseconds(20))
+
+        XCTAssertFalse(runtime.isPauseMenuPresented)
+        XCTAssertEqual(runtime.musicPlaybackState.phase, .playing)
+        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "kokiri-forest")
+        XCTAssertEqual(
+            controller.events,
+            [
+                "pause",
+                "play:kokiri-forest:0.35",
             ]
         )
     }

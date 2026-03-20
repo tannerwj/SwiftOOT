@@ -25,9 +25,9 @@ extension GameRuntime {
         pauseState.isPresented.toggle()
         pauseMenuState = pauseState
         if pauseState.isPresented {
-            pauseMusicTrack(announcesStatus: false)
+            pauseMusicForPauseMenu()
         } else {
-            resumeMusicTrack(announcesStatus: false)
+            resumeMusicForPauseMenu()
         }
     }
 
