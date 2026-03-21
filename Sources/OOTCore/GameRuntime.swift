@@ -2466,7 +2466,7 @@ public final class GameRuntime {
 
         errorMessage = nil
         if announcesStatus {
-            statusMessage = "Previewing sample for \(track.title)."
+            statusMessage = "Playing \(track.title)."
         }
 
         if shouldCrossfade, let currentTrack {

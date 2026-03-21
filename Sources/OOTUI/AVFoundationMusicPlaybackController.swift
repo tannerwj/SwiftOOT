@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import OOTContent
 import OOTCore
 import OOTDataModel
 
@@ -9,9 +10,11 @@ public final class AVFoundationMusicPlaybackController: MusicPlaybackControlling
     private let engine = AVAudioEngine()
     private let players = [AVAudioPlayerNode(), AVAudioPlayerNode()]
     private var buffersByPlayerIndex: [Int: AVAudioPCMBuffer] = [:]
+    private var renderedTracksByID: [String: RenderedMusicTrack] = [:]
     private var currentPlayerIndex: Int?
     private var isConfigured = false
     private var crossfadeTask: Task<Void, Never>?
+    private var renderer = OfflineMusicTrackRenderer()
 
     public init(contentRoot: URL) {
         self.contentRoot = contentRoot.standardizedFileURL
@@ -23,10 +26,10 @@ public final class AVFoundationMusicPlaybackController: MusicPlaybackControlling
     ) throws -> TimeInterval? {
         attachPlayersIfNeeded()
 
-        let sampleURL = try resolvePlayableSampleURL(for: track)
-        let buffer = try loadBuffer(from: sampleURL)
+        let resolvedPlayback = try resolvePlayback(for: track)
         let shouldLoop = track.kind == .bgm
-        let duration = shouldLoop ? nil : Double(buffer.frameLength) / buffer.format.sampleRate
+        let buffer = resolvedPlayback.buffer
+        let duration = shouldLoop ? nil : resolvedPlayback.duration
 
         crossfadeTask?.cancel()
         let targetPlayerIndex = nextPlayerIndex(for: currentPlayerIndex, crossfadeDuration: crossfadeDuration)
@@ -96,7 +99,7 @@ public final class AVFoundationMusicPlaybackController: MusicPlaybackControlling
     }
 }
 
-private extension AVFoundationMusicPlaybackController {
+extension AVFoundationMusicPlaybackController {
     func attachPlayersIfNeeded() {
         if isConfigured == false {
             for player in players {
@@ -133,6 +136,27 @@ private extension AVFoundationMusicPlaybackController {
         }
 
         throw MusicPlaybackControllerError.missingPlayableSample(track.id)
+    }
+
+    func resolvePlayback(for track: AudioTrackManifest) throws -> RenderedMusicTrack {
+        if let cached = renderedTracksByID[track.id] {
+            return cached
+        }
+
+        let loader = MusicTrackPlaybackAssetLoader(contentRoot: contentRoot)
+        if let asset = try? loader.loadPlaybackAsset(for: track),
+           asset.notes.isEmpty == false {
+            let renderedTrack = try renderer.render(asset: asset)
+            renderedTracksByID[track.id] = renderedTrack
+            return renderedTrack
+        }
+
+        let sampleURL = try resolvePlayableSampleURL(for: track)
+        let buffer = try loadBuffer(from: sampleURL)
+        let duration = Double(buffer.frameLength) / buffer.format.sampleRate
+        let renderedTrack = RenderedMusicTrack(buffer: buffer, duration: duration)
+        renderedTracksByID[track.id] = renderedTrack
+        return renderedTrack
     }
 
     func loadBuffer(from fileURL: URL) throws -> AVAudioPCMBuffer {
