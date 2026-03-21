@@ -263,15 +263,18 @@ private extension DebugSidebar {
                 LabeledValueRow(label: "Spawn", value: runtime.playState?.currentSpawnIndex.map(String.init) ?? "Unavailable")
             }
 
-            InspectorSection("Music") {
+            InspectorSection("Music Preview") {
                 LabeledValueRow(label: "Phase", value: musicPlaybackPhaseLabel)
-                LabeledValueRow(label: "Current", value: runtime.musicPlaybackState.currentTrack?.title ?? "Stopped")
+                LabeledValueRow(
+                    label: "Current Preview",
+                    value: runtime.musicPlaybackState.currentTrack?.title ?? "Stopped"
+                )
                 if let pendingTrack = runtime.musicPlaybackState.pendingTrack {
-                    LabeledValueRow(label: "Pending", value: pendingTrack.title)
+                    LabeledValueRow(label: "Pending Preview", value: pendingTrack.title)
                 }
 
                 if runtime.availableAudioTracks.isEmpty {
-                    Text("No extracted BGM manifest was found under the configured content root.")
+                    Text("No extracted BGM preview manifest was found under the configured content root.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
@@ -298,7 +301,11 @@ private extension DebugSidebar {
                         .disabled(runtime.musicPlaybackState.currentTrack == nil)
                     }
 
-                    Text("Selecting a new track while one is active crossfades automatically.")
+                    Text("These controls preview one extracted sample per track, not full OoT sequence playback.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    Text("Selecting a new preview while one is active crossfades automatically. Title and file-select stay silent until true sequence playback lands.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
 
@@ -313,7 +320,7 @@ private extension DebugSidebar {
                             }
                             Spacer(minLength: 8)
                             Button(
-                                runtime.musicPlaybackState.currentTrack?.id == track.id ? "Replay" : "Play"
+                                runtime.musicPlaybackState.currentTrack?.id == track.id ? "Replay Preview" : "Preview"
                             ) {
                                 runtime.playMusicTrack(id: track.id)
                             }

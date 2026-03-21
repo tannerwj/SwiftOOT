@@ -971,7 +971,7 @@ public final class GameRuntime {
         musicPlaybackState.phase = .paused
         musicPlaybackState.pendingTrack = nil
         if announcesStatus {
-            statusMessage = "Music paused."
+            statusMessage = "Audio preview paused."
         }
     }
 
@@ -984,7 +984,7 @@ public final class GameRuntime {
         musicPlaybackController?.resume()
         musicPlaybackState.phase = .playing
         if announcesStatus {
-            statusMessage = "Music resumed."
+            statusMessage = "Audio preview resumed."
         }
     }
 
@@ -995,7 +995,7 @@ public final class GameRuntime {
         musicPlaybackController?.stop()
         musicPlaybackState = MusicPlaybackState()
         if announcesStatus {
-            statusMessage = "Music stopped."
+            statusMessage = "Audio preview stopped."
         }
     }
 
@@ -2445,7 +2445,7 @@ public final class GameRuntime {
     ) -> TimeInterval? {
         guard let track = resolveAudioTrack(id: trackID) else {
             if announcesStatus {
-                statusMessage = "Audio track \(trackID) is unavailable."
+                statusMessage = "Audio preview \(trackID) is unavailable."
             }
             return nil
         }
@@ -2466,7 +2466,7 @@ public final class GameRuntime {
 
         errorMessage = nil
         if announcesStatus {
-            statusMessage = "Playing \(track.title)."
+            statusMessage = "Previewing sample for \(track.title)."
         }
 
         if shouldCrossfade, let currentTrack {
