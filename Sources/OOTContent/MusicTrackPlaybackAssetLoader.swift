@@ -197,6 +197,12 @@ private extension MusicTrackPlaybackAssetLoader {
         let instruments: [Int: InstrumentDefinition]
     }
 
+    struct SamplePathCandidate {
+        let relativePath: String
+        let stem: String
+        let bankName: String?
+    }
+
     struct ChannelState {
         var localTick: Double = 0
         var gain: Float = 1
@@ -721,11 +727,13 @@ private extension MusicTrackPlaybackAssetLoader {
             )
         }
 
-        let availableSamplePaths = Dictionary(
-            uniqueKeysWithValues: track.samplePaths.map { relativePath in
-                (sampleStem(for: relativePath), relativePath)
-            }
-        )
+        let availableSamplePaths = track.samplePaths.map { relativePath in
+            SamplePathCandidate(
+                relativePath: relativePath,
+                stem: sampleStem(for: relativePath),
+                bankName: sampleBankName(for: relativePath)
+            )
+        }
 
         var resolved: [String: URL] = [:]
         for sampleAttributes in tagAttributes(named: "Sample", in: source) {
@@ -735,7 +743,7 @@ private extension MusicTrackPlaybackAssetLoader {
 
             let stem: String?
             if let fileName = sampleAttributes["FileName"] {
-                stem = fileName
+                stem = sampleStem(for: fileName)
             } else if let path = sampleAttributes["Path"] {
                 stem = sampleStem(for: path)
             } else {
@@ -746,12 +754,40 @@ private extension MusicTrackPlaybackAssetLoader {
                 continue
             }
 
-            if let relativePath = availableSamplePaths[stem] {
+            let requestedBankName = sampleAttributes["Path"].map(sampleBankName(for:))
+                ?? sampleAttributes["FileName"].map(sampleBankName(for:))
+                ?? sampleBankURL.deletingPathExtension().lastPathComponent
+
+            if let relativePath = resolveSamplePath(
+                stem: stem,
+                requestedBankName: requestedBankName,
+                availableSamplePaths: availableSamplePaths
+            ) {
                 resolved[sampleName] = try resolveContentURL(relativePath: relativePath)
             }
         }
 
         return resolved
+    }
+
+    func resolveSamplePath(
+        stem: String,
+        requestedBankName: String?,
+        availableSamplePaths: [SamplePathCandidate]
+    ) -> String? {
+        let matchingStem = availableSamplePaths.filter { $0.stem == stem }
+        guard matchingStem.isEmpty == false else {
+            return nil
+        }
+
+        if let requestedBankName {
+            let matchingBank = matchingStem.filter { $0.bankName == requestedBankName }
+            if let match = matchingBank.first {
+                return match.relativePath
+            }
+        }
+
+        return matchingStem.first?.relativePath
     }
 
     func resolveSampleURL(
@@ -1012,6 +1048,12 @@ private extension MusicTrackPlaybackAssetLoader {
 
     func sampleStem(for path: String) -> String {
         URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+    }
+
+    func sampleBankName(for path: String) -> String? {
+        let pathURL = URL(fileURLWithPath: path)
+        let directoryName = pathURL.deletingLastPathComponent().lastPathComponent
+        return directoryName.isEmpty ? nil : directoryName
     }
 
     func firstTagAttributes(named tagName: String, in source: String) -> [String: String]? {

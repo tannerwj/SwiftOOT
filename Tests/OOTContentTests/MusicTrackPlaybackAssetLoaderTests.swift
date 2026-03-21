@@ -26,6 +26,21 @@ final class MusicTrackPlaybackAssetLoaderTests: XCTestCase {
         XCTAssertEqual(asset.notes[2].duration, 0.25, accuracy: 0.000_1)
         XCTAssertEqual(asset.duration, 1.0, accuracy: 0.000_1)
     }
+
+    func testLoaderResolvesDuplicateSampleStemsUsingSampleBankPath() throws {
+        let fixture = try MusicTrackPlaybackFixture(includeDuplicateSampleStemBank: true)
+        defer { fixture.cleanup() }
+
+        let asset = try MusicTrackPlaybackAssetLoader(contentRoot: fixture.contentRoot)
+            .loadPlaybackAsset(for: fixture.track)
+
+        XCTAssertEqual(asset.notes.count, 3)
+        XCTAssertTrue(
+            asset.notes.allSatisfy {
+                $0.sampleURL.path.contains("/samples/SampleBank_0/")
+            }
+        )
+    }
 }
 
 private struct MusicTrackPlaybackFixture {
@@ -33,7 +48,7 @@ private struct MusicTrackPlaybackFixture {
     let contentRoot: URL
     let track: AudioTrackManifest
 
-    init() throws {
+    init(includeDuplicateSampleStemBank: Bool = false) throws {
         let fileManager = FileManager.default
         root = fileManager.temporaryDirectory
             .appendingPathComponent("MusicTrackPlaybackFixture-\(UUID().uuidString)", isDirectory: true)
@@ -110,6 +125,31 @@ private struct MusicTrackPlaybackFixture {
             .appendingPathComponent("Sample000.wav")
         try Self.write("RIFF", to: sampleURL)
 
+        var sampleBankPaths = ["Audio/BGM/test-track/samplebanks/SampleBank_0.xml"]
+        var samplePaths = ["Audio/BGM/test-track/samples/SampleBank_0/Sample000.wav"]
+
+        if includeDuplicateSampleStemBank {
+            try Self.write(
+                """
+                <SampleBank Name="SampleBank_1" Index="1">
+                    <Sample Name="SAMPLE_1_0" Path="$(BUILD_DIR)/assets/audio/samples/SampleBank_1/Sample000.aifc"/>
+                </SampleBank>
+                """,
+                to: trackDirectory
+                    .appendingPathComponent("samplebanks", isDirectory: true)
+                    .appendingPathComponent("SampleBank_1.xml")
+            )
+
+            let duplicateSampleURL = trackDirectory
+                .appendingPathComponent("samples", isDirectory: true)
+                .appendingPathComponent("SampleBank_1", isDirectory: true)
+                .appendingPathComponent("Sample000.wav")
+            try Self.write("RIFF", to: duplicateSampleURL)
+
+            sampleBankPaths.append("Audio/BGM/test-track/samplebanks/SampleBank_1.xml")
+            samplePaths.append("Audio/BGM/test-track/samples/SampleBank_1/Sample000.wav")
+        }
+
         track = AudioTrackManifest(
             id: "test-track",
             title: "Test Track",
@@ -120,8 +160,8 @@ private struct MusicTrackPlaybackFixture {
             sequencePath: "Audio/BGM/test-track/sequence.seq",
             sequenceMetadataPath: "Audio/BGM/test-track/sequence.xml",
             soundfontPaths: ["Audio/BGM/test-track/soundfonts/Soundfont_0.xml"],
-            sampleBankPaths: ["Audio/BGM/test-track/samplebanks/SampleBank_0.xml"],
-            samplePaths: ["Audio/BGM/test-track/samples/SampleBank_0/Sample000.wav"]
+            sampleBankPaths: sampleBankPaths,
+            samplePaths: samplePaths
         )
     }
 
