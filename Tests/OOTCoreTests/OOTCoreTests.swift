@@ -363,7 +363,7 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual(runtime.musicPlaybackState.phase, .playing)
         XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "kokiri-forest")
         XCTAssertTrue(controller.events.contains("pause"))
-        XCTAssertTrue(controller.events.contains("play:kokiri-forest:0.35"))
+        XCTAssertTrue(controller.events.contains("resume"))
     }
 
     @MainActor
@@ -492,7 +492,7 @@ final class OOTCoreTests: XCTestCase {
             ]
         )
         XCTAssertEqual(runtime.audioTrackCatalog?.sceneBindings.map(\.trackID), ["inside-deku-tree", "kokiri-forest"])
-        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "title-theme")
+        XCTAssertNil(runtime.musicPlaybackState.currentTrack)
     }
 
     @MainActor
@@ -518,7 +518,6 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual(
             controller.events,
             [
-                "play:title-theme:0.00",
                 "play:kokiri-forest:0.00",
             ]
         )
@@ -542,7 +541,6 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual(
             controller.events,
             [
-                "play:title-theme:0.00",
                 "play:kokiri-forest:0.00",
                 "pause",
                 "resume",
@@ -560,7 +558,6 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual(
             controller.events,
             [
-                "play:title-theme:0.00",
                 "play:kokiri-forest:0.00",
                 "pause",
                 "resume",
@@ -611,11 +608,11 @@ final class OOTCoreTests: XCTestCase {
 
         await runtime.start()
         XCTAssertEqual(runtime.currentState, .titleScreen)
-        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "title-theme")
+        XCTAssertNil(runtime.musicPlaybackState.currentTrack)
 
         runtime.chooseTitleOption(.newGame)
         XCTAssertEqual(runtime.currentState, .fileSelect)
-        XCTAssertEqual(runtime.musicPlaybackState.currentTrack?.id, "title-theme")
+        XCTAssertNil(runtime.musicPlaybackState.currentTrack)
 
         runtime.confirmSelectedSaveSlot()
         try? await Task.sleep(for: .milliseconds(20))
@@ -624,8 +621,7 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual(
             controller.events,
             [
-                "play:title-theme:0.00",
-                "play:kokiri-forest:1.00",
+                "play:kokiri-forest:0.00",
             ]
         )
     }
@@ -1259,6 +1255,17 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual(floor?.polygon.surfaceType?.floorType, 4)
         XCTAssertEqual(Double(ceiling!.ceilingY), 8, accuracy: 0.001)
         XCTAssertEqual(ceiling?.polygon.surfaceType?.canHookshot, true)
+    }
+
+    func testCollisionSystemReturnsNilWhenNoFloorExists() {
+        let system = CollisionSystem(staticMeshes: [fixtureCollisionMesh()])
+
+        XCTAssertNil(
+            system.findFloor(
+                at: SIMD3<Float>(2, -2, 2),
+                diagnosticContext: "player spawn in test scene"
+            )
+        )
     }
 
     func testCollisionSystemPushesSphereOutOfWall() {

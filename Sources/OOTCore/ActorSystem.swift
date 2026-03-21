@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import OOTContent
 import OOTDataModel
 import OOTTelemetry
@@ -864,6 +865,13 @@ public final class ActorContext {
 
         for room in scene.manifest.rooms where roomIDs.contains(room.id) {
             guard let spawns = actorsByRoomName[room.name] else {
+                let actorsPath = scene.manifest.actorsPath ?? "unknown"
+                os_log(
+                    .error,
+                    log: actorSystemLog,
+                    "%{public}@",
+                    "Missing actor spawn entries for room \(room.name) in scene \(scene.manifest.name) (room id \(room.id), actors file \(actorsPath))."
+                )
                 continue
             }
 
@@ -891,3 +899,5 @@ public final class ActorContext {
 }
 
 public typealias ActorSystem = ActorContext
+
+private let actorSystemLog = OSLog(subsystem: "com.swiftoot", category: "OOTCore")

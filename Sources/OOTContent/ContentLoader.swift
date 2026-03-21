@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import OOTDataModel
 
 public protocol ContentLoading: Sendable {
@@ -105,7 +106,28 @@ public struct ContentLoader: ContentLoading {
     public func loadInitialContent() async throws {}
 
     public func loadScene(id: Int) throws -> LoadedScene {
-        try sceneLoader.loadScene(id: id)
+        do {
+            return try sceneLoader.loadScene(id: id)
+        } catch SceneLoaderError.unresolvedSceneDirectory(let sceneID) {
+            os_log(
+                .error,
+                log: contentLoaderLog,
+                "%{public}@",
+                "Unable to resolve a scene directory for scene id \(sceneID)."
+            )
+            throw SceneLoaderError.unresolvedSceneDirectory(sceneID)
+        } catch SceneLoaderError.missingFile(let path) {
+            let filename = URL(fileURLWithPath: path).lastPathComponent
+            if filename == "SceneManifest.json" || filename == "scene_manifest.json" || filename == "Scenes" {
+                os_log(
+                    .error,
+                    log: contentLoaderLog,
+                    "%{public}@",
+                    "Missing scene content while loading scene id \(id) at \(path)."
+                )
+            }
+            throw SceneLoaderError.missingFile(path)
+        }
     }
 
     public func loadActorTable() throws -> [ActorTableEntry] {
@@ -153,3 +175,5 @@ public struct ContentLoader: ContentLoading {
         return resolvedURL
     }
 }
+
+private let contentLoaderLog = OSLog(subsystem: "com.swiftoot", category: "OOTContent")

@@ -2192,7 +2192,10 @@ public final class GameRuntime {
             defaultSceneSpawn.map { Vec3f($0.position).simd } ??
             fallbackPosition
         let probePosition = rawPosition + SIMD3<Float>(0, movementConfiguration.floorProbeHeight, 0)
-        let floorHit = collisionSystem.findFloor(at: probePosition)
+        let floorHit = collisionSystem.findFloor(
+            at: probePosition,
+            diagnosticContext: "player spawn in scene \(scene.manifest.name)"
+        )
         let resolvedPosition = SIMD3<Float>(
             rawPosition.x,
             floorHit?.floorY ?? rawPosition.y,

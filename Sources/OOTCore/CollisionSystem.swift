@@ -1,5 +1,6 @@
 import OOTContent
 import OOTDataModel
+import OSLog
 import simd
 
 public protocol DynamicCollisionProviding: Sendable {
@@ -82,7 +83,10 @@ public struct CollisionSystem: Sendable {
         )
     }
 
-    public func findFloor(at position: SIMD3<Float>) -> CollisionFloorHit? {
+    public func findFloor(
+        at position: SIMD3<Float>,
+        diagnosticContext: String? = nil
+    ) -> CollisionFloorHit? {
         var bestHit: CollisionFloorHit?
 
         for mesh in indexedMeshes() {
@@ -102,6 +106,15 @@ public struct CollisionSystem: Sendable {
                     polygon: triangle.reference(source: mesh.source)
                 )
             }
+        }
+
+        if bestHit == nil, let diagnosticContext {
+            os_log(
+                .error,
+                log: collisionSystemLog,
+                "%{public}@",
+                "No floor collision found for \(diagnosticContext) at position (\(position.x), \(position.y), \(position.z))."
+            )
         }
 
         return bestHit
@@ -452,6 +465,8 @@ private struct IndexedTriangle: Sendable {
         return t >= CollisionSystem.planeEpsilon && t <= 1 - CollisionSystem.planeEpsilon
     }
 }
+
+private let collisionSystemLog = OSLog(subsystem: "com.swiftoot", category: "OOTCore")
 
 private struct BucketGrid: Sendable {
     let bounds: AABB

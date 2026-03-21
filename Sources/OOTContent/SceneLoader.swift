@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 import OOTDataModel
 
 public protocol SceneLoading: Sendable {
@@ -161,6 +162,14 @@ public struct SceneLoader: SceneLoading {
                 readData(from: collisionURL),
                 path: collisionURL.path
             )
+        } catch SceneLoaderError.missingFile(let path) {
+            os_log(
+                .error,
+                log: sceneLoaderLog,
+                "%{public}@",
+                "Missing optional scene content file collision.bin for scene \(manifest.name) at \(path)."
+            )
+            throw SceneLoaderError.missingFile(path)
         } catch let error as CollisionMeshDecoder.DecodingError {
             throw SceneLoaderError.invalidCollisionBinary(collisionURL.path, error.localizedDescription)
         }
@@ -177,7 +186,12 @@ public struct SceneLoader: SceneLoading {
     }
 
     public func loadActors(for manifest: SceneManifest) throws -> SceneActorsFile? {
-        try loadOptionalJSON(SceneActorsFile.self, fromRelativePath: manifest.actorsPath)
+        try loadOptionalJSON(
+            SceneActorsFile.self,
+            fromRelativePath: manifest.actorsPath,
+            sceneName: manifest.name,
+            expectedFilename: "actors.json"
+        )
     }
 
     public func loadSpawns(for manifest: SceneManifest) throws -> SceneSpawnsFile? {
@@ -185,11 +199,21 @@ public struct SceneLoader: SceneLoading {
     }
 
     public func loadEnvironment(for manifest: SceneManifest) throws -> SceneEnvironmentFile? {
-        try loadOptionalJSON(SceneEnvironmentFile.self, fromRelativePath: manifest.environmentPath)
+        try loadOptionalJSON(
+            SceneEnvironmentFile.self,
+            fromRelativePath: manifest.environmentPath,
+            sceneName: manifest.name,
+            expectedFilename: "environment.json"
+        )
     }
 
     public func loadPaths(for manifest: SceneManifest) throws -> ScenePathsFile? {
-        try loadOptionalJSON(ScenePathsFile.self, fromRelativePath: manifest.pathsPath)
+        try loadOptionalJSON(
+            ScenePathsFile.self,
+            fromRelativePath: manifest.pathsPath,
+            sceneName: manifest.name,
+            expectedFilename: "paths.json"
+        )
     }
 
     public func loadExits(for manifest: SceneManifest) throws -> SceneExitsFile? {
@@ -458,6 +482,31 @@ private extension SceneLoader {
         return try loadJSON(T.self, from: try referencedURL(for: relativePath))
     }
 
+    func loadOptionalJSON<T: Decodable>(
+        _ type: T.Type,
+        fromRelativePath relativePath: String?,
+        sceneName: String,
+        expectedFilename: String
+    ) throws -> T? {
+        guard let relativePath, relativePath.isEmpty == false else {
+            return nil
+        }
+
+        let url = try referencedURL(for: relativePath)
+
+        do {
+            return try loadJSON(T.self, from: url)
+        } catch SceneLoaderError.missingFile(let path) {
+            os_log(
+                .error,
+                log: sceneLoaderLog,
+                "%{public}@",
+                "Missing optional scene content file \(expectedFilename) for scene \(sceneName) at \(path)."
+            )
+            throw SceneLoaderError.missingFile(path)
+        }
+    }
+
     func loadJSON<T: Decodable>(_ type: T.Type, from url: URL) throws -> T {
         let data = try readData(from: url)
 
@@ -541,3 +590,5 @@ private extension SceneLoader {
         }.sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 }
+
+private let sceneLoaderLog = OSLog(subsystem: "com.swiftoot", category: "OOTContent")

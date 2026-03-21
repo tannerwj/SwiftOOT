@@ -73,6 +73,53 @@ final class SceneLoaderTests: XCTestCase {
             "gDayOvercastSkybox1Tex.tex.bin"
         )
     }
+
+    func testSceneLoaderThrowsWhenCollisionBinaryIsMissing() throws {
+        let fixture = try SceneLoaderFixture()
+        defer { fixture.cleanup() }
+
+        let collisionURL = fixture.sceneDirectory.appendingPathComponent("collision.bin")
+        try FileManager.default.removeItem(at: collisionURL)
+
+        let loader = SceneLoader(contentRoot: fixture.contentRoot)
+
+        XCTAssertThrowsError(try loader.loadScene(id: 0x55)) { error in
+            XCTAssertEqual(error as? SceneLoaderError, .missingFile(collisionURL.path))
+        }
+    }
+
+    func testSceneLoaderThrowsWhenActorsJSONIsMissing() throws {
+        let fixture = try SceneLoaderFixture()
+        defer { fixture.cleanup() }
+
+        let actorsURL = fixture.contentRoot
+            .appendingPathComponent("Manifests", isDirectory: true)
+            .appendingPathComponent("scenes", isDirectory: true)
+            .appendingPathComponent("overworld", isDirectory: true)
+            .appendingPathComponent("spot04", isDirectory: true)
+            .appendingPathComponent("actors.json")
+        try FileManager.default.removeItem(at: actorsURL)
+
+        let loader = SceneLoader(contentRoot: fixture.contentRoot)
+
+        XCTAssertThrowsError(try loader.loadScene(id: 0x55)) { error in
+            XCTAssertEqual(error as? SceneLoaderError, .missingFile(actorsURL.path))
+        }
+    }
+
+    func testContentLoaderThrowsWhenSceneDirectoryCannotBeResolved() throws {
+        let fixture = try SceneLoaderFixture()
+        defer { fixture.cleanup() }
+
+        let manifestURL = fixture.sceneDirectory.appendingPathComponent("SceneManifest.json")
+        try FileManager.default.removeItem(at: manifestURL)
+
+        let loader = ContentLoader(contentRoot: fixture.contentRoot)
+
+        XCTAssertThrowsError(try loader.loadScene(id: 0x55)) { error in
+            XCTAssertEqual(error as? SceneLoaderError, .unresolvedSceneDirectory(0x55))
+        }
+    }
 }
 
 private struct SceneLoaderFixture {
