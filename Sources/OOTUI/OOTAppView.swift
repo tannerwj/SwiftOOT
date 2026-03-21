@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Observation
 import SwiftUI
 import OOTCore
 import OOTDataModel
@@ -13,6 +14,12 @@ enum OOTRootViewState: Equatable {
     case gameplay
 }
 
+private struct OOTRootSnapshot: Equatable {
+    var viewState: OOTRootViewState = .boot
+    var canContinue = false
+    var statusMessage: String?
+}
+
 public struct OOTAppView: View {
     let runtime: GameRuntime
     let developerHarness: DeveloperHarnessConfiguration?
@@ -20,6 +27,9 @@ public struct OOTAppView: View {
 
     @State
     private var soundEffectPlayer = RuntimeSoundEffectPlayer()
+
+    @State
+    private var rootSnapshot = OOTRootSnapshot()
 
     public init(
         runtime: GameRuntime,
@@ -48,7 +58,7 @@ public struct OOTAppView: View {
 
     public var body: some View {
         Group {
-            switch Self.rootViewState(for: runtime.currentState) {
+            switch rootSnapshot.viewState {
             case .boot:
                 RuntimeSplashView(
                     title: "SwiftOOT",
@@ -60,14 +70,18 @@ public struct OOTAppView: View {
                     subtitle: "Console logo sequence"
                 )
             case .titleScreen:
-                TitleScreenView(runtime: runtime)
+                TitleScreenView(
+                    runtime: runtime,
+                    canContinue: rootSnapshot.canContinue,
+                    statusMessage: rootSnapshot.statusMessage
+                )
             case .fileSelect:
                 FileSelectView(runtime: runtime)
             case .gameplay:
                 GameplayShellView(runtime: runtime)
             }
         }
-        .task {
+        .task { @MainActor in
             guard !startupManagedExternally else {
                 return
             }
@@ -93,16 +107,38 @@ public struct OOTAppView: View {
                 }
             }
         }
-        .task {
+        .task { @MainActor in
+            observeRootSnapshot()
+        }
+        .task { @MainActor in
             while !Task.isCancelled {
                 soundEffectPlayer.drainAndPlay(from: runtime)
                 try? await Task.sleep(for: .milliseconds(16))
             }
         }
     }
+
 }
 
 private extension OOTAppView {
+    @MainActor
+    func observeRootSnapshot() {
+        withObservationTracking {
+            let snapshot = OOTRootSnapshot(
+                viewState: Self.rootViewState(for: runtime.currentState),
+                canContinue: runtime.canContinue,
+                statusMessage: runtime.statusMessage
+            )
+            if rootSnapshot != snapshot {
+                rootSnapshot = snapshot
+            }
+        } onChange: {
+            Task { @MainActor in
+                observeRootSnapshot()
+            }
+        }
+    }
+
     func writeHarnessFailureToStderr(_ message: String) {
         let line = "SwiftOOT harness failed: \(message)\n"
         guard let data = line.data(using: .utf8) else {
@@ -171,6 +207,8 @@ private struct RuntimeSplashView: View {
 
 private struct TitleScreenView: View {
     let runtime: GameRuntime
+    let canContinue: Bool
+    let statusMessage: String?
 
     var body: some View {
         ZStack {
@@ -209,21 +247,27 @@ private struct TitleScreenView: View {
                     .frame(width: 420, height: 220)
 
                 VStack(spacing: 14) {
-                    Button(TitleMenuOption.newGame.title) {
+                    Button {
                         runtime.chooseTitleOption(.newGame)
+                    } label: {
+                        Text(TitleMenuOption.newGame.title)
+                            .frame(minWidth: 160)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
 
-                    Button(TitleMenuOption.continueGame.title) {
+                    Button {
                         runtime.chooseTitleOption(.continueGame)
+                    } label: {
+                        Text(TitleMenuOption.continueGame.title)
+                            .frame(minWidth: 160)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.large)
-                    .disabled(!runtime.canContinue)
+                    .disabled(!canContinue)
                 }
 
-                if let statusMessage = runtime.statusMessage {
+                if let statusMessage {
                     Text(statusMessage)
                         .font(.callout.weight(.medium))
                         .foregroundStyle(Color(red: 0.98, green: 0.87, blue: 0.44))
@@ -496,8 +540,10 @@ private struct GameplayShellView: View {
                             let activeCommentary = runtime.activeDirectorCommentaryAnnotation
                         {
                             DirectorCommentaryOverlayCard(annotation: activeCommentary) {
-                                runtime.selectDirectorCommentaryAnnotation(id: activeCommentary.id)
-                                selectedDebuggerTab = .commentary
+                                Task { @MainActor in
+                                    runtime.selectDirectorCommentaryAnnotation(id: activeCommentary.id)
+                                    selectedDebuggerTab = .commentary
+                                }
                             }
                             .padding(.leading, 24)
                             .padding(.bottom, 24)

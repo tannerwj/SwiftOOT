@@ -2491,15 +2491,13 @@ public final class GameRuntime {
                 stopMusicTrack(announcesStatus: false)
             }
         case .titleScreen:
-            ensurePersistentMusic(
-                preferredTrackIDs: ["title-theme"],
-                crossfadeDuration: crossfadeDuration
-            )
+            if musicPlaybackState.currentTrack != nil {
+                stopMusicTrack(announcesStatus: false)
+            }
         case .fileSelect:
-            ensurePersistentMusic(
-                preferredTrackIDs: ["file-select", "file-select-theme", "title-theme"],
-                crossfadeDuration: crossfadeDuration
-            )
+            if musicPlaybackState.currentTrack != nil {
+                stopMusicTrack(announcesStatus: false)
+            }
         case .gameplay:
             guard let track = preferredGameplayMusicTrack() else {
                 if musicPlaybackState.currentTrack?.kind == .bgm {

@@ -21,7 +21,7 @@ public final class AVFoundationMusicPlaybackController: MusicPlaybackControlling
         track: AudioTrackManifest,
         crossfadeDuration: TimeInterval
     ) throws -> TimeInterval? {
-        try configureIfNeeded()
+        attachPlayersIfNeeded()
 
         let sampleURL = try resolvePlayableSampleURL(for: track)
         let buffer = try loadBuffer(from: sampleURL)
@@ -33,6 +33,8 @@ public final class AVFoundationMusicPlaybackController: MusicPlaybackControlling
         let targetPlayer = players[targetPlayerIndex]
 
         targetPlayer.stop()
+        preparePlayer(targetPlayer, for: buffer.format)
+        try startEngineIfNeeded()
         buffersByPlayerIndex[targetPlayerIndex] = buffer
         targetPlayer.volume = currentPlayerIndex == nil || crossfadeDuration <= 0 ? 1 : 0
         targetPlayer.scheduleBuffer(
@@ -83,7 +85,11 @@ public final class AVFoundationMusicPlaybackController: MusicPlaybackControlling
     }
 
     public func resume() {
-        try? configureIfNeeded()
+        guard currentPlayerIndex != nil else {
+            return
+        }
+
+        try? startEngineIfNeeded()
         for player in players where player.isPlaying == false {
             player.play()
         }
@@ -91,20 +97,29 @@ public final class AVFoundationMusicPlaybackController: MusicPlaybackControlling
 }
 
 private extension AVFoundationMusicPlaybackController {
-    func configureIfNeeded() throws {
+    func attachPlayersIfNeeded() {
         if isConfigured == false {
             for player in players {
                 engine.attach(player)
-                engine.connect(player, to: engine.mainMixerNode, format: nil)
             }
             isConfigured = true
         }
+    }
 
+    func startEngineIfNeeded() throws {
         guard engine.isRunning == false else {
             return
         }
 
         try engine.start()
+    }
+
+    func preparePlayer(
+        _ player: AVAudioPlayerNode,
+        for format: AVAudioFormat
+    ) {
+        engine.disconnectNodeOutput(player)
+        engine.connect(player, to: engine.mainMixerNode, format: format)
     }
 
     func resolvePlayableSampleURL(for track: AudioTrackManifest) throws -> URL {

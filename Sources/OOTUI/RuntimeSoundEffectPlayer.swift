@@ -8,14 +8,13 @@ final class RuntimeSoundEffectPlayer {
     private let engine = AVAudioEngine()
     private var sampleCache: [URL: AVAudioPCMBuffer] = [:]
     private var hasStartedEngine = false
+    private var activeSamplePlayers: [ObjectIdentifier: AVAudioPlayer] = [:]
 
     func drainAndPlay(from runtime: GameRuntime) {
         let requests = runtime.drainPendingSoundEffectPlaybackRequests()
         guard requests.isEmpty == false else {
             return
         }
-
-        startEngineIfNeeded()
 
         for request in requests {
             play(request)
@@ -34,26 +33,67 @@ final class RuntimeSoundEffectPlayer {
 
     private func play(_ request: SoundEffectPlaybackRequest) {
         for layer in request.layers {
-            guard let buffer = makeBuffer(for: layer) else {
-                continue
-            }
-
-            let player = AVAudioPlayerNode()
-            engine.attach(player)
-            engine.connect(player, to: engine.mainMixerNode, format: buffer.format)
-            player.volume = request.gain * layer.gain
-            player.pan = max(-1, min(1, request.pan + layer.pan))
-            player.scheduleBuffer(buffer) { [weak self, weak player] in
-                Task { @MainActor in
-                    guard let self, let player else {
-                        return
-                    }
-                    self.engine.disconnectNodeInput(player)
-                    self.engine.detach(player)
+            switch layer.source {
+            case .sample(let url):
+                if playSampleLayer(
+                    url: url,
+                    layer: layer,
+                    request: request
+                ) == false {
+                    continue
                 }
+            case .synth:
+                startEngineIfNeeded()
+                guard let buffer = makeBuffer(for: layer) else {
+                    continue
+                }
+
+                let player = AVAudioPlayerNode()
+                engine.attach(player)
+                engine.connect(player, to: engine.mainMixerNode, format: buffer.format)
+                player.volume = request.gain * layer.gain
+                player.pan = max(-1, min(1, request.pan + layer.pan))
+                player.scheduleBuffer(buffer) { [weak self, weak player] in
+                    Task { @MainActor in
+                        guard let self, let player else {
+                            return
+                        }
+                        self.engine.disconnectNodeInput(player)
+                        self.engine.detach(player)
+                    }
+                }
+                player.play()
             }
-            player.play()
         }
+    }
+
+    @discardableResult
+    private func playSampleLayer(
+        url: URL,
+        layer: SoundEffectPlaybackLayer,
+        request: SoundEffectPlaybackRequest
+    ) -> Bool {
+        guard let player = try? AVAudioPlayer(contentsOf: url) else {
+            return false
+        }
+
+        player.volume = request.gain * layer.gain
+        player.pan = max(-1, min(1, request.pan + layer.pan))
+        player.prepareToPlay()
+
+        let key = ObjectIdentifier(player)
+        activeSamplePlayers[key] = player
+
+        let delaySeconds = max(0, Double(layer.delayFrames) / 60.0)
+        let startTime = player.deviceCurrentTime + delaySeconds
+        player.play(atTime: startTime)
+        let cleanupDelay = delaySeconds + player.duration + 0.25
+        Task { @MainActor [weak self] in
+            let nanoseconds = UInt64(cleanupDelay * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            self?.activeSamplePlayers.removeValue(forKey: key)
+        }
+        return true
     }
 
     private func makeBuffer(for layer: SoundEffectPlaybackLayer) -> AVAudioPCMBuffer? {
