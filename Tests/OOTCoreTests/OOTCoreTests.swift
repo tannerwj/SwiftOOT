@@ -1261,6 +1261,17 @@ final class OOTCoreTests: XCTestCase {
         XCTAssertEqual(ceiling?.polygon.surfaceType?.canHookshot, true)
     }
 
+    func testCollisionSystemReturnsNilWhenNoFloorExists() {
+        let system = CollisionSystem(staticMeshes: [fixtureCollisionMesh()])
+
+        XCTAssertNil(
+            system.findFloor(
+                at: SIMD3<Float>(2, -2, 2),
+                diagnosticContext: "player spawn in test scene"
+            )
+        )
+    }
+
     func testCollisionSystemPushesSphereOutOfWall() {
         let system = CollisionSystem(staticMeshes: [fixtureCollisionMesh()])
 
